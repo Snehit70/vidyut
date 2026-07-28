@@ -89,6 +89,13 @@ There is no Play Store build. Get the APK one of two ways:
   [GitHub Release](https://github.com/Snehit70/vidyut/releases/latest). The
   adjacent `.sha256` file can be used to verify the download.
 
+> **Upgrading from 1.1.2:** the old release used a signing key that is no
+> longer available, so Android cannot update it in place. Uninstall Vidyut
+> 1.1.2 before installing the current release. Uninstalling removes the saved
+> pairing and app data, so pair the phone with the laptop again afterward.
+> Releases after this migration use a pinned signing identity and update in
+> place.
+
 - **Build a development APK** (needs
   [Flutter](https://docs.flutter.dev/get-started/install) `3.44.4`+ stable and
   the Android SDK — see `app/README.md` for dev setup):

@@ -180,11 +180,6 @@ class GithubUpdateChecker {
   final String repo;
   final Duration timeout;
 
-  bool _isInstallableApk(String assetName) {
-    final lower = assetName.toLowerCase();
-    return lower.startsWith('vidyut-') && lower.endsWith('.apk');
-  }
-
   Future<UpdateCheckResult> check(String currentVersion) async {
     final uri = Uri.https(
       'api.github.com',
@@ -207,7 +202,7 @@ class GithubUpdateChecker {
         currentVersion: currentVersion,
         statusCode: response.statusCode,
         responseBody: body,
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
     } catch (e) {
       return UpdateCheckOffline(e.toString());
@@ -215,4 +210,12 @@ class GithubUpdateChecker {
       client.close(force: true);
     }
   }
+}
+
+/// Matches the single Android architecture published by the release workflow.
+bool isInstallableApkAsset(String assetName) {
+  return RegExp(
+    r'^vidyut-\d+\.\d+\.\d+-arm64\.apk$',
+    caseSensitive: false,
+  ).hasMatch(assetName);
 }

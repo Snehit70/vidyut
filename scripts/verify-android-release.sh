@@ -59,7 +59,7 @@ actual_abis="$(
 )"
 actual_cert="$(
   "$apksigner" verify --print-certs "$apk" |
-    sed -nE 's/^(Signer #1|V2 Signer): certificate SHA-256 digest: //p' |
+    sed -nE 's/^.*certificate SHA-256 digest: ([[:xdigit:]:]+)$/\1/p' |
     head -1 |
     tr '[:upper:]' '[:lower:]' |
     tr -d ':'

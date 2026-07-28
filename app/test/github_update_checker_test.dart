@@ -14,11 +14,15 @@ String _releaseJson({
   return '{"tag_name":"$tag","body":"$body","assets":[$assetsJson]}';
 }
 
-bool _isInstallableApk(String name) =>
-    name.toLowerCase().startsWith('vidyut-') &&
-    name.toLowerCase().endsWith('.apk');
-
 void main() {
+  test('accepts only versioned ARM64 release APK names', () {
+    expect(isInstallableApkAsset('vidyut-1.2.1-arm64.apk'), isTrue);
+    expect(isInstallableApkAsset('VIDYUT-1.2.1-ARM64.APK'), isTrue);
+    expect(isInstallableApkAsset('vidyut-1.2.1-x86_64.apk'), isFalse);
+    expect(isInstallableApkAsset('vidyut-debug.apk'), isFalse);
+    expect(isInstallableApkAsset('other-1.2.1-arm64.apk'), isFalse);
+  });
+
   group('SemVer', () {
     test('parses with and without a leading v', () {
       expect(SemVer.tryParse('1.2.3').toString(), '1.2.3');
@@ -53,7 +57,7 @@ void main() {
         currentVersion: '1.2.0',
         statusCode: 200,
         responseBody: _releaseJson(tag: 'v1.2.0'),
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
       expect(result, isA<UpToDate>());
     });
@@ -65,7 +69,7 @@ void main() {
           currentVersion: '1.3.0',
           statusCode: 200,
           responseBody: _releaseJson(tag: 'v1.2.0'),
-          assetNameMatches: _isInstallableApk,
+          assetNameMatches: isInstallableApkAsset,
         );
         expect(result, isA<UpToDate>());
       },
@@ -98,7 +102,7 @@ void main() {
               },
             ],
           ),
-          assetNameMatches: _isInstallableApk,
+          assetNameMatches: isInstallableApkAsset,
         );
         expect(result, isA<UpdateAvailable>());
         final update = result as UpdateAvailable;
@@ -125,7 +129,7 @@ void main() {
               },
             ],
           ),
-          assetNameMatches: _isInstallableApk,
+          assetNameMatches: isInstallableApkAsset,
         );
         expect(result, isA<MissingAsset>());
         expect((result as MissingAsset).tagName, 'v1.1.0');
@@ -137,7 +141,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 404,
         responseBody: '',
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
       expect(result, isA<NoReleaseFound>());
     });
@@ -148,7 +152,7 @@ void main() {
           currentVersion: '1.0.0',
           statusCode: status,
           responseBody: '',
-          assetNameMatches: _isInstallableApk,
+          assetNameMatches: isInstallableApkAsset,
         );
         expect(result, isA<RateLimited>());
       }
@@ -159,7 +163,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: 'not json',
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
       expect(result, isA<MalformedMetadata>());
     });
@@ -169,7 +173,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: '{"body":"notes","assets":[]}',
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
       expect(result, isA<MalformedMetadata>());
     });
@@ -179,7 +183,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: _releaseJson(tag: 'not-a-version'),
-        assetNameMatches: _isInstallableApk,
+        assetNameMatches: isInstallableApkAsset,
       );
       expect(result, isA<MalformedMetadata>());
     });
