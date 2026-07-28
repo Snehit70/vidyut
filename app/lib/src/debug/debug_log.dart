@@ -47,7 +47,9 @@ class DebugLog extends ChangeNotifier {
       try {
         final json = jsonDecode(row);
         if (json is! Map) continue;
-        final timestamp = DateTime.tryParse(json['timestamp'] as String? ?? '');
+        final rawTimestamp = json['timestamp'];
+        if (rawTimestamp is! String) continue;
+        final timestamp = DateTime.tryParse(rawTimestamp);
         final category = json['category'];
         final message = json['message'];
         if (timestamp == null || category is! String || message is! String) {

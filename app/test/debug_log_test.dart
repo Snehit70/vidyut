@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -79,5 +81,28 @@ void main() {
 
     expect(restored.entries.single.message, 'Status: connected');
     expect(restored.exportText(), contains('[connection] Status: connected'));
+  });
+
+  test('skips malformed persisted rows without aborting startup', () async {
+    SharedPreferences.setMockInitialValues({
+      'vidyut.debug.log.v1': [
+        jsonEncode({
+          'timestamp': 123,
+          'category': 'damaged',
+          'message': 'wrong timestamp type',
+        }),
+        jsonEncode({
+          'timestamp': '2026-07-28T00:00:00.000Z',
+          'category': 'connection',
+          'message': 'Status: connected',
+        }),
+      ],
+    });
+
+    final restored = DebugLog();
+    await restored.load();
+
+    expect(restored.entries, hasLength(1));
+    expect(restored.entries.single.message, 'Status: connected');
   });
 }

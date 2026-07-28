@@ -84,6 +84,10 @@ void main() {
                 'url': 'https://example.com/relay',
               },
               {
+                'name': 'unrelated-debug.apk.sha256',
+                'url': 'https://example.com/unrelated.sha256',
+              },
+              {
                 'name': 'vidyut-1.1.0-debug.apk',
                 'url': 'https://example.com/app.apk',
               },

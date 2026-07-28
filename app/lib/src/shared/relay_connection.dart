@@ -45,11 +45,13 @@ class RelayHealth {
     final relayName = json['relayName'];
     if (status is! String || relayName is! String) return null;
     final clipboard = json['clipboard'];
+    final clipboardStatus = clipboard is Map ? clipboard['status'] : null;
+    final clipboardError = clipboard is Map ? clipboard['error'] : null;
     return RelayHealth(
       status: status,
       relayName: relayName,
-      clipboardStatus: clipboard is Map ? clipboard['status'] as String? : null,
-      clipboardError: clipboard is Map ? clipboard['error'] as String? : null,
+      clipboardStatus: clipboardStatus is String ? clipboardStatus : null,
+      clipboardError: clipboardError is String ? clipboardError : null,
     );
   }
 }

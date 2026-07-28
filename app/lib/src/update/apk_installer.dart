@@ -56,14 +56,17 @@ class ApkInstaller {
       }
       final total = response.contentLength;
       var received = 0;
-      final sink = apk.openWrite();
+      final fileSink = apk.openWrite();
+      final hashSink = Sha256().toSync().newHashSink();
       await for (final chunk in response.timeout(timeout)) {
-        sink.add(chunk);
+        fileSink.add(chunk);
+        hashSink.add(chunk);
         received += chunk.length;
         if (total > 0) onProgress((received / total).clamp(0, 1));
       }
-      await sink.close();
-      final digest = await Sha256().hash(await apk.readAsBytes());
+      await fileSink.close();
+      hashSink.close();
+      final digest = await hashSink.hash();
       final actual = digest.bytes
           .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
           .join();

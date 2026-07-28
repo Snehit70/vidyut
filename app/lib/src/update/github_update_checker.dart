@@ -140,22 +140,20 @@ UpdateCheckResult resolveUpdate({
   if (assets is! List) {
     return MissingAsset(tagName);
   }
-  String? sha256Url;
-  for (final asset in assets) {
-    if (asset is! Map<String, dynamic>) continue;
-    final name = asset['name'];
-    final url = asset['browser_download_url'];
-    if (name is String &&
-        url is String &&
-        name.toLowerCase().endsWith('.apk.sha256')) {
-      sha256Url = url;
-    }
-  }
   for (final asset in assets) {
     if (asset is! Map<String, dynamic>) continue;
     final name = asset['name'];
     final url = asset['browser_download_url'];
     if (name is String && url is String && assetNameMatches(name)) {
+      String? sha256Url;
+      for (final checksumAsset in assets) {
+        if (checksumAsset is! Map<String, dynamic>) continue;
+        if (checksumAsset['name'] == '$name.sha256' &&
+            checksumAsset['browser_download_url'] is String) {
+          sha256Url = checksumAsset['browser_download_url'] as String;
+          break;
+        }
+      }
       if (sha256Url == null) return MissingAsset(tagName);
       return UpdateAvailable(
         version: latest,

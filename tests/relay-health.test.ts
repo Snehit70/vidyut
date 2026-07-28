@@ -144,6 +144,7 @@ describe("relay /health", () => {
         proof: await createPairingProof(secret, hello.challenge, "phone"),
       }));
       while (messages.length < 2) await Bun.sleep(1);
+      expect(messages[1].kind).toBe("auth_ok");
       expect(messages[1].health).toEqual({
         status: "ok",
         relayName: "framework",

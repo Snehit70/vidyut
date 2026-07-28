@@ -28,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     this.paired = false,
     this.onForgetPairing,
     this.updateChecker,
+    this.apkInstaller,
   });
 
   final AppSettings settings;
@@ -56,6 +57,10 @@ class SettingsScreen extends StatefulWidget {
   /// (widget tests without network access).
   final GithubUpdateChecker? updateChecker;
 
+  /// Installs verified updates; injectable so widget tests can avoid platform
+  /// channels and network access.
+  final ApkInstaller? apkInstaller;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -65,7 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int? _issueCount;
   String? _appVersion;
   bool _checkingForUpdates = false;
-  final ApkInstaller _apkInstaller = ApkInstaller();
+  late final ApkInstaller _apkInstaller = widget.apkInstaller ?? ApkInstaller();
 
   @override
   void initState() {
@@ -259,24 +264,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
       showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: Text('Downloading Vidyut ${update.version}'),
-          content: ValueListenableBuilder<double>(
-            valueListenable: progress,
-            builder: (context, value, _) => Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                LinearProgressIndicator(value: value == 0 ? null : value),
-                const SizedBox(height: 12),
-                Text(
-                  value == 0
-                      ? 'Starting download…'
-                      : '${(value * 100).round()}%',
-                ),
-                const SizedBox(height: 8),
-                const Text('The APK will be verified before Android opens it.'),
-              ],
+        builder: (context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Text('Downloading Vidyut ${update.version}'),
+            content: ValueListenableBuilder<double>(
+              valueListenable: progress,
+              builder: (context, value, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(value: value == 0 ? null : value),
+                  const SizedBox(height: 12),
+                  Text(
+                    value == 0
+                        ? 'Starting download…'
+                        : '${(value * 100).round()}%',
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'The APK will be verified before Android opens it.',
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -291,22 +301,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context, rootNavigator: true).pop();
     switch (result) {
       case ApkReady():
-        await _apkInstaller.install(result.path);
+        try {
+          await _apkInstaller.install(result.path);
+        } on Object catch (error) {
+          if (!mounted) return;
+          await _showInstallError(error.toString());
+        }
       case ApkDownloadFailed():
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Update could not be installed'),
-            content: Text(result.message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        );
+        await _showInstallError(result.message);
     }
+  }
+
+  Future<void> _showInstallError(String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update could not be installed'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

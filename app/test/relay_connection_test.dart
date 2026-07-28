@@ -97,6 +97,18 @@ void main() {
     expect(health.last.clipboardError, 'watcher exited');
   });
 
+  test('ignores malformed nested health fields', () {
+    final health = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {'status': 123, 'error': true},
+    });
+
+    expect(health, isNotNull);
+    expect(health!.clipboardStatus, isNull);
+    expect(health.clipboardError, isNull);
+  });
+
   test('emits incoming payload frames', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(
