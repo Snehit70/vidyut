@@ -24,7 +24,7 @@ const sendClipboardRoute = '/send-clipboard';
 const sendClipboardButtonId = 'send_clipboard';
 
 const _notificationButtons = [
-  NotificationButton(id: sendClipboardButtonId, text: 'Send clipboard'),
+  NotificationButton(id: sendClipboardButtonId, text: 'Send copied text'),
 ];
 
 @pragma('vm:entry-point')
@@ -112,8 +112,8 @@ class VidyutForegroundTaskHandler extends TaskHandler {
           MiuiSetupFlag.clipboard,
           false,
         ),
-        log: (message, {isError = false}) => FlutterForegroundTask
-            .sendDataToMain({
+        log: (message, {isError = false}) =>
+            FlutterForegroundTask.sendDataToMain({
               'kind': 'log',
               'message': message,
               'error': isError,
@@ -150,11 +150,10 @@ class VidyutForegroundTaskHandler extends TaskHandler {
   @override
   void onNotificationButtonPressed(String id) {
     if (id == sendClipboardButtonId) {
-      // launchApp(route) only loads the route on a cold start; the service
-      // keeps the app process alive, so it's always warm here. Route via the
-      // existing data channel to PairingScreen instead.
-      FlutterForegroundTask.sendDataToMain({'kind': 'sendClipboard'});
-      FlutterForegroundTask.launchApp();
+      // The explicit notification tap launches only the transparent native
+      // clipboard reader. Publishing and feedback stay in the service, so the
+      // user remains in the app where they copied the text.
+      unawaited(_controller.handleTaskData(const {'kind': 'sendClipboard'}));
     }
   }
 

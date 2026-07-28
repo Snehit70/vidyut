@@ -33,9 +33,10 @@ class ClipboardReadActivity : Activity() {
                 ?.getItemAt(0)
                 ?.coerceToText(this)
                 ?.toString()
-            if (!text.isNullOrEmpty()) {
-                ClipboardAutoSendWatcher.onClipboardRead(text)
-            }
+            ClipboardAutoSendWatcher.onClipboardRead(
+                text,
+                manual = intent.getBooleanExtra(EXTRA_MANUAL_READ, false),
+            )
         } finally {
             finish()
         }
@@ -44,5 +45,10 @@ class ClipboardReadActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // No layout: the window is transparent and immediately hands focus back.
+    }
+
+    companion object {
+        const val EXTRA_MANUAL_READ =
+            "dev.snehit.vidyut.clipboard_autosend.extra.MANUAL_READ"
     }
 }

@@ -9,6 +9,11 @@ import 'package:flutter/services.dart';
 /// logcat subprocess regardless of which engine attaches. The service isolate is
 /// the intended consumer.
 abstract interface class ClipboardAutoSendWatcher {
+  /// Opens the native transparent clipboard reader and returns the current
+  /// text. This follows an explicit notification tap, so READ_LOGS is not
+  /// required.
+  Future<String?> readText();
+
   /// Whether `READ_LOGS` is granted (`checkSelfPermission`). Grantable only via
   /// the one-time adb block (D6); re-checked on each return-to-foreground since
   /// the grant is external. Safe from any isolate — touches no watcher state.
@@ -51,6 +56,9 @@ class ChannelClipboardAutoSendWatcher implements ClipboardAutoSendWatcher {
 
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;
+
+  @override
+  Future<String?> readText() => _methodChannel.invokeMethod<String>('readText');
 
   /// One native subscription, split into [texts] and [diagnostics] below. The
   /// native side tags every emission with `type`: `"text"` carries a read

@@ -59,9 +59,10 @@ shareable.
 
 ### Text you copied — the notification action
 
-The persistent sync notification carries a **Send clipboard** action. Tap it to push
-whatever text you last copied on the phone to the laptop. (This works where background
-reads don't, because the send screen briefly has focus.)
+The persistent sync notification carries a **Send copied text** action. Tap it to push
+whatever text you last copied on the phone to the laptop. Vidyut reads it through a
+brief transparent Android activity, reports the result in the notification, and leaves
+you in the app where you copied the text.
 
 ### Advanced: zero-tap text auto-send (opt-in)
 

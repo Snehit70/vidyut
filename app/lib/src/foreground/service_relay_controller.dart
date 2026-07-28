@@ -234,9 +234,66 @@ class ServiceRelayController {
   }
 
   Future<void> handleTaskData(Object? data) async {
-    if (data is Map && data['kind'] == 'sync') {
-      _reconnectAttempt = 0;
-      await _sync();
+    if (data is! Map) return;
+    switch (data['kind']) {
+      case 'sync':
+        _reconnectAttempt = 0;
+        await _sync();
+        return;
+      case 'sendClipboard':
+        await _sendClipboard();
+        return;
+    }
+  }
+
+  Future<void> _sendClipboard() async {
+    final reader = clipboardAutoSendWatcher;
+    final publish = autoSendPublish;
+    if (reader == null || publish == null) {
+      await updateNotification(
+        'Vidyut could not send',
+        'Clipboard reader is unavailable.',
+      );
+      return;
+    }
+
+    await updateNotification('Vidyut sending', 'Reading copied text...');
+    try {
+      final text = await reader.readText().timeout(const Duration(seconds: 4));
+      if (text == null || text.trim().isEmpty) {
+        _log('Manual clipboard send stopped: clipboard is empty.');
+        await updateNotification(
+          'Vidyut could not send',
+          'The clipboard has no text.',
+        );
+        return;
+      }
+
+      final result = await publish(SharePayload.text(text));
+      _log(
+        'Manual clipboard send: ${result.message}',
+        isError: !result.published,
+      );
+      await updateNotification(
+        result.published ? 'Vidyut sent to laptop' : 'Vidyut could not send',
+        result.published ? 'Copied text sent.' : result.message,
+      );
+      emit({
+        'kind': 'send',
+        'sent': result.published,
+        'message': result.message,
+        'type': 'text',
+        'size': text.length,
+      });
+    } on TimeoutException {
+      _log('Manual clipboard read timed out.', isError: true);
+      await updateNotification(
+        'Vidyut could not send',
+        'Clipboard access timed out. Tap to try again.',
+      );
+    } catch (error) {
+      _log('Manual clipboard send failed: $error', isError: true);
+      await updateNotification('Vidyut could not send', 'Tap to try again.');
     }
   }
 

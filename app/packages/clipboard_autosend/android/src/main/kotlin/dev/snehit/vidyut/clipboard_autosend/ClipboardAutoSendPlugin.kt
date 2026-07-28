@@ -58,6 +58,8 @@ class ClipboardAutoSendPlugin :
         when (call.method) {
             "hasReadLogsPermission" ->
                 result.success(ClipboardAutoSendWatcher.hasReadLogsPermission(context))
+            "readText" ->
+                ClipboardAutoSendWatcher.requestManualRead(context, result)
             "start" -> {
                 ClipboardAutoSendWatcher.start(context)
                 result.success(null)
@@ -103,6 +105,7 @@ object ClipboardAutoSendWatcher {
     // Collapse denial bursts (a single copy can log several denials, and the
     // read activity is singleInstance anyway).
     private const val LAUNCH_THROTTLE_MS = 400L
+    private const val MANUAL_READ_TIMEOUT_MS = 5_000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val sinks = CopyOnWriteArraySet<EventChannel.EventSink>()
@@ -112,6 +115,7 @@ object ClipboardAutoSendWatcher {
     private var readerThread: Thread? = null
     private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
     private var lastLaunchAtMs = 0L
+    private var pendingManualRead: MethodChannel.Result? = null
 
     fun addSink(sink: EventChannel.EventSink) {
         sinks.add(sink)
@@ -121,6 +125,51 @@ object ClipboardAutoSendWatcher {
         return context.applicationContext.checkSelfPermission(
             android.Manifest.permission.READ_LOGS,
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    @Synchronized
+    fun requestManualRead(context: Context, result: MethodChannel.Result) {
+        if (pendingManualRead != null) {
+            result.error(
+                "read-in-progress",
+                "A clipboard read is already in progress.",
+                null,
+            )
+            return
+        }
+        pendingManualRead = result
+        mainHandler.postDelayed({
+            val timedOut = synchronized(this) {
+                if (pendingManualRead !== result) {
+                    false
+                } else {
+                    pendingManualRead = null
+                    true
+                }
+            }
+            if (timedOut) {
+                result.error(
+                    "read-timeout",
+                    "The clipboard reader did not gain focus.",
+                    null,
+                )
+            }
+        }, MANUAL_READ_TIMEOUT_MS)
+        val intent = Intent(context, ClipboardReadActivity::class.java).apply {
+            putExtra(ClipboardReadActivity.EXTRA_MANUAL_READ, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        }
+        try {
+            context.startActivity(intent)
+        } catch (error: Exception) {
+            pendingManualRead = null
+            result.error(
+                "activity-launch-failed",
+                "Could not open the clipboard reader: ${error.message}",
+                null,
+            )
+        }
     }
 
     @Synchronized
@@ -263,7 +312,15 @@ object ClipboardAutoSendWatcher {
      * with freshly read clipboard text. Forwarded to the service isolate, which
      * owns the echo guard and the publish path (D3/D4).
      */
-    fun onClipboardRead(text: String) {
+    fun onClipboardRead(text: String?, manual: Boolean = false) {
+        if (manual) {
+            val result = synchronized(this) {
+                pendingManualRead.also { pendingManualRead = null }
+            }
+            result?.success(text)
+            return
+        }
+        if (text.isNullOrEmpty()) return
         emitLog("Clipboard auto-read: ${text.length} chars; forwarding.")
         fanOut(mapOf("type" to "text", "text" to text))
     }

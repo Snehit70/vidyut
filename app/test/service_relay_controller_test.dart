@@ -32,7 +32,11 @@ void main() {
 
     expect(harness.transports, isEmpty);
     expect(harness.emitted, [
-      {'kind': 'log', 'message': 'No pairing stored; staying offline.', 'error': false},
+      {
+        'kind': 'log',
+        'message': 'No pairing stored; staying offline.',
+        'error': false,
+      },
       {'kind': 'status', 'status': 'offline'},
     ]);
     expect(harness.notifications.single.title, 'Vidyut offline');
@@ -102,8 +106,10 @@ void main() {
     transport.receive({
       'v': 1,
       'kind': 'payload',
-      'frame': (await _textFrame('hello from laptop', origin: 'laptop'))
-          .toJson(),
+      'frame': (await _textFrame(
+        'hello from laptop',
+        origin: 'laptop',
+      )).toJson(),
     });
     await _waitUntil(
       () => harness.emitted.any((message) => message['kind'] == 'receive'),
@@ -290,60 +296,61 @@ void main() {
 
   test('default backoff caps at 32 seconds', () {
     expect(defaultReconnectBackoff.last, const Duration(seconds: 32));
-    expect(
-      defaultReconnectBackoff.map((d) => d.inSeconds),
-      [2, 4, 8, 16, 32],
-    );
+    expect(defaultReconnectBackoff.map((d) => d.inSeconds), [2, 4, 8, 16, 32]);
   });
 
   group('screen-on trigger', () {
-    test('reconnects immediately and resets attempts while disconnected',
-        () async {
-      final harness = _Harness(
-        pairing: pairing,
-        // Effectively-never backoff: only the trigger can reconnect.
-        reconnectBackoff: const [Duration(minutes: 5)],
-      );
+    test(
+      'reconnects immediately and resets attempts while disconnected',
+      () async {
+        final harness = _Harness(
+          pairing: pairing,
+          // Effectively-never backoff: only the trigger can reconnect.
+          reconnectBackoff: const [Duration(minutes: 5)],
+        );
 
-      await harness.controller.start();
-      final transport = harness.transports.single;
-      transport.receive({'v': 1, 'kind': 'auth_ok'});
-      await _drain();
+        await harness.controller.start();
+        final transport = harness.transports.single;
+        transport.receive({'v': 1, 'kind': 'auth_ok'});
+        await _drain();
 
-      await transport.drop();
-      await _drain();
-      expect(harness.transports, hasLength(1));
+        await transport.drop();
+        await _drain();
+        expect(harness.transports, hasLength(1));
 
-      harness.screenOn.add(null);
-      await _waitUntil(() => harness.transports.length == 2);
+        harness.screenOn.add(null);
+        await _waitUntil(() => harness.transports.length == 2);
 
-      expect(
-        harness.emitted,
-        contains(
-          equals({
-            'kind': 'log',
-            'message': 'Screen on while disconnected; reconnecting now.',
-            'error': false,
-          }),
-        ),
-      );
+        expect(
+          harness.emitted,
+          contains(
+            equals({
+              'kind': 'log',
+              'message': 'Screen on while disconnected; reconnecting now.',
+              'error': false,
+            }),
+          ),
+        );
 
-      // The trigger reset the attempt counter: the next scheduled retry
-      // reports attempt 1 again.
-      await harness.transports.last.drop();
-      await _drain();
-      expect(
-        harness.emitted
-            .where(
-              (message) =>
-                  message['kind'] == 'log' &&
-                  (message['message'] as String).startsWith('Connection lost'),
-            )
-            .map((message) => message['message'])
-            .last,
-        contains('(attempt 1)'),
-      );
-    });
+        // The trigger reset the attempt counter: the next scheduled retry
+        // reports attempt 1 again.
+        await harness.transports.last.drop();
+        await _drain();
+        expect(
+          harness.emitted
+              .where(
+                (message) =>
+                    message['kind'] == 'log' &&
+                    (message['message'] as String).startsWith(
+                      'Connection lost',
+                    ),
+              )
+              .map((message) => message['message'])
+              .last,
+          contains('(attempt 1)'),
+        );
+      },
+    );
 
     test('is a no-op while connected', () async {
       final harness = _Harness(pairing: pairing);
@@ -373,23 +380,25 @@ void main() {
   });
 
   group('wedge recovery (#35)', () {
-    test('sync proceeds past a transport whose close never completes',
-        () async {
-      final harness = _Harness(
-        pairing: pairing,
-        transportsHangOnClose: true,
-        connectionCloseTimeout: const Duration(milliseconds: 50),
-      );
+    test(
+      'sync proceeds past a transport whose close never completes',
+      () async {
+        final harness = _Harness(
+          pairing: pairing,
+          transportsHangOnClose: true,
+          connectionCloseTimeout: const Duration(milliseconds: 50),
+        );
 
-      await harness.controller.start();
-      harness.transports.single.receive({'v': 1, 'kind': 'auth_ok'});
-      await _drain();
+        await harness.controller.start();
+        harness.transports.single.receive({'v': 1, 'kind': 'auth_ok'});
+        await _drain();
 
-      await harness.controller.handleTaskData(const {'kind': 'sync'});
+        await harness.controller.handleTaskData(const {'kind': 'sync'});
 
-      expect(harness.transports, hasLength(2));
-      expect(harness.transports.first.closed, isTrue);
-    });
+        expect(harness.transports, hasLength(2));
+        expect(harness.transports.first.closed, isTrue);
+      },
+    );
 
     test('a timed-out sync step retries through the backoff', () async {
       var settingsLoads = 0;
@@ -444,7 +453,8 @@ void main() {
         contains(
           equals({
             'kind': 'log',
-            'message': 'Watchdog: sync stalled; abandoning it and reconnecting.',
+            'message':
+                'Watchdog: sync stalled; abandoning it and reconnecting.',
             'error': true,
           }),
         ),
@@ -467,7 +477,8 @@ void main() {
       expect(harness.transports, isEmpty);
       expect(
         harness.emitted.where(
-          (message) => message['message'] == 'No pairing stored; staying offline.',
+          (message) =>
+              message['message'] == 'No pairing stored; staying offline.',
         ),
         hasLength(1),
       );
@@ -497,8 +508,7 @@ void main() {
       await harness.controller.handleTaskData(const {'kind': 'sync'});
       await harness.controller.handleTaskData(const {'kind': 'sync'});
       settingsGate.complete(const AppSettings());
-      settingsGate = Completer<AppSettings>()
-        ..complete(const AppSettings());
+      settingsGate = Completer<AppSettings>()..complete(const AppSettings());
       await first;
       await _waitUntil(() => harness.transports.length == 2);
 
@@ -510,25 +520,28 @@ void main() {
   });
 
   group('screenshot watcher', () {
-    test('starts the watcher when auto-push is on and access is full', () async {
-      final watcher = _FakeScreenshotWatcher();
-      final harness = _Harness(pairing: pairing, screenshotWatcher: watcher);
+    test(
+      'starts the watcher when auto-push is on and access is full',
+      () async {
+        final watcher = _FakeScreenshotWatcher();
+        final harness = _Harness(pairing: pairing, screenshotWatcher: watcher);
 
-      await harness.controller.start();
+        await harness.controller.start();
 
-      expect(watcher.starts, 1);
-      expect(watcher.watching, isTrue);
-      expect(
-        harness.emitted,
-        contains(
-          equals({
-            'kind': 'log',
-            'message': 'Screenshot observer started.',
-            'error': false,
-          }),
-        ),
-      );
-    });
+        expect(watcher.starts, 1);
+        expect(watcher.watching, isTrue);
+        expect(
+          harness.emitted,
+          contains(
+            equals({
+              'kind': 'log',
+              'message': 'Screenshot observer started.',
+              'error': false,
+            }),
+          ),
+        );
+      },
+    );
 
     test('does not start the watcher when auto-push is off', () async {
       final watcher = _FakeScreenshotWatcher();
@@ -644,9 +657,11 @@ void main() {
         () => transport.sent.any((message) => message['kind'] == 'publish'),
       );
 
-      final frame = transport.sent
-          .firstWhere((message) => message['kind'] == 'publish')['frame']!
-          as Map<String, Object?>;
+      final frame =
+          transport.sent.firstWhere(
+                (message) => message['kind'] == 'publish',
+              )['frame']!
+              as Map<String, Object?>;
       expect(frame['type'], 'image');
       expect(frame['origin'], 'phone');
       expect(frame['ts'], 1783608202412);
@@ -682,8 +697,9 @@ void main() {
       await _drain();
 
       expect(
-        harness.transports.last.sent
-            .where((message) => message['kind'] == 'publish'),
+        harness.transports.last.sent.where(
+          (message) => message['kind'] == 'publish',
+        ),
         isEmpty,
       );
     });
@@ -701,6 +717,43 @@ void main() {
   });
 
   group('clipboard auto-send watcher', () {
+    test(
+      'notification action reads and sends without opening the app',
+      () async {
+        final watcher = _FakeAutoSendWatcher(manualText: 'copied on phone');
+        final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
+
+        await harness.controller.start();
+        await harness.controller.handleTaskData(const {
+          'kind': 'sendClipboard',
+        });
+
+        expect(watcher.manualReads, 1);
+        expect(harness.autoSendPublished, ['copied on phone']);
+        expect(
+          harness.notifications,
+          contains((title: 'Vidyut sent to laptop', text: 'Copied text sent.')),
+        );
+      },
+    );
+
+    test('notification action reports an empty clipboard', () async {
+      final watcher = _FakeAutoSendWatcher(manualText: null);
+      final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
+
+      await harness.controller.start();
+      await harness.controller.handleTaskData(const {'kind': 'sendClipboard'});
+
+      expect(harness.autoSendPublished, isEmpty);
+      expect(
+        harness.notifications,
+        contains((
+          title: 'Vidyut could not send',
+          text: 'The clipboard has no text.',
+        )),
+      );
+    });
+
     test('stays inert when the setting is off (default)', () async {
       final watcher = _FakeAutoSendWatcher();
       final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
@@ -766,47 +819,49 @@ void main() {
       expect(harness.autoSendPublished, ['copied on phone']);
     });
 
-    test('echo guard drops an auto-read equal to the last received write',
-        () async {
-      final watcher = _FakeAutoSendWatcher(granted: true);
-      final harness = _Harness(
-        pairing: pairing,
-        settings: const AppSettings(enableClipboardAutoSend: true),
-        autoSendWatcher: watcher,
-      );
+    test(
+      'echo guard drops an auto-read equal to the last received write',
+      () async {
+        final watcher = _FakeAutoSendWatcher(granted: true);
+        final harness = _Harness(
+          pairing: pairing,
+          settings: const AppSettings(enableClipboardAutoSend: true),
+          autoSendWatcher: watcher,
+        );
 
-      await harness.controller.start();
-      final transport = harness.transports.single;
-      transport.receive({'v': 1, 'kind': 'auth_ok'});
-      transport.receive({
-        'v': 1,
-        'kind': 'payload',
-        'frame': (await _textFrame('from laptop', origin: 'laptop')).toJson(),
-      });
-      await _waitUntil(() => harness.clipboard.texts.contains('from laptop'));
+        await harness.controller.start();
+        final transport = harness.transports.single;
+        transport.receive({'v': 1, 'kind': 'auth_ok'});
+        transport.receive({
+          'v': 1,
+          'kind': 'payload',
+          'frame': (await _textFrame('from laptop', origin: 'laptop')).toJson(),
+        });
+        await _waitUntil(() => harness.clipboard.texts.contains('from laptop'));
 
-      // The received write trips the watcher; the echo must be dropped.
-      watcher.emitText('from laptop');
-      await _drain();
-      expect(harness.autoSendPublished, isEmpty);
-      expect(
-        harness.emitted,
-        contains(
-          equals({
-            'kind': 'log',
-            'message':
-                'Clipboard auto-send: echo guard dropped a received-payload '
-                're-read.',
-            'error': false,
-          }),
-        ),
-      );
+        // The received write trips the watcher; the echo must be dropped.
+        watcher.emitText('from laptop');
+        await _drain();
+        expect(harness.autoSendPublished, isEmpty);
+        expect(
+          harness.emitted,
+          contains(
+            equals({
+              'kind': 'log',
+              'message':
+                  'Clipboard auto-send: echo guard dropped a received-payload '
+                  're-read.',
+              'error': false,
+            }),
+          ),
+        );
 
-      // Record consumed: a deliberate re-copy of the same text now sends.
-      watcher.emitText('from laptop');
-      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
-      expect(harness.autoSendPublished, ['from laptop']);
-    });
+        // Record consumed: a deliberate re-copy of the same text now sends.
+        watcher.emitText('from laptop');
+        await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+        expect(harness.autoSendPublished, ['from laptop']);
+      },
+    );
 
     test('forwards watcher diagnostics into the debug log', () async {
       final watcher = _FakeAutoSendWatcher(granted: true);
@@ -907,7 +962,11 @@ Future<void> _waitUntil(
   }
 }
 
-Future<PayloadFrame> _textFrame(String text, {required String origin, int ts = 1}) {
+Future<PayloadFrame> _textFrame(
+  String text, {
+  required String origin,
+  int ts = 1,
+}) {
   return PayloadCrypto().encrypt(
     metadata: PayloadMetadata(
       type: PayloadType.text,
@@ -1114,9 +1173,11 @@ class _FakeScreenshotWatcher implements ScreenshotWatcher {
 }
 
 class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
-  _FakeAutoSendWatcher({this.granted = true});
+  _FakeAutoSendWatcher({this.granted = true, this.manualText});
 
   bool granted;
+  String? manualText;
+  int manualReads = 0;
   int starts = 0;
   int stops = 0;
   bool watching = false;
@@ -1127,6 +1188,12 @@ class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
   void emitText(String text) => _texts.add(text);
 
   void emitDiagnostic(String message) => _diagnostics.add(message);
+
+  @override
+  Future<String?> readText() async {
+    manualReads++;
+    return manualText;
+  }
 
   @override
   Future<bool> hasReadLogsPermission() async => granted;
