@@ -11,6 +11,8 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true"
             android:noHistory="true"
-            android:exported="false" />
+            android:exported="false"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
     </application>
 </manifest>

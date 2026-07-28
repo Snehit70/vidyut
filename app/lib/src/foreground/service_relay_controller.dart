@@ -251,6 +251,7 @@ class ServiceRelayController {
   Future<void> _onManualClipboardResult(
     ManualClipboardReadResult result,
   ) async {
+    if (_stopped) return;
     final publish = autoSendPublish;
     if (publish == null) {
       await updateNotification(

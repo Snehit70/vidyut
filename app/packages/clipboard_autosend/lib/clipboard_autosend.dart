@@ -27,6 +27,8 @@ abstract interface class ClipboardAutoSendWatcher {
   /// for its manual clipboard action. This avoids Android 12's blocked
   /// notification-trampoline path.
   Future<void> updateNotification({
+    required int notificationId,
+    required String channelId,
     required String title,
     required String text,
   });
@@ -79,9 +81,13 @@ class ChannelClipboardAutoSendWatcher implements ClipboardAutoSendWatcher {
 
   @override
   Future<void> updateNotification({
+    required int notificationId,
+    required String channelId,
     required String title,
     required String text,
   }) => _methodChannel.invokeMethod<void>('updateNotification', {
+    'notificationId': notificationId,
+    'channelId': channelId,
     'title': title,
     'text': text,
   });
@@ -117,8 +123,9 @@ class ChannelClipboardAutoSendWatcher implements ClipboardAutoSendWatcher {
       .map(
         (event) => ManualClipboardReadResult(
           requestId: event['requestId'] as int? ?? 0,
-          status: ManualClipboardReadStatus.values.byName(
-            event['status'] as String? ?? 'unreadable',
+          status: ManualClipboardReadStatus.values.firstWhere(
+            (status) => status.name == event['status'],
+            orElse: () => ManualClipboardReadStatus.unreadable,
           ),
           text: event['text'] as String?,
         ),

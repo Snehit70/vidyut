@@ -3,6 +3,7 @@ package dev.snehit.vidyut.clipboard_autosend
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -88,6 +89,13 @@ class ClipboardReadActivity : Activity() {
             handler.postDelayed(focusTimeout, MANUAL_FOCUS_TIMEOUT_MS)
         }
         // No layout: the window is transparent and immediately hands focus back.
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_MANUAL_READ, false)) {
+            ClipboardAutoSendWatcher.reportManualBusy()
+        }
     }
 
     override fun onDestroy() {

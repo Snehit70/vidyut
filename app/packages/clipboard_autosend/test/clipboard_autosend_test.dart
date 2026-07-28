@@ -48,12 +48,16 @@ void main() {
 
     final watcher = ChannelClipboardAutoSendWatcher();
     await watcher.updateNotification(
+      notificationId: 17321,
+      channelId: 'vidyut_foreground',
       title: 'Vidyut connected',
       text: 'Synced with laptop.',
     );
 
     expect(calls.single.method, 'updateNotification');
     expect(calls.single.arguments, {
+      'notificationId': 17321,
+      'channelId': 'vidyut_foreground',
       'title': 'Vidyut connected',
       'text': 'Synced with laptop.',
     });
@@ -106,12 +110,20 @@ void main() {
       'status': 'text',
       'text': 'manual words',
     });
+    await _emit('test/clipboard_autosend_events', {
+      'type': 'manualResult',
+      'requestId': 8,
+      'status': 'futureStatus',
+    });
     await Future<void>.delayed(Duration.zero);
 
     expect(texts, ['copied words']);
-    expect(manualResults.single.requestId, 7);
-    expect(manualResults.single.status, ManualClipboardReadStatus.text);
-    expect(manualResults.single.text, 'manual words');
+    expect(manualResults, hasLength(2));
+    expect(manualResults.first.requestId, 7);
+    expect(manualResults.first.status, ManualClipboardReadStatus.text);
+    expect(manualResults.first.text, 'manual words');
+    expect(manualResults.last.requestId, 8);
+    expect(manualResults.last.status, ManualClipboardReadStatus.unreadable);
     expect(logs, ['started']);
   });
 }

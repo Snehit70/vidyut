@@ -62,12 +62,19 @@ class ClipboardAutoSendPlugin :
             "hasReadLogsPermission" ->
                 result.success(ClipboardAutoSendWatcher.hasReadLogsPermission(context))
             "updateNotification" -> {
+                val notificationId = call.argument<Int>("notificationId")
+                val channelId = call.argument<String>("channelId")
                 val title = call.argument<String>("title")
                 val text = call.argument<String>("text")
-                if (title == null || text == null) {
+                if (
+                    notificationId == null ||
+                    channelId == null ||
+                    title == null ||
+                    text == null
+                ) {
                     result.error(
                         "invalid-notification",
-                        "Notification title and text are required.",
+                        "Notification id, channel, title, and text are required.",
                         null,
                     )
                 } else {
@@ -75,6 +82,8 @@ class ClipboardAutoSendPlugin :
                         context,
                         title,
                         text,
+                        notificationId,
+                        channelId,
                     )
                     result.success(null)
                 }
@@ -121,11 +130,9 @@ class ClipboardAutoSendPlugin :
  * thread, and unregisters the listener.
  */
 object ClipboardAutoSendWatcher {
-    // Collapse denial bursts (a single copy can log several denials, and the
-    // read activity is singleInstance anyway).
+    // Collapse denial bursts because one clipboard change can log several
+    // denials before the first transparent reader finishes.
     private const val LAUNCH_THROTTLE_MS = 400L
-    private const val FOREGROUND_NOTIFICATION_ID = 17321
-    private const val FOREGROUND_CHANNEL_ID = "vidyut_foreground"
     private const val MANUAL_ACTION_REQUEST_CODE = 17322
     private const val CONTENT_REQUEST_CODE = 17323
 
@@ -139,6 +146,8 @@ object ClipboardAutoSendWatcher {
     private var lastLaunchAtMs = 0L
     private var activeManualRequestId: Long? = null
     private var nextManualRequestId = 0L
+    private var foregroundNotificationId: Int? = null
+    private var foregroundChannelId: String? = null
 
     fun addSink(sink: EventChannel.EventSink) {
         sinks.add(sink)
@@ -150,59 +159,86 @@ object ClipboardAutoSendWatcher {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun updateNotification(context: Context, title: String, text: String) {
+    fun updateNotification(
+        context: Context,
+        title: String,
+        text: String,
+        notificationId: Int? = null,
+        channelId: String? = null,
+    ) {
         val app = context.applicationContext
-        val launchIntent = app.packageManager.getLaunchIntentForPackage(
-            app.packageName,
-        )
-        val immutableUpdate =
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        val contentIntent = launchIntent?.let {
-            PendingIntent.getActivity(
+        if (notificationId != null && channelId != null) {
+            foregroundNotificationId = notificationId
+            foregroundChannelId = channelId
+        }
+        val targetId = foregroundNotificationId
+        val targetChannel = foregroundChannelId
+        if (targetId == null || targetChannel == null) {
+            emitLog("Notification action refresh skipped: configuration unavailable.")
+            return
+        }
+        try {
+            val launchIntent = app.packageManager.getLaunchIntentForPackage(
+                app.packageName,
+            )
+            val immutableUpdate =
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val contentIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    app,
+                    CONTENT_REQUEST_CODE,
+                    it,
+                    immutableUpdate,
+                )
+            }
+            val manualIntent = Intent(app, ClipboardReadActivity::class.java).apply {
+                putExtra(ClipboardReadActivity.EXTRA_MANUAL_READ, true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            }
+            val manualPendingIntent = PendingIntent.getActivity(
                 app,
-                CONTENT_REQUEST_CODE,
-                it,
+                MANUAL_ACTION_REQUEST_CODE,
+                manualIntent,
                 immutableUpdate,
             )
-        }
-        val manualIntent = Intent(app, ClipboardReadActivity::class.java).apply {
-            putExtra(ClipboardReadActivity.EXTRA_MANUAL_READ, true)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
-        }
-        val manualPendingIntent = PendingIntent.getActivity(
-            app,
-            MANUAL_ACTION_REQUEST_CODE,
-            manualIntent,
-            immutableUpdate,
-        )
-        val appInfo = app.packageManager.getApplicationInfo(app.packageName, 0)
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(app, FOREGROUND_CHANNEL_ID)
-        } else {
-            Notification.Builder(app)
-        }
-        val notification = builder
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSmallIcon(appInfo.icon)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(text))
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setContentIntent(contentIntent)
-            .addAction(0, "Send copied text", manualPendingIntent)
-            .apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setForegroundServiceBehavior(
-                        Notification.FOREGROUND_SERVICE_IMMEDIATE,
-                    )
-                }
+            val appInfo = app.packageManager.getApplicationInfo(app.packageName, 0)
+            if (appInfo.icon == 0) {
+                emitLog("Notification action refresh skipped: app icon unavailable.")
+                return
             }
-            .build()
-        app.getSystemService(NotificationManager::class.java)
-            .notify(FOREGROUND_NOTIFICATION_ID, notification)
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(app, targetChannel)
+            } else {
+                Notification.Builder(app)
+            }
+            val notification = builder
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSmallIcon(appInfo.icon)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setContentIntent(contentIntent)
+                .addAction(0, "Send copied text", manualPendingIntent)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setForegroundServiceBehavior(
+                            Notification.FOREGROUND_SERVICE_IMMEDIATE,
+                        )
+                    }
+                }
+                .build()
+            app.getSystemService(NotificationManager::class.java)
+                .notify(targetId, notification)
+        } catch (error: Exception) {
+            emitLog(
+                "Notification action refresh failed: " +
+                    (error.message ?: error.javaClass.simpleName),
+            )
+        }
     }
 
     @Synchronized
