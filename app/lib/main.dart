@@ -6,6 +6,7 @@ import 'package:cryptography_flutter/cryptography_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
@@ -1074,6 +1075,39 @@ class QrPairingScreen extends StatefulWidget {
 
 class _QrPairingScreenState extends State<QrPairingScreen> {
   bool _handled = false;
+  bool _cameraReady = false;
+  String? _cameraError;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_prepareCamera());
+  }
+
+  Future<void> _prepareCamera() async {
+    try {
+      final status = await Permission.camera.request();
+      if (!mounted) return;
+      setState(() {
+        if (status.isGranted) {
+          _cameraReady = true;
+        } else {
+          _cameraError =
+              'Camera permission is required to scan a pairing QR code.';
+        }
+      });
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() => _cameraError = 'Could not start the camera: $error');
+    }
+  }
+
+  void _handleCameraError(Object error, StackTrace stackTrace) {
+    if (!mounted) return;
+    setState(
+      () => _cameraError = 'Could not start the camera. Use manual pairing.',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1081,15 +1115,24 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
       appBar: AppBar(title: const Text('Scan QR')),
       body: Stack(
         children: [
-          MobileScanner(
-            onDetect: (capture) {
-              if (_handled) return;
-              final rawValue = capture.barcodes.firstOrNull?.rawValue;
-              if (rawValue == null || rawValue.isEmpty) return;
-              _handled = true;
-              Navigator.of(context).pop(rawValue);
-            },
-          ),
+          if (_cameraReady && _cameraError == null)
+            MobileScanner(
+              onDetectError: _handleCameraError,
+              errorBuilder: (context, error) => _CameraErrorView(
+                message: error.errorDetails?.message ?? error.errorCode.message,
+              ),
+              onDetect: (capture) {
+                if (_handled) return;
+                final rawValue = capture.barcodes.firstOrNull?.rawValue;
+                if (rawValue == null || rawValue.isEmpty) return;
+                _handled = true;
+                Navigator.of(context).pop(rawValue);
+              },
+            )
+          else if (_cameraError != null)
+            _CameraErrorView(message: _cameraError!)
+          else
+            const Center(child: CircularProgressIndicator()),
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
@@ -1113,6 +1156,29 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _CameraErrorView extends StatelessWidget {
+  const _CameraErrorView({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            '$message\n\nGo back and use Pair manually.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
       ),
     );
   }
