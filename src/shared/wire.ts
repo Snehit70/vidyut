@@ -17,10 +17,22 @@ export interface PayloadMetadata {
   ts: number;
 }
 
+export interface RelayHealth {
+  status: "ok" | "degraded";
+  relayName: string;
+  clipboard?: {
+    enabled: boolean;
+    status: "starting" | "healthy" | "degraded" | "disabled";
+    watcher?: string;
+    error?: string;
+  };
+}
+
 export type RelayMessage =
   | { v: 1; kind: "hello"; challenge: string; maxPayloadBytes: number }
   | { v: 1; kind: "auth"; deviceId: string; proof: string }
-  | { v: 1; kind: "auth_ok" }
+  | { v: 1; kind: "auth_ok"; health?: RelayHealth }
+  | { v: 1; kind: "health"; health: RelayHealth }
   | { v: 1; kind: "publish"; frame: PayloadFrame }
   | { v: 1; kind: "payload"; frame: PayloadFrame }
   | { v: 1; kind: "ack"; ts: number }
@@ -44,4 +56,3 @@ export function isPayloadFrame(value: unknown): value is PayloadFrame {
 export function encodedPayloadBytes(frame: PayloadFrame): number {
   return Buffer.from(frame.payload, "base64").byteLength;
 }
-

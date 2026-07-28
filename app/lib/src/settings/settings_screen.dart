@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../debug/debug_log.dart';
 import '../debug/debug_log_screen.dart';
@@ -12,6 +11,7 @@ import '../design/widgets.dart';
 import '../onboarding/setup_actions.dart';
 import '../onboarding/setup_checklist_screen.dart';
 import '../update/github_update_checker.dart';
+import '../update/apk_installer.dart';
 import 'app_settings.dart';
 import 'clipboard_autosend_screen.dart';
 
@@ -28,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     this.paired = false,
     this.onForgetPairing,
     this.updateChecker,
+    this.apkInstaller,
   });
 
   final AppSettings settings;
@@ -56,6 +57,10 @@ class SettingsScreen extends StatefulWidget {
   /// (widget tests without network access).
   final GithubUpdateChecker? updateChecker;
 
+  /// Installs verified updates; injectable so widget tests can avoid platform
+  /// channels and network access.
+  final ApkInstaller? apkInstaller;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -65,6 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int? _issueCount;
   String? _appVersion;
   bool _checkingForUpdates = false;
+  late final ApkInstaller _apkInstaller = widget.apkInstaller ?? ApkInstaller();
 
   @override
   void initState() {
@@ -111,9 +117,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _openDebugLog() async {
     final log = widget.debugLog;
     if (log == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => DebugLogScreen(log: log)),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => DebugLogScreen(log: log)));
   }
 
   Future<void> _confirmForget() async {
@@ -153,7 +159,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _checkForUpdates() async {
     final checker = widget.updateChecker;
     final currentVersion = _appVersion;
-    if (checker == null || currentVersion == null || _checkingForUpdates) return;
+    if (checker == null || currentVersion == null || _checkingForUpdates) {
+      return;
+    }
     setState(() => _checkingForUpdates = true);
     final result = await checker.check(currentVersion);
     if (!mounted) return;
@@ -164,7 +172,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _showUpdateResultDialog(UpdateCheckResult result) async {
     final String title;
     final String message;
-    String? downloadUrl;
+    UpdateAvailable? update;
     switch (result) {
       case UpToDate():
         title = "You're up to date";
@@ -174,7 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         message = result.releaseNotes.trim().isEmpty
             ? 'Vidyut ${result.version} is available.'
             : 'Vidyut ${result.version} is available.\n\n${result.releaseNotes.trim()}';
-        downloadUrl = result.downloadUrl;
+        update = result;
       case MissingAsset():
         title = 'Update available';
         message =
@@ -188,7 +196,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         message = "GitHub's rate limit was hit. Try again in a few minutes.";
       case UpdateCheckOffline():
         title = "Can't check right now";
-        message = 'Vidyut could not reach GitHub. Check your connection and try again.';
+        message =
+            'Vidyut could not reach GitHub. Check your connection and try again.';
       case MalformedMetadata():
         title = "Can't check right now";
         message = 'GitHub returned unexpected release data. Try again later.';
@@ -207,16 +216,113 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(foregroundColor: Palette.muted),
-            child: Text(downloadUrl == null ? 'OK' : 'Not now'),
+            child: Text(update == null ? 'Close' : 'Install later'),
           ),
-          if (downloadUrl != null)
+          if (update != null)
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                unawaited(launchUrl(Uri.parse(downloadUrl!), mode: LaunchMode.externalApplication));
+                unawaited(_downloadAndInstall(update!));
               },
-              child: const Text('Download'),
+              child: const Text('Download and install'),
             ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _downloadAndInstall(UpdateAvailable update) async {
+    if (!await _apkInstaller.canInstall()) {
+      if (!mounted) return;
+      final open = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Allow Vidyut to install updates'),
+          content: const Text(
+            'Android needs a one-time permission before Vidyut can open its '
+            'verified APK in the system installer.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Install later'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Open permission settings'),
+            ),
+          ],
+        ),
+      );
+      if (open == true) await _apkInstaller.openInstallSettings();
+      return;
+    }
+
+    final progress = ValueNotifier<double>(0);
+    if (!mounted) return;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: Text('Downloading Vidyut ${update.version}'),
+            content: ValueListenableBuilder<double>(
+              valueListenable: progress,
+              builder: (context, value, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(value: value == 0 ? null : value),
+                  const SizedBox(height: 12),
+                  Text(
+                    value == 0
+                        ? 'Starting download…'
+                        : '${(value * 100).round()}%',
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'The APK will be verified before Android opens it.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final result = await _apkInstaller.download(
+      update,
+      onProgress: (value) => progress.value = value,
+    );
+    progress.dispose();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    switch (result) {
+      case ApkReady():
+        try {
+          await _apkInstaller.install(result.path);
+        } on Object catch (error) {
+          if (!mounted) return;
+          await _showInstallError(error.toString());
+        }
+      case ApkDownloadFailed():
+        await _showInstallError(result.message);
+    }
+  }
+
+  Future<void> _showInstallError(String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update could not be installed'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );
@@ -340,7 +446,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    _appVersion == null ? 'Loading version…' : 'Version $_appVersion',
+                    _appVersion == null
+                        ? 'Loading version…'
+                        : 'Version $_appVersion',
                   ),
                 ),
                 trailing: _checkingForUpdates
@@ -350,7 +458,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.chevron_right, color: Palette.muted),
-                onTap: _checkingForUpdates ? null : () => unawaited(_checkForUpdates()),
+                onTap: _checkingForUpdates
+                    ? null
+                    : () => unawaited(_checkForUpdates()),
               ),
             ).entrance(next()),
           ],
@@ -396,10 +506,9 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
       child: Text(
         label,
-        style: Theme.of(context)
-            .textTheme
-            .labelMedium
-            ?.copyWith(color: Palette.muted),
+        style: Theme.of(
+          context,
+        ).textTheme.labelMedium?.copyWith(color: Palette.muted),
       ),
     );
   }
@@ -427,10 +536,9 @@ class _SummaryChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         child: Text(
           count == 1 ? '1 issue' : '$count issues',
-          style: Theme.of(context)
-              .textTheme
-              .labelMedium
-              ?.copyWith(color: Palette.raspberry),
+          style: Theme.of(
+            context,
+          ).textTheme.labelMedium?.copyWith(color: Palette.raspberry),
         ),
       ),
     );

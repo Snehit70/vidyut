@@ -17,7 +17,8 @@ const serviceSyncCommand = {'kind': 'sync'};
 
 typedef ServicePairingLoader = Future<PairingCode?> Function();
 typedef ServiceSettingsLoader = Future<AppSettings> Function();
-typedef ServiceConnectionFactory = RelayConnection Function(PairingCode pairing);
+typedef ServiceConnectionFactory =
+    RelayConnection Function(PairingCode pairing);
 typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
 typedef ServiceEmit = void Function(Map<String, Object?> message);
 typedef ServiceNotificationUpdate =
@@ -139,6 +140,7 @@ class ServiceRelayController {
   PayloadReceiveController? _receiveController;
   StreamSubscription<ConnectionStatus>? _statusSubscription;
   StreamSubscription<RelayEvent>? _eventSubscription;
+  StreamSubscription<RelayHealth>? _healthSubscription;
   StreamSubscription<ScreenshotEvent>? _screenshotEventsSubscription;
   StreamSubscription<String>? _screenshotDiagnosticsSubscription;
   StreamSubscription<void>? _screenOnSubscription;
@@ -204,7 +206,9 @@ class ServiceRelayController {
       // Disconnected with nothing scheduled to fix it: every event-driven
       // recovery path has been lost (e.g. a socket-death event dropped
       // during a freeze).
-      _log('Watchdog: disconnected with no pending reconnect; reconnecting now.');
+      _log(
+        'Watchdog: disconnected with no pending reconnect; reconnecting now.',
+      );
       _reconnectAttempt = 0;
       unawaited(_sync());
     }
@@ -219,8 +223,10 @@ class ServiceRelayController {
         DateTime.now().difference(startedAt) <= syncStallTimeout) {
       return false;
     }
-    _log('Watchdog: sync stalled; abandoning it and reconnecting.',
-        isError: true);
+    _log(
+      'Watchdog: sync stalled; abandoning it and reconnecting.',
+      isError: true,
+    );
     _syncGeneration += 1;
     _syncing = false;
     _syncStartedAt = null;
@@ -307,7 +313,10 @@ class ServiceRelayController {
     _unpaired = pairing == null;
     if (pairing == null) {
       _log('No pairing stored; staying offline.');
-      await _bounded(_publishStatus(ConnectionStatus.offline), 'publish status');
+      await _bounded(
+        _publishStatus(ConnectionStatus.offline),
+        'publish status',
+      );
       return;
     }
     _log('Connecting to relay at ${pairing.host}:${pairing.port}.');
@@ -327,6 +336,22 @@ class ServiceRelayController {
     });
     _eventSubscription = connection.events.listen((event) {
       _log(event.message, isError: event.isError);
+    });
+    _healthSubscription = connection.health.listen((health) {
+      emit({
+        'kind': 'health',
+        'status': health.status,
+        'relayName': health.relayName,
+        'clipboardStatus': health.clipboardStatus,
+        'clipboardError': health.clipboardError,
+      });
+      if (health.degraded) {
+        _log(
+          'Laptop clipboard needs attention: '
+          '${health.clipboardError ?? health.clipboardStatus ?? 'degraded'}.',
+          isError: true,
+        );
+      }
     });
     _receiveController = PayloadReceiveController(
       frames: connection.payloads.where(_shouldHandleFrame),
@@ -519,7 +544,9 @@ class ServiceRelayController {
     if (text == _lastReceivedClipboardWrite) {
       // Consume the record so a deliberate re-copy of the same text still sends.
       _lastReceivedClipboardWrite = null;
-      _log('Clipboard auto-send: echo guard dropped a received-payload re-read.');
+      _log(
+        'Clipboard auto-send: echo guard dropped a received-payload re-read.',
+      );
       return;
     }
     final publish = autoSendPublish;
@@ -573,6 +600,8 @@ class ServiceRelayController {
     _statusSubscription = null;
     await _eventSubscription?.cancel();
     _eventSubscription = null;
+    await _healthSubscription?.cancel();
+    _healthSubscription = null;
     await _receiveController?.dispose();
     _receiveController = null;
     await _connection?.close();

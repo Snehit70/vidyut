@@ -5,11 +5,13 @@ class PairingCode {
     required this.host,
     required this.port,
     required this.secret,
+    this.name,
   });
 
   final String host;
   final int port;
   final String secret;
+  final String? name;
 
   @override
   bool operator ==(Object other) {
@@ -34,6 +36,7 @@ class PairingCode {
     final host = decoded['host'];
     final port = decoded['port'];
     final secret = decoded['secret'];
+    final name = decoded['name'];
     if (host is! String || host.isEmpty) {
       throw const PairingCodeException('Pairing code is missing a host.');
     }
@@ -44,7 +47,12 @@ class PairingCode {
       throw const PairingCodeException('Pairing code is missing a secret.');
     }
 
-    return PairingCode(host: host, port: port, secret: secret);
+    return PairingCode(
+      host: host,
+      port: port,
+      secret: secret,
+      name: name is String && name.trim().isNotEmpty ? name.trim() : null,
+    );
   }
 
   static PairingCode parseManual({

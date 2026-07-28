@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../design/palette.dart';
 import '../design/widgets.dart';
@@ -24,6 +25,19 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
         title: const Text('Debug log'),
         actions: [
           IconButton(
+            tooltip: 'Copy diagnostics',
+            icon: const Icon(Icons.copy_all_outlined, size: 20),
+            onPressed: () async {
+              await Clipboard.setData(
+                ClipboardData(text: widget.log.exportText()),
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Diagnostics copied.')),
+              );
+            },
+          ),
+          IconButton(
             tooltip: 'Clear log',
             icon: const Icon(Icons.delete_sweep, size: 20),
             style: IconButton.styleFrom(
@@ -33,7 +47,7 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: widget.log.clear,
+            onPressed: () => _confirmClear(context),
           ),
           const SizedBox(width: 12),
         ],
@@ -43,7 +57,7 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
           listenable: widget.log,
           builder: (context, _) {
             final all = widget.log.entries.reversed.toList();
-            final categories = <String>{for (final e in all) e.category };
+            final categories = <String>{for (final e in all) e.category};
             // The active filter may vanish when the log is cleared or trimmed.
             final active = _category != null && categories.contains(_category)
                 ? _category
@@ -75,6 +89,29 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmClear(BuildContext context) async {
+    final clear = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear diagnostics?'),
+        content: const Text(
+          'This removes the saved support trail from this phone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep diagnostics'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Clear diagnostics'),
+          ),
+        ],
+      ),
+    );
+    if (clear == true) widget.log.clear();
   }
 }
 

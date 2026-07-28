@@ -4,6 +4,7 @@ export interface PairingCodeOptions {
   host: string;
   port: number;
   pairingSecret: string;
+  relayName?: string;
 }
 
 export interface PairingCode {
@@ -19,6 +20,7 @@ export function createPairingCode(options: PairingCodeOptions): PairingCode {
     host: options.host,
     port: options.port,
     secret: options.pairingSecret,
+    ...(options.relayName && { name: options.relayName }),
   });
 
   return {
@@ -35,4 +37,3 @@ function renderQr(value: string): string {
   });
   return output;
 }
-

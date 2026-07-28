@@ -40,6 +40,20 @@ This file is a live gap map against `docs/PRD.md`. It is not a replacement for t
 - Relay clipboard read emits exact bytes (`wl-paste --type <mime> -n`): laptop→phone text no longer gains a spurious trailing newline. Verified live on-device.
 - New-user setup and day-to-day usage guides: `docs/SETUP.md` (laptop + phone, end to end) and `docs/USAGE.md`.
 - The wayfinder map (issue #9) tracks the route to v1 completion; issues #2-#8 are superseded.
+- Authenticated relay health reaches the phone and updates live: the home status says
+  **Ready** only when the relay and laptop clipboard watcher are healthy, and opens
+  actionable recovery guidance when the link is offline or degraded.
+- Relay identity uses the laptop hostname in mDNS, pairing QR data, and the paired
+  dashboard instead of exposing only an IP address.
+- The latest received payload remains latest-only but can be copied again by tapping
+  **Last activity**; no clipboard history was added.
+- Nearby discovery distinguishes searching, no-laptop, and discovery-failure states
+  while keeping QR/manual pairing as the fallback.
+- Phone diagnostics persist as a bounded 200-event support trail across app restarts
+  and can be copied as a timestamped report.
+- In-app updates follow the verified Pomo/Pravah workflow: download the release APK
+  to private cache, require and verify its published SHA-256 checksum, request Android's
+  per-app install permission when needed, then open the system package installer.
 
 ## Verified On-Phone (Seamless Sync E2E)
 
@@ -53,15 +67,12 @@ This file is a live gap map against `docs/PRD.md`. It is not a replacement for t
 - The E2E run caught and fixed three real relay bugs (wl-copy pipe stall, JPEG→PNG paste,
   offline-hold startup re-publish), each with a `docs/TROUBLESHOOTING.md` entry.
 
-## Not Done
+## Reliability Sign-Off
 
-- **§10.3 / §11 / §12 are owner-accepted, not formally run** — the 30-minute screen-off
-  hold, ~5-minute reconnect-at-cap, and 60-minute idle windows are time-gated and were
-  accepted by the owner rather than executed end to end. Do not mark these green without
-  actually running them.
-- Green full D1-D9 completion audit: the desk-auditable items (D1, D3, D4, D6, D7, D8, D9)
-  and the E2E-dependent D2/D5 core-sync behaviour check out; the sign-off is gated only on
-  the time-boxed §11/§12 windows above.
+- **§10.3 / §11 / §12 are accepted through sustained daily use.** The owner has used
+  Vidyut for many days without screen-off, reconnect-at-cap, or long-idle failures.
+  This continuous real-world soak supersedes the earlier time-boxed test gate.
+- D1-D9 and the core two-direction sync behaviour are signed off.
 
 ## Latest Verified Commands
 

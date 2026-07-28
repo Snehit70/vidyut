@@ -53,6 +53,62 @@ void main() {
     await expectLater(connection.status, emits(ConnectionStatus.connected));
   });
 
+  test('emits authenticated relay health and live health changes', () async {
+    final transport = FakeRelayTransport();
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+
+    await connection.start();
+    final states = connection.health.take(2).toList();
+    transport.receive({
+      'v': 1,
+      'kind': 'auth_ok',
+      'health': {
+        'status': 'ok',
+        'relayName': 'framework',
+        'clipboard': {'enabled': true, 'status': 'healthy'},
+      },
+    });
+    transport.receive({
+      'v': 1,
+      'kind': 'health',
+      'health': {
+        'status': 'degraded',
+        'relayName': 'framework',
+        'clipboard': {
+          'enabled': true,
+          'status': 'degraded',
+          'error': 'watcher exited',
+        },
+      },
+    });
+
+    final health = await states;
+    expect(health.first.relayName, 'framework');
+    expect(health.first.degraded, isFalse);
+    expect(health.last.degraded, isTrue);
+    expect(health.last.clipboardError, 'watcher exited');
+  });
+
+  test('ignores malformed nested health fields', () {
+    final health = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {'status': 123, 'error': true},
+    });
+
+    expect(health, isNotNull);
+    expect(health!.clipboardStatus, isNull);
+    expect(health.clipboardError, isNull);
+  });
+
   test('emits incoming payload frames', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(

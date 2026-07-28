@@ -10,7 +10,9 @@ class SemVer implements Comparable<SemVer> {
   final int patch;
 
   static SemVer? tryParse(String raw) {
-    final cleaned = raw.trim().startsWith('v') ? raw.trim().substring(1) : raw.trim();
+    final cleaned = raw.trim().startsWith('v')
+        ? raw.trim().substring(1)
+        : raw.trim();
     final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)').firstMatch(cleaned);
     if (match == null) return null;
     return SemVer(
@@ -47,6 +49,7 @@ class UpdateAvailable extends UpdateCheckResult {
     required this.releaseNotes,
     required this.downloadUrl,
     required this.assetName,
+    required this.sha256Url,
   });
 
   final SemVer version;
@@ -54,6 +57,7 @@ class UpdateAvailable extends UpdateCheckResult {
   final String releaseNotes;
   final String downloadUrl;
   final String assetName;
+  final String sha256Url;
 }
 
 /// The release exists and parses, but none of its assets match [assetNameMatches].
@@ -123,7 +127,9 @@ UpdateCheckResult resolveUpdate({
 
   final current = SemVer.tryParse(currentVersion);
   if (current == null) {
-    return MalformedMetadata('current version "$currentVersion" is not a valid semver');
+    return MalformedMetadata(
+      'current version "$currentVersion" is not a valid semver',
+    );
   }
 
   if (latest.compareTo(current) <= 0) {
@@ -139,12 +145,23 @@ UpdateCheckResult resolveUpdate({
     final name = asset['name'];
     final url = asset['browser_download_url'];
     if (name is String && url is String && assetNameMatches(name)) {
+      String? sha256Url;
+      for (final checksumAsset in assets) {
+        if (checksumAsset is! Map<String, dynamic>) continue;
+        if (checksumAsset['name'] == '$name.sha256' &&
+            checksumAsset['browser_download_url'] is String) {
+          sha256Url = checksumAsset['browser_download_url'] as String;
+          break;
+        }
+      }
+      if (sha256Url == null) return MissingAsset(tagName);
       return UpdateAvailable(
         version: latest,
         tagName: tagName,
         releaseNotes: (decoded['body'] as String?) ?? '',
         downloadUrl: url,
         assetName: name,
+        sha256Url: sha256Url,
       );
     }
   }
@@ -167,14 +184,23 @@ class GithubUpdateChecker {
       assetName.toLowerCase().endsWith('.apk') && assetName.contains('debug');
 
   Future<UpdateCheckResult> check(String currentVersion) async {
-    final uri = Uri.https('api.github.com', '/repos/$owner/$repo/releases/latest');
+    final uri = Uri.https(
+      'api.github.com',
+      '/repos/$owner/$repo/releases/latest',
+    );
     final client = HttpClient();
     try {
       final request = await client.getUrl(uri).timeout(timeout);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/vnd.github+json',
+      );
       request.headers.set(HttpHeaders.userAgentHeader, '$repo-update-checker');
       final response = await request.close().timeout(timeout);
-      final body = await response.transform(utf8.decoder).join().timeout(timeout);
+      final body = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(timeout);
       return resolveUpdate(
         currentVersion: currentVersion,
         statusCode: response.statusCode,

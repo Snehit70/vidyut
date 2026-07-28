@@ -28,6 +28,7 @@ const maxPayloadBytes = options.maxPayloadBytes ?? config.maxPayloadBytes;
 const logLevel = options.logLevel ?? config.logLevel;
 const logger = createLogger(logLevel);
 const pairingHost = getPairingHost(host);
+const relayName = hostname().trim() || "Vidyut Relay";
 
 await ensurePortFree(host, port);
 
@@ -40,6 +41,7 @@ const relay = await createRelay({
   pairingSecret: config.pairingSecret,
   maxPayloadBytes,
   logger,
+  relayName,
   clipboardHealth: () => clipboardHealth,
 });
 
@@ -53,11 +55,12 @@ const stopClipboard = options.clipboard
       logger,
       onHealthChange: (health) => {
         clipboardHealth = health;
+        relay.publishHealth();
       },
     })
   : () => undefined;
 const stopMdns = startMdnsAdvertisement({
-  instanceName: "Vidyut Relay",
+  instanceName: relayName,
   hostName: hostname().replace(/[^a-zA-Z0-9-]/g, "-") || "vidyut-relay",
   port,
   addresses: getLanIPv4Addresses(),
@@ -67,6 +70,7 @@ const pairingCode = createPairingCode({
   host: pairingHost,
   port,
   pairingSecret: config.pairingSecret,
+  relayName,
 });
 
 logger.info("relay_started", { url: relay.url, maxPayloadBytes, clipboard: options.clipboard });

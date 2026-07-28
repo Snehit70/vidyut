@@ -23,6 +23,39 @@ class RelayEvent {
   final String? code;
 }
 
+class RelayHealth {
+  const RelayHealth({
+    required this.status,
+    required this.relayName,
+    required this.clipboardStatus,
+    this.clipboardError,
+  });
+
+  final String status;
+  final String relayName;
+  final String? clipboardStatus;
+  final String? clipboardError;
+
+  bool get degraded => status == 'degraded' || clipboardStatus == 'degraded';
+
+  static RelayHealth? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.cast<Object?, Object?>();
+    final status = json['status'];
+    final relayName = json['relayName'];
+    if (status is! String || relayName is! String) return null;
+    final clipboard = json['clipboard'];
+    final clipboardStatus = clipboard is Map ? clipboard['status'] : null;
+    final clipboardError = clipboard is Map ? clipboard['error'] : null;
+    return RelayHealth(
+      status: status,
+      relayName: relayName,
+      clipboardStatus: clipboardStatus is String ? clipboardStatus : null,
+      clipboardError: clipboardError is String ? clipboardError : null,
+    );
+  }
+}
+
 abstract interface class RelayTransport {
   Stream<Object?> get messages;
 
@@ -116,6 +149,7 @@ class RelayConnection implements RelaySession {
   final _payloads = StreamController<PayloadFrame>.broadcast();
   final _events = StreamController<RelayEvent>.broadcast();
   final _acks = StreamController<int>.broadcast();
+  final _health = StreamController<RelayHealth>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
 
@@ -129,6 +163,7 @@ class RelayConnection implements RelaySession {
   /// Acked `ts` values — the relay answers every accepted publish with
   /// `{kind: "ack", ts}`; the push pipeline clears its pending slot on these.
   Stream<int> get acks => _acks.stream;
+  Stream<RelayHealth> get health => _health.stream;
 
   /// The cap advertised by the relay hello, measured on the decoded
   /// ciphertext (plaintext + 16-byte GCM tag); [defaultMaxPayloadBytes]
@@ -176,6 +211,7 @@ class RelayConnection implements RelaySession {
     await _guardedClose(_payloads.close());
     await _guardedClose(_events.close());
     await _guardedClose(_acks.close());
+    await _guardedClose(_health.close());
   }
 
   Future<void> _guardedClose(Future<void>? step) async {
@@ -208,8 +244,13 @@ class RelayConnection implements RelaySession {
           ),
         });
       case 'auth_ok':
+        final health = RelayHealth.fromJson(message['health']);
+        if (health != null) _health.add(health);
         _events.add(const RelayEvent('Auth accepted by relay.'));
         _status.add(ConnectionStatus.connected);
+      case 'health':
+        final health = RelayHealth.fromJson(message['health']);
+        if (health != null) _health.add(health);
       case 'payload':
         _payloads.add(PayloadFrame.fromJson(message['frame']));
       case 'ack':

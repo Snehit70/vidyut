@@ -15,6 +15,7 @@ class NearbyRelaysCard extends StatelessWidget {
     required this.discovering,
     required this.onRefresh,
     required this.onSelect,
+    this.error,
   });
 
   final List<DiscoveredRelay> relays;
@@ -22,6 +23,7 @@ class NearbyRelaysCard extends StatelessWidget {
   final bool discovering;
   final VoidCallback onRefresh;
   final ValueChanged<DiscoveredRelay> onSelect;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
@@ -59,8 +61,9 @@ class NearbyRelaysCard extends StatelessWidget {
           Text(
             discovering
                 ? 'Searching for relays on this network…'
-                : 'No relays found. Make sure the laptop relay is running, '
-                      'or pair manually below.',
+                : error ??
+                      'No laptop found. Start the relay, then search again, '
+                          'or scan its QR code below.',
             style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
           )
         else
@@ -128,10 +131,7 @@ class ManualPairingForm extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Manual pairing',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        Text('Manual pairing', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
         TextField(
           controller: hostController,
@@ -179,9 +179,9 @@ class ManualPairingForm extends StatelessWidget {
                   Expanded(
                     child: Text(
                       error!,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Palette.error,
-                      ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(color: Palette.error),
                     ),
                   ),
                 ],

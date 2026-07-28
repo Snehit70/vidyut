@@ -1,10 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vidyut/src/debug/debug_log.dart';
 import 'package:vidyut/src/debug/debug_log_screen.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   test('keeps entries in order and evicts the oldest past capacity', () {
     final log = DebugLog(capacity: 3);
 
@@ -52,6 +59,9 @@ void main() {
 
     await tester.tap(find.byTooltip('Clear log'));
     await tester.pump();
+    expect(find.text('Clear diagnostics?'), findsOneWidget);
+    await tester.tap(find.text('Clear diagnostics'));
+    await tester.pumpAndSettle();
 
     expect(find.text('No debug events yet.'), findsOneWidget);
 
@@ -59,5 +69,40 @@ void main() {
     await tester.pump();
 
     expect(find.text('Published to relay.'), findsOneWidget);
+  });
+
+  test('persists entries and exports a support report', () async {
+    final first = DebugLog();
+    first.add('connection', 'Status: connected');
+    await Future<void>.delayed(Duration.zero);
+
+    final restored = DebugLog();
+    await restored.load();
+
+    expect(restored.entries.single.message, 'Status: connected');
+    expect(restored.exportText(), contains('[connection] Status: connected'));
+  });
+
+  test('skips malformed persisted rows without aborting startup', () async {
+    SharedPreferences.setMockInitialValues({
+      'vidyut.debug.log.v1': [
+        jsonEncode({
+          'timestamp': 123,
+          'category': 'damaged',
+          'message': 'wrong timestamp type',
+        }),
+        jsonEncode({
+          'timestamp': '2026-07-28T00:00:00.000Z',
+          'category': 'connection',
+          'message': 'Status: connected',
+        }),
+      ],
+    });
+
+    final restored = DebugLog();
+    await restored.load();
+
+    expect(restored.entries, hasLength(1));
+    expect(restored.entries.single.message, 'Status: connected');
   });
 }
