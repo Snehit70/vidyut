@@ -1,5 +1,8 @@
 package dev.snehit.vidyut.clipboard_autosend
 
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -58,8 +61,33 @@ class ClipboardAutoSendPlugin :
         when (call.method) {
             "hasReadLogsPermission" ->
                 result.success(ClipboardAutoSendWatcher.hasReadLogsPermission(context))
-            "readText" ->
-                ClipboardAutoSendWatcher.requestManualRead(context, result)
+            "updateNotification" -> {
+                val notificationId = call.argument<Int>("notificationId")
+                val channelId = call.argument<String>("channelId")
+                val title = call.argument<String>("title")
+                val text = call.argument<String>("text")
+                if (
+                    notificationId == null ||
+                    channelId == null ||
+                    title == null ||
+                    text == null
+                ) {
+                    result.error(
+                        "invalid-notification",
+                        "Notification id, channel, title, and text are required.",
+                        null,
+                    )
+                } else {
+                    ClipboardAutoSendWatcher.updateNotification(
+                        context,
+                        title,
+                        text,
+                        notificationId,
+                        channelId,
+                    )
+                    result.success(null)
+                }
+            }
             "start" -> {
                 ClipboardAutoSendWatcher.start(context)
                 result.success(null)
@@ -102,10 +130,11 @@ class ClipboardAutoSendPlugin :
  * thread, and unregisters the listener.
  */
 object ClipboardAutoSendWatcher {
-    // Collapse denial bursts (a single copy can log several denials, and the
-    // read activity is singleInstance anyway).
+    // Collapse denial bursts because one clipboard change can log several
+    // denials before the first transparent reader finishes.
     private const val LAUNCH_THROTTLE_MS = 400L
-    private const val MANUAL_READ_TIMEOUT_MS = 5_000L
+    private const val MANUAL_ACTION_REQUEST_CODE = 17322
+    private const val CONTENT_REQUEST_CODE = 17323
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val sinks = CopyOnWriteArraySet<EventChannel.EventSink>()
@@ -115,7 +144,10 @@ object ClipboardAutoSendWatcher {
     private var readerThread: Thread? = null
     private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
     private var lastLaunchAtMs = 0L
-    private var pendingManualRead: MethodChannel.Result? = null
+    private var activeManualRequestId: Long? = null
+    private var nextManualRequestId = 0L
+    private var foregroundNotificationId: Int? = null
+    private var foregroundChannelId: String? = null
 
     fun addSink(sink: EventChannel.EventSink) {
         sinks.add(sink)
@@ -127,49 +159,122 @@ object ClipboardAutoSendWatcher {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    @Synchronized
-    fun requestManualRead(context: Context, result: MethodChannel.Result) {
-        if (pendingManualRead != null) {
-            result.error(
-                "read-in-progress",
-                "A clipboard read is already in progress.",
-                null,
-            )
+    fun updateNotification(
+        context: Context,
+        title: String,
+        text: String,
+        notificationId: Int? = null,
+        channelId: String? = null,
+    ) {
+        val app = context.applicationContext
+        if (notificationId != null && channelId != null) {
+            foregroundNotificationId = notificationId
+            foregroundChannelId = channelId
+        }
+        val targetId = foregroundNotificationId
+        val targetChannel = foregroundChannelId
+        if (targetId == null || targetChannel == null) {
+            emitLog("Notification action refresh skipped: configuration unavailable.")
             return
         }
-        pendingManualRead = result
-        mainHandler.postDelayed({
-            val timedOut = synchronized(this) {
-                if (pendingManualRead !== result) {
-                    false
-                } else {
-                    pendingManualRead = null
-                    true
-                }
-            }
-            if (timedOut) {
-                result.error(
-                    "read-timeout",
-                    "The clipboard reader did not gain focus.",
-                    null,
+        try {
+            val launchIntent = app.packageManager.getLaunchIntentForPackage(
+                app.packageName,
+            )
+            val immutableUpdate =
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val contentIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    app,
+                    CONTENT_REQUEST_CODE,
+                    it,
+                    immutableUpdate,
                 )
             }
-        }, MANUAL_READ_TIMEOUT_MS)
-        val intent = Intent(context, ClipboardReadActivity::class.java).apply {
-            putExtra(ClipboardReadActivity.EXTRA_MANUAL_READ, true)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
-        }
-        try {
-            context.startActivity(intent)
+            val manualIntent = Intent(app, ClipboardReadActivity::class.java).apply {
+                putExtra(ClipboardReadActivity.EXTRA_MANUAL_READ, true)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            }
+            val manualPendingIntent = PendingIntent.getActivity(
+                app,
+                MANUAL_ACTION_REQUEST_CODE,
+                manualIntent,
+                immutableUpdate,
+            )
+            val appInfo = app.packageManager.getApplicationInfo(app.packageName, 0)
+            if (appInfo.icon == 0) {
+                emitLog("Notification action refresh skipped: app icon unavailable.")
+                return
+            }
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(app, targetChannel)
+            } else {
+                Notification.Builder(app)
+            }
+            val notification = builder
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setSmallIcon(appInfo.icon)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setContentIntent(contentIntent)
+                .addAction(0, "Send copied text", manualPendingIntent)
+                .apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setForegroundServiceBehavior(
+                            Notification.FOREGROUND_SERVICE_IMMEDIATE,
+                        )
+                    }
+                }
+                .build()
+            app.getSystemService(NotificationManager::class.java)
+                .notify(targetId, notification)
         } catch (error: Exception) {
-            pendingManualRead = null
-            result.error(
-                "activity-launch-failed",
-                "Could not open the clipboard reader: ${error.message}",
-                null,
+            emitLog(
+                "Notification action refresh failed: " +
+                    (error.message ?: error.javaClass.simpleName),
             )
         }
+    }
+
+    @Synchronized
+    fun beginManualRead(): Long? {
+        if (activeManualRequestId != null) return null
+        nextManualRequestId += 1
+        return nextManualRequestId.also { activeManualRequestId = it }
+    }
+
+    @Synchronized
+    fun completeManualRead(
+        requestId: Long,
+        status: String,
+        text: String? = null,
+    ) {
+        if (activeManualRequestId != requestId) return
+        activeManualRequestId = null
+        val payload = mutableMapOf<String, Any?>(
+            "type" to "manualResult",
+            "requestId" to requestId,
+            "status" to status,
+        )
+        if (text != null) {
+            payload["text"] = text
+        }
+        fanOut(payload)
+    }
+
+    fun reportManualBusy() {
+        fanOut(
+            mapOf(
+                "type" to "manualResult",
+                "requestId" to 0L,
+                "status" to "busy",
+            ),
+        )
     }
 
     @Synchronized
@@ -312,14 +417,7 @@ object ClipboardAutoSendWatcher {
      * with freshly read clipboard text. Forwarded to the service isolate, which
      * owns the echo guard and the publish path (D3/D4).
      */
-    fun onClipboardRead(text: String?, manual: Boolean = false) {
-        if (manual) {
-            val result = synchronized(this) {
-                pendingManualRead.also { pendingManualRead = null }
-            }
-            result?.success(text)
-            return
-        }
+    fun onClipboardRead(text: String?) {
         if (text.isNullOrEmpty()) return
         emitLog("Clipboard auto-read: ${text.length} chars; forwarding.")
         fanOut(mapOf("type" to "text", "text" to text))

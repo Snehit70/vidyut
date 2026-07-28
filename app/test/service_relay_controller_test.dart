@@ -718,17 +718,21 @@ void main() {
 
   group('clipboard auto-send watcher', () {
     test(
-      'notification action reads and sends without opening the app',
+      'direct notification activity result sends without opening the app',
       () async {
-        final watcher = _FakeAutoSendWatcher(manualText: 'copied on phone');
+        final watcher = _FakeAutoSendWatcher();
         final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
 
         await harness.controller.start();
-        await harness.controller.handleTaskData(const {
-          'kind': 'sendClipboard',
-        });
+        watcher.emitManual(
+          const ManualClipboardReadResult(
+            requestId: 1,
+            status: ManualClipboardReadStatus.text,
+            text: 'copied on phone',
+          ),
+        );
+        await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
 
-        expect(watcher.manualReads, 1);
         expect(harness.autoSendPublished, ['copied on phone']);
         expect(
           harness.notifications,
@@ -738,11 +742,23 @@ void main() {
     );
 
     test('notification action reports an empty clipboard', () async {
-      final watcher = _FakeAutoSendWatcher(manualText: null);
+      final watcher = _FakeAutoSendWatcher();
       final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
 
       await harness.controller.start();
-      await harness.controller.handleTaskData(const {'kind': 'sendClipboard'});
+      watcher.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.empty,
+        ),
+      );
+      await _waitUntil(
+        () => harness.notifications.any(
+          (notification) =>
+              notification.title == 'Vidyut could not send' &&
+              notification.text == 'The clipboard has no text.',
+        ),
+      );
 
       expect(harness.autoSendPublished, isEmpty);
       expect(
@@ -752,6 +768,108 @@ void main() {
           text: 'The clipboard has no text.',
         )),
       );
+    });
+
+    test('notification action reports typed native read failures', () async {
+      final cases = [
+        (
+          status: ManualClipboardReadStatus.unreadable,
+          title: 'Vidyut could not send',
+          text: 'Clipboard text could not be read.',
+        ),
+        (
+          status: ManualClipboardReadStatus.focusTimeout,
+          title: 'Vidyut could not send',
+          text: 'Clipboard access timed out. Tap to try again.',
+        ),
+        (
+          status: ManualClipboardReadStatus.busy,
+          title: 'Vidyut is already sending',
+          text: 'Wait for the current send to finish.',
+        ),
+      ];
+
+      for (final testCase in cases) {
+        final watcher = _FakeAutoSendWatcher();
+        final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
+        await harness.controller.start();
+
+        watcher.emitManual(
+          ManualClipboardReadResult(requestId: 1, status: testCase.status),
+        );
+        await _waitUntil(
+          () => harness.notifications.any(
+            (notification) =>
+                notification.title == testCase.title &&
+                notification.text == testCase.text,
+          ),
+        );
+
+        expect(harness.autoSendPublished, isEmpty);
+        await harness.controller.stop();
+      }
+    });
+
+    test(
+      'notification action rejects a second send while publishing',
+      () async {
+        final publishGate = Completer<SharePublishResult>();
+        final watcher = _FakeAutoSendWatcher();
+        final harness = _Harness(
+          pairing: pairing,
+          autoSendWatcher: watcher,
+          autoSendGate: publishGate,
+        );
+        await harness.controller.start();
+
+        const result = ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'copied on phone',
+        );
+        watcher.emitManual(result);
+        await _waitUntil(() => harness.autoSendPublished.length == 1);
+        watcher.emitManual(result);
+        await _waitUntil(
+          () => harness.notifications.any(
+            (notification) => notification.title == 'Vidyut is already sending',
+          ),
+        );
+
+        expect(harness.autoSendPublished, ['copied on phone']);
+        publishGate.complete(const SharePublishResult.published());
+        await _waitUntil(
+          () => harness.notifications.any(
+            (notification) => notification.title == 'Vidyut sent to laptop',
+          ),
+        );
+      },
+    );
+
+    test('notification action reports an unavailable publisher', () async {
+      final watcher = _FakeAutoSendWatcher();
+      final harness = _Harness(
+        pairing: pairing,
+        autoSendWatcher: watcher,
+        provideAutoSendPublish: false,
+      );
+      await harness.controller.start();
+
+      watcher.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'copied on phone',
+        ),
+      );
+      await _waitUntil(
+        () => harness.notifications.any(
+          (notification) =>
+              notification.text == 'Clipboard publisher is unavailable.',
+        ),
+      );
+
+      expect(harness.autoSendPublished, isEmpty);
     });
 
     test('stays inert when the setting is off (default)', () async {
@@ -993,6 +1111,8 @@ class _Harness {
     Duration watchdogInterval = defaultWatchdogInterval,
     Duration connectionCloseTimeout = RelayConnection.defaultCloseTimeout,
     bool transportsHangOnClose = false,
+    bool provideAutoSendPublish = true,
+    Completer<SharePublishResult>? autoSendGate,
     Future<AppSettings> Function()? loadSettings,
   }) {
     controller = ServiceRelayController(
@@ -1003,10 +1123,12 @@ class _Harness {
       screenshotWatcher: screenshotWatcher,
       pushController: pushController,
       clipboardAutoSendWatcher: autoSendWatcher,
-      autoSendPublish: (payload) async {
-        autoSendPublished.add(payload.text ?? '');
-        return autoSendResult;
-      },
+      autoSendPublish: provideAutoSendPublish
+          ? (payload) async {
+              autoSendPublished.add(payload.text ?? '');
+              return autoSendGate?.future ?? autoSendResult;
+            }
+          : null,
       screenOnEvents: screenOn.stream,
       loadPairing: () async => pairing,
       loadSettings: loadSettings ?? () async => settings,
@@ -1173,27 +1295,32 @@ class _FakeScreenshotWatcher implements ScreenshotWatcher {
 }
 
 class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
-  _FakeAutoSendWatcher({this.granted = true, this.manualText});
+  _FakeAutoSendWatcher({this.granted = true});
 
   bool granted;
-  String? manualText;
-  int manualReads = 0;
   int starts = 0;
   int stops = 0;
   bool watching = false;
 
   final _texts = StreamController<String>.broadcast();
+  final _manualResults =
+      StreamController<ManualClipboardReadResult>.broadcast();
   final _diagnostics = StreamController<String>.broadcast();
 
   void emitText(String text) => _texts.add(text);
 
+  void emitManual(ManualClipboardReadResult result) =>
+      _manualResults.add(result);
+
   void emitDiagnostic(String message) => _diagnostics.add(message);
 
   @override
-  Future<String?> readText() async {
-    manualReads++;
-    return manualText;
-  }
+  Future<void> updateNotification({
+    required int notificationId,
+    required String channelId,
+    required String title,
+    required String text,
+  }) async {}
 
   @override
   Future<bool> hasReadLogsPermission() async => granted;
@@ -1212,6 +1339,9 @@ class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
 
   @override
   Stream<String> get texts => _texts.stream;
+
+  @override
+  Stream<ManualClipboardReadResult> get manualResults => _manualResults.stream;
 
   @override
   Stream<String> get diagnostics => _diagnostics.stream;

@@ -18,9 +18,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
                      android:maxSdkVersion="32" />
-    <!-- Overlay grant exempts the app from background-activity-start blocks,
-         which Android 12+ applies to notification-button launches (the
-         "Send clipboard" action) and MIUI enforces extra strictly. -->
+    <!-- Optional reliability lever for the advanced READ_LOGS automatic-text
+         path, which launches its invisible reader without a user gesture.
+         The manually tapped notification action uses a direct activity
+         PendingIntent and does not require this grant. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Opt-in READ_LOGS auto-text mode (read-logs-auto-text D6): signature|
          privileged, so it is inert on a normal install and grantable only via

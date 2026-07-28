@@ -2,6 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+enum ManualClipboardReadStatus { text, empty, unreadable, focusTimeout, busy }
+
+class ManualClipboardReadResult {
+  const ManualClipboardReadResult({
+    required this.requestId,
+    required this.status,
+    this.text,
+  });
+
+  final int requestId;
+  final ManualClipboardReadStatus status;
+  final String? text;
+}
+
 /// Dart face of the opt-in READ_LOGS auto-text watcher (read-logs-auto-text D2).
 ///
 /// The native side registers a process-wide watcher from application context via
@@ -9,10 +23,15 @@ import 'package:flutter/services.dart';
 /// logcat subprocess regardless of which engine attaches. The service isolate is
 /// the intended consumer.
 abstract interface class ClipboardAutoSendWatcher {
-  /// Opens the native transparent clipboard reader and returns the current
-  /// text. This follows an explicit notification tap, so READ_LOGS is not
-  /// required.
-  Future<String?> readText();
+  /// Rebuilds the foreground notification with a direct activity PendingIntent
+  /// for its manual clipboard action. This avoids Android 12's blocked
+  /// notification-trampoline path.
+  Future<void> updateNotification({
+    required int notificationId,
+    required String channelId,
+    required String title,
+    required String text,
+  });
 
   /// Whether `READ_LOGS` is granted (`checkSelfPermission`). Grantable only via
   /// the one-time adb block (D6); re-checked on each return-to-foreground since
@@ -31,6 +50,9 @@ abstract interface class ClipboardAutoSendWatcher {
   /// or the direct listener (legacy). The service isolate applies the echo guard
   /// and publishes (D3/D4).
   Stream<String> get texts;
+
+  /// Results from notification-triggered transparent activity reads.
+  Stream<ManualClipboardReadResult> get manualResults;
 
   /// The watcher's per-stage debug lines (spec "Instrumentation"): started with
   /// the chosen filter + API level, denial matched (redacted), read N chars.
@@ -58,7 +80,17 @@ class ChannelClipboardAutoSendWatcher implements ClipboardAutoSendWatcher {
   final EventChannel _eventChannel;
 
   @override
-  Future<String?> readText() => _methodChannel.invokeMethod<String>('readText');
+  Future<void> updateNotification({
+    required int notificationId,
+    required String channelId,
+    required String title,
+    required String text,
+  }) => _methodChannel.invokeMethod<void>('updateNotification', {
+    'notificationId': notificationId,
+    'channelId': channelId,
+    'title': title,
+    'text': text,
+  });
 
   /// One native subscription, split into [texts] and [diagnostics] below. The
   /// native side tags every emission with `type`: `"text"` carries a read
@@ -84,6 +116,20 @@ class ChannelClipboardAutoSendWatcher implements ClipboardAutoSendWatcher {
       .where((event) => event['type'] == 'text')
       .map((event) => event['text'] as String? ?? '')
       .where((text) => text.isNotEmpty);
+
+  @override
+  Stream<ManualClipboardReadResult> get manualResults => _raw
+      .where((event) => event['type'] == 'manualResult')
+      .map(
+        (event) => ManualClipboardReadResult(
+          requestId: event['requestId'] as int? ?? 0,
+          status: ManualClipboardReadStatus.values.firstWhere(
+            (status) => status.name == event['status'],
+            orElse: () => ManualClipboardReadStatus.unreadable,
+          ),
+          text: event['text'] as String?,
+        ),
+      );
 
   @override
   Stream<String> get diagnostics => _raw
