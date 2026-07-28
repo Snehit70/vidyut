@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      EXPECTED_APK_CERT_SHA256: 4a0ba8059a40e397471d7ccb60e135d055b173e03709cffcf67c81278824d261
+      EXPECTED_APK_CERT_SHA256: 5403eace6495df8e2d6fa0e2eb64c479ccd05c02094383961fc7eddf665d35aa
       MAX_APK_BYTES: 83886080
     if: >-
       github.event_name != 'push' ||
@@ -210,10 +210,14 @@ jobs:
 
       - name: Install app dependencies
         working-directory: app
-        run: flutter pub get
+        run: |
+          flutter clean
+          flutter pub get
 
       - name: Build ARM64 release APK
         working-directory: app
+        env:
+          GRADLE_OPTS: -Dorg.gradle.caching=false
         run: flutter build apk --release --split-per-abi
 
       - name: Verify Android release identity
