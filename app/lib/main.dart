@@ -42,7 +42,9 @@ import 'src/update/github_update_checker.dart';
 
 typedef RelayConnectionFactory = RelayConnection Function(PairingCode pairing);
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await sharedDebugLog.load();
   // Delegate AES-GCM/PBKDF2 to platform crypto (push spec §4); the package
   // silently falls back to pure Dart where the plugin channel is missing.
   Cryptography.instance = FlutterCryptography.defaultInstance;
@@ -213,6 +215,9 @@ class _PairingScreenState extends State<PairingScreen>
   /// Live "connected" flag mirrored into the wizard's finale (D2).
   final _connectedNotifier = ValueNotifier<bool>(false);
   SetupStatus? _setupStatus;
+  RelayHealth? _relayHealth;
+  String? _connectionDetail;
+  String? _discoveryError;
 
   /// D6 loader shared by the banner, the checklist, and the Settings chip.
   late final SetupStatusLoader? _setupLoader = widget.setupActions == null
@@ -229,6 +234,7 @@ class _PairingScreenState extends State<PairingScreen>
     WidgetsBinding.instance.addObserver(this);
     widget.foregroundServiceClient.addTaskDataCallback(_onServiceData);
     final tapHandler = widget.receiveNotificationTapHandler;
+    unawaited(_debugLog.load());
     if (tapHandler != null) {
       tapHandler.onCopied = (message) {
         _debugLog.add('clipboard', message);
@@ -272,7 +278,25 @@ class _PairingScreenState extends State<PairingScreen>
             isError: status == ConnectionStatus.offline,
           );
           _connectedNotifier.value = status == ConnectionStatus.connected;
-          setState(() => _connectionStatus = status);
+          setState(() {
+            _connectionStatus = status;
+            if (status == ConnectionStatus.connected) {
+              _connectionDetail = null;
+            }
+          });
+        }
+      case 'health':
+        final status = data['status'];
+        final relayName = data['relayName'];
+        if (status is String && relayName is String) {
+          setState(() {
+            _relayHealth = RelayHealth(
+              status: status,
+              relayName: relayName,
+              clipboardStatus: data['clipboardStatus'] as String?,
+              clipboardError: data['clipboardError'] as String?,
+            );
+          });
         }
       case 'receive':
         final message = data['message'];
@@ -293,6 +317,11 @@ class _PairingScreenState extends State<PairingScreen>
         final message = data['message'];
         if (message is String) {
           _debugLog.add('service', message, isError: data['error'] == true);
+          if (data['error'] == true) {
+            setState(
+              () => _connectionDetail = _friendlyConnectionError(message),
+            );
+          }
         }
       case 'sendClipboard':
         unawaited(_openSendClipboard());
@@ -316,6 +345,17 @@ class _PairingScreenState extends State<PairingScreen>
   Future<void> _loadLastActivity() async {
     final activity = await widget.lastActivityRepository.load();
     if (mounted) setState(() => _lastActivity = activity);
+  }
+
+  Future<void> _copyLastReceived() async {
+    final activity = _lastActivity;
+    final handler = widget.receiveNotificationTapHandler;
+    if (activity == null ||
+        activity.direction != ActivityDirection.received ||
+        handler == null) {
+      return;
+    }
+    await handler.copyLatest(image: activity.summary.startsWith('image'));
   }
 
   Future<void> _recordReceived(Map<Object?, Object?> data, String message) {
@@ -452,13 +492,17 @@ class _PairingScreenState extends State<PairingScreen>
     List<DiscoveredRelay>? relays;
     try {
       relays = await discovery.discover();
-    } on Exception {
-      // Discovery is best-effort; manual pairing and QR remain available.
+    } on Exception catch (error) {
+      _debugLog.add('discovery', 'Nearby search failed: $error', isError: true);
+      _discoveryError = 'Nearby search failed. Check Wi-Fi, then try again.';
     }
     if (!mounted) return;
     setState(() {
       _discovering = false;
-      if (relays != null) _nearbyRelays = relays;
+      if (relays != null) {
+        _nearbyRelays = relays;
+        _discoveryError = null;
+      }
     });
   }
 
@@ -591,7 +635,8 @@ class _PairingScreenState extends State<PairingScreen>
 
     final paired = _pairing != null;
     final statusLabel = switch (_connectionStatus) {
-      ConnectionStatus.connected => 'Connected',
+      ConnectionStatus.connected =>
+        _relayHealth?.degraded == true ? 'Needs attention' : 'Ready',
       ConnectionStatus.searching => 'Searching',
       ConnectionStatus.offline => paired ? 'Offline' : 'Unpaired',
     };
@@ -617,7 +662,9 @@ class _PairingScreenState extends State<PairingScreen>
               description: paired
                   ? switch (_connectionStatus) {
                       ConnectionStatus.connected =>
-                        'Your laptop and phone share one clipboard.',
+                        _relayHealth?.degraded == true
+                            ? 'Connected, but the laptop clipboard watcher is not working.'
+                            : 'Your laptop and phone share one clipboard.',
                       ConnectionStatus.searching =>
                         'Looking for your laptop on the network.',
                       ConnectionStatus.offline =>
@@ -631,6 +678,7 @@ class _PairingScreenState extends State<PairingScreen>
                   paired ? Icons.cloud_off : Icons.qr_code_scanner,
               },
               searching: _connectionStatus == ConnectionStatus.searching,
+              onTap: paired ? _showConnectionHelp : null,
             ).entrance(0),
             if (paired) ...[
               if (_lastActivity != null) ...[
@@ -639,12 +687,15 @@ class _PairingScreenState extends State<PairingScreen>
                   icon: Icons.history,
                   title: 'Last activity',
                   subtitle: _lastActivity!.describe(),
+                  onTap: _lastActivity!.direction == ActivityDirection.received
+                      ? () => unawaited(_copyLastReceived())
+                      : null,
                 ).entrance(1),
               ],
               const SizedBox(height: 12),
               _DashboardRow(
                 icon: Icons.dns_outlined,
-                title: 'Relay',
+                title: _relayHealth?.relayName ?? _pairing!.name ?? 'Laptop',
                 subtitle: '${_pairing!.host}:${_pairing!.port}',
               ).entrance(2),
               if (_setupStatus != null) ...[
@@ -679,6 +730,7 @@ class _PairingScreenState extends State<PairingScreen>
                   discovering: _discovering,
                   onRefresh: _discoverRelays,
                   onSelect: _selectNearbyRelay,
+                  error: _discoveryError,
                 ).entrance(2),
                 const SizedBox(height: 28),
               ],
@@ -692,6 +744,66 @@ class _PairingScreenState extends State<PairingScreen>
               ).entrance(3),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  String _friendlyConnectionError(String message) {
+    if (message.contains('auth') || message.contains('proof')) {
+      return 'The laptop rejected this pairing. Pair again to continue.';
+    }
+    if (message.contains('timed out') || message.contains('socket')) {
+      return 'The laptop did not respond. Check Wi-Fi and wake the laptop.';
+    }
+    return 'Vidyut will keep retrying automatically.';
+  }
+
+  Future<void> _showConnectionHelp() async {
+    final degraded = _relayHealth?.degraded == true;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                degraded
+                    ? 'Laptop clipboard needs attention'
+                    : 'Connection help',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                degraded
+                    ? (_relayHealth?.clipboardError ??
+                          'Restart the laptop relay and check wl-clipboard.')
+                    : (_connectionDetail ??
+                          'Vidyut is connected. If sync feels stuck, wake the laptop and retry now.'),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  unawaited(_syncForegroundService());
+                },
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry now'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  unawaited(_openSettings());
+                },
+                child: const Text('Open setup and diagnostics'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -736,18 +848,20 @@ class _StatusHero extends StatelessWidget {
     required this.description,
     required this.icon,
     required this.searching,
+    this.onTap,
   });
 
   final String label;
   final String description;
   final IconData icon;
   final bool searching;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
-    return Column(
+    final content = Column(
       children: [
         const SizedBox(height: 16),
         MorphingBlob(
@@ -766,10 +880,7 @@ class _StatusHero extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (searching) ...[
-              const PulsingDot(),
-              const SizedBox(width: 6),
-            ],
+            if (searching) ...[const PulsingDot(), const SizedBox(width: 6)],
             Text(label, style: textTheme.titleLarge),
           ],
         ),
@@ -783,6 +894,16 @@ class _StatusHero extends StatelessWidget {
           ),
         ),
       ],
+    );
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      label: 'Connection details',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: content,
+      ),
     );
   }
 }
@@ -892,8 +1013,8 @@ class _SetupHealthRow extends StatelessWidget {
       subtitle: healthy
           ? 'All clear'
           : issues == 1
-              ? '1 issue needs attention'
-              : '$issues issues need attention',
+          ? '1 issue needs attention'
+          : '$issues issues need attention',
       emphasis: !healthy,
       onTap: onTap,
     );
@@ -922,11 +1043,7 @@ class _SetupBanner extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
-                const Icon(
-                  Icons.tune,
-                  size: 20,
-                  color: Palette.raspberry,
-                ),
+                const Icon(Icons.tune, size: 20, color: Palette.raspberry),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

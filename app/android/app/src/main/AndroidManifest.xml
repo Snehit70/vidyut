@@ -26,6 +26,7 @@
          privileged, so it is inert on a normal install and grantable only via
          the one-time adb block surfaced in Advanced → Clipboard auto-send. -->
     <uses-permission android:name="android.permission.READ_LOGS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="vidyut"

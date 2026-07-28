@@ -3,4 +3,5 @@
     <!-- Matches the directory ReceivedImageRepository writes under the app
          support (files) dir; only this subtree is exposed via content URIs. -->
     <files-path name="vidyut_received" path="vidyut_received/" />
+    <cache-path name="vidyut_updates" path="vidyut_updates/" />
 </paths>

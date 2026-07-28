@@ -7,12 +7,15 @@ String _releaseJson({
   List<Map<String, String>> assets = const [],
 }) {
   final assetsJson = assets
-      .map((a) => '{"name":"${a['name']}","browser_download_url":"${a['url']}"}')
+      .map(
+        (a) => '{"name":"${a['name']}","browser_download_url":"${a['url']}"}',
+      )
       .join(',');
   return '{"tag_name":"$tag","body":"$body","assets":[$assetsJson]}';
 }
 
-bool _isDebugApk(String name) => name.toLowerCase().endsWith('.apk') && name.contains('debug');
+bool _isDebugApk(String name) =>
+    name.toLowerCase().endsWith('.apk') && name.contains('debug');
 
 void main() {
   group('SemVer', () {
@@ -27,9 +30,18 @@ void main() {
     });
 
     test('compares major, then minor, then patch', () {
-      expect(SemVer.tryParse('2.0.0')!.compareTo(SemVer.tryParse('1.9.9')!), greaterThan(0));
-      expect(SemVer.tryParse('1.3.0')!.compareTo(SemVer.tryParse('1.2.9')!), greaterThan(0));
-      expect(SemVer.tryParse('1.2.4')!.compareTo(SemVer.tryParse('1.2.3')!), greaterThan(0));
+      expect(
+        SemVer.tryParse('2.0.0')!.compareTo(SemVer.tryParse('1.9.9')!),
+        greaterThan(0),
+      );
+      expect(
+        SemVer.tryParse('1.3.0')!.compareTo(SemVer.tryParse('1.2.9')!),
+        greaterThan(0),
+      );
+      expect(
+        SemVer.tryParse('1.2.4')!.compareTo(SemVer.tryParse('1.2.3')!),
+        greaterThan(0),
+      );
       expect(SemVer.tryParse('1.2.3')!.compareTo(SemVer.tryParse('1.2.3')!), 0);
     });
   });
@@ -45,52 +57,75 @@ void main() {
       expect(result, isA<UpToDate>());
     });
 
-    test('reports up to date when latest tag is older than current version', () {
-      final result = resolveUpdate(
-        currentVersion: '1.3.0',
-        statusCode: 200,
-        responseBody: _releaseJson(tag: 'v1.2.0'),
-        assetNameMatches: _isDebugApk,
-      );
-      expect(result, isA<UpToDate>());
-    });
+    test(
+      'reports up to date when latest tag is older than current version',
+      () {
+        final result = resolveUpdate(
+          currentVersion: '1.3.0',
+          statusCode: 200,
+          responseBody: _releaseJson(tag: 'v1.2.0'),
+          assetNameMatches: _isDebugApk,
+        );
+        expect(result, isA<UpToDate>());
+      },
+    );
 
-    test('reports an update with the matching asset when a newer tag exists', () {
-      final result = resolveUpdate(
-        currentVersion: '1.0.0',
-        statusCode: 200,
-        responseBody: _releaseJson(
-          tag: 'v1.1.0',
-          assets: [
-            {'name': 'vidyut-relay-1.1.0-linux-x64', 'url': 'https://example.com/relay'},
-            {'name': 'vidyut-1.1.0-debug.apk', 'url': 'https://example.com/app.apk'},
-          ],
-        ),
-        assetNameMatches: _isDebugApk,
-      );
-      expect(result, isA<UpdateAvailable>());
-      final update = result as UpdateAvailable;
-      expect(update.version.toString(), '1.1.0');
-      expect(update.tagName, 'v1.1.0');
-      expect(update.assetName, 'vidyut-1.1.0-debug.apk');
-      expect(update.downloadUrl, 'https://example.com/app.apk');
-    });
+    test(
+      'reports an update with the matching asset when a newer tag exists',
+      () {
+        final result = resolveUpdate(
+          currentVersion: '1.0.0',
+          statusCode: 200,
+          responseBody: _releaseJson(
+            tag: 'v1.1.0',
+            assets: [
+              {
+                'name': 'vidyut-relay-1.1.0-linux-x64',
+                'url': 'https://example.com/relay',
+              },
+              {
+                'name': 'vidyut-1.1.0-debug.apk',
+                'url': 'https://example.com/app.apk',
+              },
+              {
+                'name': 'vidyut-1.1.0-debug.apk.sha256',
+                'url': 'https://example.com/app.sha256',
+              },
+            ],
+          ),
+          assetNameMatches: _isDebugApk,
+        );
+        expect(result, isA<UpdateAvailable>());
+        final update = result as UpdateAvailable;
+        expect(update.version.toString(), '1.1.0');
+        expect(update.tagName, 'v1.1.0');
+        expect(update.assetName, 'vidyut-1.1.0-debug.apk');
+        expect(update.downloadUrl, 'https://example.com/app.apk');
+        expect(update.sha256Url, 'https://example.com/app.sha256');
+      },
+    );
 
-    test('reports missing asset when a newer tag exists without a matching asset', () {
-      final result = resolveUpdate(
-        currentVersion: '1.0.0',
-        statusCode: 200,
-        responseBody: _releaseJson(
-          tag: 'v1.1.0',
-          assets: [
-            {'name': 'vidyut-relay-1.1.0-linux-x64', 'url': 'https://example.com/relay'},
-          ],
-        ),
-        assetNameMatches: _isDebugApk,
-      );
-      expect(result, isA<MissingAsset>());
-      expect((result as MissingAsset).tagName, 'v1.1.0');
-    });
+    test(
+      'reports missing asset when a newer tag exists without a matching asset',
+      () {
+        final result = resolveUpdate(
+          currentVersion: '1.0.0',
+          statusCode: 200,
+          responseBody: _releaseJson(
+            tag: 'v1.1.0',
+            assets: [
+              {
+                'name': 'vidyut-relay-1.1.0-linux-x64',
+                'url': 'https://example.com/relay',
+              },
+            ],
+          ),
+          assetNameMatches: _isDebugApk,
+        );
+        expect(result, isA<MissingAsset>());
+        expect((result as MissingAsset).tagName, 'v1.1.0');
+      },
+    );
 
     test('reports no release found on 404', () {
       final result = resolveUpdate(

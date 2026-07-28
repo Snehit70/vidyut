@@ -13,6 +13,14 @@ void main() {
     expect(pairing.secret, 'pairing-secret');
   });
 
+  test('parses a friendly laptop name when advertised', () {
+    const raw =
+        '{"v":1,"service":"vidyut","host":"192.168.1.10","port":17321,'
+        '"secret":"pairing-secret","name":"framework"}';
+
+    expect(PairingCode.parse(raw).name, 'framework');
+  });
+
   test('parses manual host port and secret entry', () {
     final pairing = PairingCode.parseManual(
       host: '192.168.1.10',

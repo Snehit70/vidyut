@@ -115,4 +115,47 @@ describe("relay /health", () => {
       await relay.stop();
     }
   });
+
+  test("sends relay identity and health after authentication", async () => {
+    const relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024 * 1024,
+      relayName: "framework",
+      clipboardHealth: () => ({
+        enabled: true,
+        status: "healthy",
+        watcher: "wl-paste --watch",
+      }),
+    });
+    try {
+      const socket = new WebSocket(relay.url);
+      const messages: any[] = [];
+      socket.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data))));
+      await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve()));
+      while (!messages.length) await Bun.sleep(1);
+      const hello = messages[0];
+      const { createPairingProof } = await import("../src/shared/auth");
+      socket.send(JSON.stringify({
+        v: 1,
+        kind: "auth",
+        deviceId: "phone",
+        proof: await createPairingProof(secret, hello.challenge, "phone"),
+      }));
+      while (messages.length < 2) await Bun.sleep(1);
+      expect(messages[1].health).toEqual({
+        status: "ok",
+        relayName: "framework",
+        clipboard: {
+          enabled: true,
+          status: "healthy",
+          watcher: "wl-paste --watch",
+        },
+      });
+      socket.close();
+    } finally {
+      await relay.stop();
+    }
+  });
 });

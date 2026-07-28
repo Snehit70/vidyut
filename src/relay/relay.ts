@@ -1,7 +1,13 @@
 import { verifyPairingProof } from "../shared/auth";
 import { noopLogger, type Logger } from "./logger";
 import { PayloadPool } from "./payload-pool";
-import { encodedPayloadBytes, isPayloadFrame, type PayloadFrame, type RelayMessage } from "../shared/wire";
+import {
+  encodedPayloadBytes,
+  isPayloadFrame,
+  type PayloadFrame,
+  type RelayHealth,
+  type RelayMessage,
+} from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
 
 interface RelayOptions {
@@ -14,6 +20,7 @@ interface RelayOptions {
   staleAfterMs?: number;
   logger?: Logger;
   clipboardHealth?: () => ClipboardHealth;
+  relayName?: string;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -34,6 +41,7 @@ type RelaySocket = Bun.ServerWebSocket<DeviceSocketData>;
 export interface RelayHandle {
   url: string;
   pool: PayloadPool;
+  publishHealth(): void;
   stop(): Promise<void>;
 }
 
@@ -121,7 +129,14 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         }
 
         if (!socket.data.authenticated) {
-          await authenticate(logger, socket, message, options.pairingSecret, pool.current);
+          await authenticate(
+            logger,
+            socket,
+            message,
+            options.pairingSecret,
+            pool.current,
+            relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
+          );
           return;
         }
 
@@ -174,6 +189,20 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
   return {
     url: `ws://${server.hostname}:${server.port}`,
     pool,
+    publishHealth() {
+      broadcast(
+        devices,
+        undefined,
+        {
+          v: 1,
+          kind: "health",
+          health: relayHealth(
+            options.relayName ?? "Vidyut Relay",
+            options.clipboardHealth?.(),
+          ),
+        },
+      );
+    },
     async stop() {
       clearInterval(heartbeat);
       unsubscribe();
@@ -189,6 +218,7 @@ async function authenticate(
   message: RelayMessage,
   pairingSecret: string,
   currentPayload: PayloadFrame | undefined,
+  health: RelayHealth,
 ): Promise<void> {
   if (message.kind !== "auth") {
     logger.warn("auth_failed", { connId: socket.data.connId, remote: socket.data.remote, reason: "not_auth_message" });
@@ -212,7 +242,7 @@ async function authenticate(
     deviceId: message.deviceId,
     msSinceConnect: Date.now() - socket.data.connectedAt,
   });
-  send(socket, { v: 1, kind: "auth_ok" });
+  send(socket, { v: 1, kind: "auth_ok", health });
   if (currentPayload) {
     send(socket, { v: 1, kind: "payload", frame: currentPayload });
     logger.info("payload_broadcast", {
@@ -222,6 +252,17 @@ async function authenticate(
       replay: true,
     });
   }
+}
+
+function relayHealth(
+  relayName: string,
+  clipboard?: ClipboardHealth,
+): RelayHealth {
+  return {
+    status: clipboard?.status === "degraded" ? "degraded" : "ok",
+    relayName,
+    ...(clipboard && { clipboard }),
+  };
 }
 
 // The one-curl liveness surface (#36): identity and age only — never payload

@@ -116,7 +116,11 @@ void main() {
         pairingRepository: PairingRepository(MemoryPairingStorage()),
         relayConnectionFactory: fakeConnection,
         relayDiscovery: FakeRelayDiscovery(const [
-          DiscoveredRelay(name: 'Vidyut Relay', host: '192.168.1.5', port: 17321),
+          DiscoveredRelay(
+            name: 'Vidyut Relay',
+            host: '192.168.1.5',
+            port: 17321,
+          ),
         ]),
       ),
     );
@@ -171,7 +175,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Nearby relays'), findsOneWidget);
-    expect(find.textContaining('No relays found'), findsOneWidget);
+    expect(find.textContaining('No laptop found'), findsOneWidget);
     expect(find.text('Pair manually'), findsOneWidget);
   });
 
@@ -204,12 +208,7 @@ void main() {
       find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.widgetWithText(
-        SwitchListTile,
-        'Sync with laptop',
-      ),
-    );
+    await tester.tap(find.widgetWithText(SwitchListTile, 'Sync with laptop'));
     await tester.pumpAndSettle();
 
     await tester.pageBack();
@@ -234,7 +233,9 @@ void main() {
 
     await tester.pumpWidget(
       VidyutApp(
-        appSettingsRepository: AppSettingsRepository(MemoryAppSettingsStorage()),
+        appSettingsRepository: AppSettingsRepository(
+          MemoryAppSettingsStorage(),
+        ),
         lastActivityRepository: LastActivityRepository(
           MemoryLastActivityStorage(),
         ),

@@ -83,6 +83,10 @@ class ReceiveNotificationTapHandler {
     }
   }
 
+  Future<void> copyLatest({required bool image}) {
+    return image ? _copyLatestImage() : _copyLatestText();
+  }
+
   Future<void> _openClipboardPermissionSettings() async {
     try {
       await permissionSettingsOpener.open();
