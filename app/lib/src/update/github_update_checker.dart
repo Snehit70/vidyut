@@ -180,8 +180,10 @@ class GithubUpdateChecker {
   final String repo;
   final Duration timeout;
 
-  bool _isDebugApk(String assetName) =>
-      assetName.toLowerCase().endsWith('.apk') && assetName.contains('debug');
+  bool _isInstallableApk(String assetName) {
+    final lower = assetName.toLowerCase();
+    return lower.startsWith('vidyut-') && lower.endsWith('.apk');
+  }
 
   Future<UpdateCheckResult> check(String currentVersion) async {
     final uri = Uri.https(
@@ -205,7 +207,7 @@ class GithubUpdateChecker {
         currentVersion: currentVersion,
         statusCode: response.statusCode,
         responseBody: body,
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
     } catch (e) {
       return UpdateCheckOffline(e.toString());

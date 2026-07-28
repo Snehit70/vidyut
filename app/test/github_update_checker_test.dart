@@ -14,8 +14,9 @@ String _releaseJson({
   return '{"tag_name":"$tag","body":"$body","assets":[$assetsJson]}';
 }
 
-bool _isDebugApk(String name) =>
-    name.toLowerCase().endsWith('.apk') && name.contains('debug');
+bool _isInstallableApk(String name) =>
+    name.toLowerCase().startsWith('vidyut-') &&
+    name.toLowerCase().endsWith('.apk');
 
 void main() {
   group('SemVer', () {
@@ -52,7 +53,7 @@ void main() {
         currentVersion: '1.2.0',
         statusCode: 200,
         responseBody: _releaseJson(tag: 'v1.2.0'),
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
       expect(result, isA<UpToDate>());
     });
@@ -64,7 +65,7 @@ void main() {
           currentVersion: '1.3.0',
           statusCode: 200,
           responseBody: _releaseJson(tag: 'v1.2.0'),
-          assetNameMatches: _isDebugApk,
+          assetNameMatches: _isInstallableApk,
         );
         expect(result, isA<UpToDate>());
       },
@@ -84,26 +85,26 @@ void main() {
                 'url': 'https://example.com/relay',
               },
               {
-                'name': 'unrelated-debug.apk.sha256',
+                'name': 'unrelated.apk.sha256',
                 'url': 'https://example.com/unrelated.sha256',
               },
               {
-                'name': 'vidyut-1.1.0-debug.apk',
+                'name': 'vidyut-1.1.0-arm64.apk',
                 'url': 'https://example.com/app.apk',
               },
               {
-                'name': 'vidyut-1.1.0-debug.apk.sha256',
+                'name': 'vidyut-1.1.0-arm64.apk.sha256',
                 'url': 'https://example.com/app.sha256',
               },
             ],
           ),
-          assetNameMatches: _isDebugApk,
+          assetNameMatches: _isInstallableApk,
         );
         expect(result, isA<UpdateAvailable>());
         final update = result as UpdateAvailable;
         expect(update.version.toString(), '1.1.0');
         expect(update.tagName, 'v1.1.0');
-        expect(update.assetName, 'vidyut-1.1.0-debug.apk');
+        expect(update.assetName, 'vidyut-1.1.0-arm64.apk');
         expect(update.downloadUrl, 'https://example.com/app.apk');
         expect(update.sha256Url, 'https://example.com/app.sha256');
       },
@@ -124,7 +125,7 @@ void main() {
               },
             ],
           ),
-          assetNameMatches: _isDebugApk,
+          assetNameMatches: _isInstallableApk,
         );
         expect(result, isA<MissingAsset>());
         expect((result as MissingAsset).tagName, 'v1.1.0');
@@ -136,7 +137,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 404,
         responseBody: '',
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
       expect(result, isA<NoReleaseFound>());
     });
@@ -147,7 +148,7 @@ void main() {
           currentVersion: '1.0.0',
           statusCode: status,
           responseBody: '',
-          assetNameMatches: _isDebugApk,
+          assetNameMatches: _isInstallableApk,
         );
         expect(result, isA<RateLimited>());
       }
@@ -158,7 +159,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: 'not json',
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
       expect(result, isA<MalformedMetadata>());
     });
@@ -168,7 +169,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: '{"body":"notes","assets":[]}',
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
       expect(result, isA<MalformedMetadata>());
     });
@@ -178,7 +179,7 @@ void main() {
         currentVersion: '1.0.0',
         statusCode: 200,
         responseBody: _releaseJson(tag: 'not-a-version'),
-        assetNameMatches: _isDebugApk,
+        assetNameMatches: _isInstallableApk,
       );
       expect(result, isA<MalformedMetadata>());
     });

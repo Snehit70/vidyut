@@ -186,7 +186,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       case MissingAsset():
         title = 'Update available';
         message =
-            'Vidyut ${result.tagName} is available, but no debug APK was '
+            'Vidyut ${result.tagName} is available, but no compatible APK was '
             'attached to the release yet.';
       case NoReleaseFound():
         title = 'No releases yet';

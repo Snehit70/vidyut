@@ -83,19 +83,23 @@ pair once.
 
 ### 1. Install the APK
 
-There is no Play Store build (v1 ships a debug APK). Get the APK one of two ways:
+There is no Play Store build. Get the APK one of two ways:
 
-- **Build it** (needs [Flutter](https://docs.flutter.dev/get-started/install)
-  `3.44.4`+ stable and the Android SDK — see `app/README.md` for dev setup):
+- **Download the signed ARM64 release APK** from the latest
+  [GitHub Release](https://github.com/Snehit70/vidyut/releases/latest). The
+  adjacent `.sha256` file can be used to verify the download.
+
+- **Build a development APK** (needs
+  [Flutter](https://docs.flutter.dev/get-started/install) `3.44.4`+ stable and
+  the Android SDK — see `app/README.md` for dev setup):
 
   ```bash
   cd app && flutter build apk --debug
   # output: app/build/app/outputs/flutter-apk/app-debug.apk
   ```
 
-- **Download it** from the latest CI run (uploaded as a build artifact).
-
-Then install over USB (with `adb`) or by copying the APK to the phone and tapping it:
+Install a development build over USB with `adb`, or copy the downloaded release
+APK to the phone and tap it:
 
 ```bash
 adb install -r app/build/app/outputs/flutter-apk/app-debug.apk
