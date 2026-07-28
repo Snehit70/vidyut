@@ -26,11 +26,28 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        // CI passes the repository-owned signing key explicitly. Keep the
+        // debug fallback for local `flutter run --release` builds.
+        val ciKeystorePath = providers.environmentVariable("VIDYUT_KEYSTORE_PATH").orNull
+        if (ciKeystorePath != null) {
+            create("ciRelease") {
+                storeFile = file(ciKeystorePath)
+                storePassword = providers.environmentVariable("VIDYUT_KEYSTORE_PASSWORD").orNull ?: "android"
+                keyAlias = providers.environmentVariable("VIDYUT_KEY_ALIAS").orNull ?: "androiddebugkey"
+                keyPassword = providers.environmentVariable("VIDYUT_KEY_PASSWORD").orNull ?: "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (providers.environmentVariable("VIDYUT_KEYSTORE_PATH").orNull != null) {
+                signingConfigs.getByName("ciRelease")
+            } else {
+                // Keep local release builds convenient when CI credentials are absent.
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

@@ -178,6 +178,7 @@ jobs:
       - name: Decode release keystore
         env:
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/vidyut-release.keystore
         shell: bash
         run: |
           set -euo pipefail
@@ -185,15 +186,16 @@ jobs:
             echo "DEBUG_KEYSTORE_BASE64 is required for release signing." >&2
             exit 1
           fi
-          mkdir -p "$HOME/.android"
-          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$HOME/.android/debug.keystore"
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$RELEASE_KEYSTORE_PATH"
 
       - name: Verify release keystore identity
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/vidyut-release.keystore
         run: |
           set -euo pipefail
           ACTUAL_CERT="$(
             keytool -list -v \
-              -keystore "$HOME/.android/debug.keystore" \
+              -keystore "$RELEASE_KEYSTORE_PATH" \
               -storepass android \
               -alias androiddebugkey |
               sed -n 's/.*SHA256: //p' |
@@ -218,6 +220,10 @@ jobs:
         working-directory: app
         env:
           GRADLE_OPTS: -Dorg.gradle.caching=false
+          VIDYUT_KEYSTORE_PATH: ${{ runner.temp }}/vidyut-release.keystore
+          VIDYUT_KEYSTORE_PASSWORD: android
+          VIDYUT_KEY_ALIAS: androiddebugkey
+          VIDYUT_KEY_PASSWORD: android
         run: flutter build apk --release --split-per-abi
 
       - name: Verify Android release identity
