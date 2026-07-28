@@ -144,6 +144,7 @@ class ServiceRelayController {
   StreamSubscription<ScreenshotEvent>? _screenshotEventsSubscription;
   StreamSubscription<String>? _screenshotDiagnosticsSubscription;
   StreamSubscription<void>? _screenOnSubscription;
+  StreamSubscription<ManualClipboardReadResult>? _manualReadSubscription;
   StreamSubscription<String>? _autoSendTextsSubscription;
   StreamSubscription<String>? _autoSendDiagnosticsSubscription;
   ConnectionStatus _lastStatus = ConnectionStatus.offline;
@@ -151,6 +152,7 @@ class ServiceRelayController {
   bool _screenshotPaused = false;
   bool _autoSendWatching = false;
   bool _autoSendInertLogged = false;
+  bool _manualSendInFlight = false;
   Timer? _reconnectTimer;
   int _reconnectAttempt = 0;
   bool _stopped = false;
@@ -174,6 +176,9 @@ class ServiceRelayController {
 
   Future<void> start() {
     _screenOnSubscription ??= screenOnEvents?.listen((_) => _onScreenOn());
+    _manualReadSubscription ??= clipboardAutoSendWatcher?.manualResults.listen(
+      (result) => unawaited(_onManualClipboardResult(result)),
+    );
     // Armed before the first sync pass so even a wedged initial pass gets
     // abandoned and retried.
     _watchdogTimer ??= Timer.periodic(watchdogInterval, (_) => _watchdogTick());
@@ -240,60 +245,94 @@ class ServiceRelayController {
         _reconnectAttempt = 0;
         await _sync();
         return;
-      case 'sendClipboard':
-        await _sendClipboard();
-        return;
     }
   }
 
-  Future<void> _sendClipboard() async {
-    final reader = clipboardAutoSendWatcher;
+  Future<void> _onManualClipboardResult(
+    ManualClipboardReadResult result,
+  ) async {
     final publish = autoSendPublish;
-    if (reader == null || publish == null) {
+    if (publish == null) {
       await updateNotification(
         'Vidyut could not send',
-        'Clipboard reader is unavailable.',
+        'Clipboard publisher is unavailable.',
       );
       return;
     }
-
-    await updateNotification('Vidyut sending', 'Reading copied text...');
-    try {
-      final text = await reader.readText().timeout(const Duration(seconds: 4));
-      if (text == null || text.trim().isEmpty) {
+    switch (result.status) {
+      case ManualClipboardReadStatus.empty:
         _log('Manual clipboard send stopped: clipboard is empty.');
         await updateNotification(
           'Vidyut could not send',
           'The clipboard has no text.',
         );
         return;
-      }
-
-      final result = await publish(SharePayload.text(text));
+      case ManualClipboardReadStatus.unreadable:
+        _log('Manual clipboard read failed.', isError: true);
+        await updateNotification(
+          'Vidyut could not send',
+          'Clipboard text could not be read.',
+        );
+        return;
+      case ManualClipboardReadStatus.focusTimeout:
+        _log('Manual clipboard read timed out.', isError: true);
+        await updateNotification(
+          'Vidyut could not send',
+          'Clipboard access timed out. Tap to try again.',
+        );
+        return;
+      case ManualClipboardReadStatus.busy:
+        _log('Manual clipboard send ignored: another read is active.');
+        await updateNotification(
+          'Vidyut is already sending',
+          'Wait for the current send to finish.',
+        );
+        return;
+      case ManualClipboardReadStatus.text:
+        break;
+    }
+    if (_manualSendInFlight) {
+      _log('Manual clipboard send ignored: publish already in progress.');
+      await updateNotification(
+        'Vidyut is already sending',
+        'Wait for the current send to finish.',
+      );
+      return;
+    }
+    final text = result.text;
+    if (text == null || text.trim().isEmpty) {
+      _log('Manual clipboard result had no text.', isError: true);
+      await updateNotification(
+        'Vidyut could not send',
+        'Clipboard text could not be read.',
+      );
+      return;
+    }
+    _manualSendInFlight = true;
+    try {
+      final publishResult = await publish(SharePayload.text(text));
       _log(
-        'Manual clipboard send: ${result.message}',
-        isError: !result.published,
+        'Manual clipboard send: ${publishResult.message}',
+        isError: !publishResult.published,
       );
       await updateNotification(
-        result.published ? 'Vidyut sent to laptop' : 'Vidyut could not send',
-        result.published ? 'Copied text sent.' : result.message,
+        publishResult.published
+            ? 'Vidyut sent to laptop'
+            : 'Vidyut could not send',
+        publishResult.published ? 'Copied text sent.' : publishResult.message,
       );
       emit({
         'kind': 'send',
-        'sent': result.published,
-        'message': result.message,
+        'sent': publishResult.published,
+        'message': publishResult.message,
         'type': 'text',
         'size': text.length,
       });
-    } on TimeoutException {
-      _log('Manual clipboard read timed out.', isError: true);
-      await updateNotification(
-        'Vidyut could not send',
-        'Clipboard access timed out. Tap to try again.',
-      );
     } catch (error) {
       _log('Manual clipboard send failed: $error', isError: true);
       await updateNotification('Vidyut could not send', 'Tap to try again.');
+    } finally {
+      _manualSendInFlight = false;
     }
   }
 
@@ -303,6 +342,8 @@ class ServiceRelayController {
     _watchdogTimer = null;
     await _screenOnSubscription?.cancel();
     _screenOnSubscription = null;
+    await _manualReadSubscription?.cancel();
+    _manualReadSubscription = null;
     await _stopScreenshotWatcher();
     await _stopClipboardAutoSendWatcher();
     await _teardown();

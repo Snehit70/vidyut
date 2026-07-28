@@ -21,11 +21,6 @@ import 'foreground_service_client.dart';
 import 'service_relay_controller.dart';
 
 const sendClipboardRoute = '/send-clipboard';
-const sendClipboardButtonId = 'send_clipboard';
-
-const _notificationButtons = [
-  NotificationButton(id: sendClipboardButtonId, text: 'Send copied text'),
-];
 
 @pragma('vm:entry-point')
 void startForegroundCallback() {
@@ -124,9 +119,10 @@ class VidyutForegroundTaskHandler extends TaskHandler {
         await FlutterForegroundTask.updateService(
           notificationTitle: title,
           notificationText: text,
-          notificationButtons: _notificationButtons,
+          notificationButtons: const [],
           notificationInitialRoute: '/',
         );
+        await autoSendWatcher.updateNotification(title: title, text: text);
       },
     );
     return controller;
@@ -145,16 +141,6 @@ class VidyutForegroundTaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) {
     return _controller.stop();
-  }
-
-  @override
-  void onNotificationButtonPressed(String id) {
-    if (id == sendClipboardButtonId) {
-      // The explicit notification tap launches only the transparent native
-      // clipboard reader. Publishing and feedback stay in the service, so the
-      // user remains in the app where they copied the text.
-      unawaited(_controller.handleTaskData(const {'kind': 'sendClipboard'}));
-    }
   }
 
   @override
@@ -232,7 +218,7 @@ class VidyutForegroundServiceClient implements ForegroundServiceClient {
         serviceTypes: [ForegroundServiceTypes.dataSync],
         notificationTitle: 'Vidyut connecting',
         notificationText: 'Looking for the laptop relay...',
-        notificationButtons: _notificationButtons,
+        notificationButtons: const [],
         notificationInitialRoute: '/',
         callback: startForegroundCallback,
       ),
