@@ -36,6 +36,20 @@ void main() {
     expect(await watcher.hasReadLogsPermission(), isFalse);
   });
 
+  test('readText returns text from the invisible native reader', () async {
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(methodChannel, (call) async {
+      calls.add(call.method);
+      return 'copied on phone';
+    });
+
+    final watcher = ChannelClipboardAutoSendWatcher();
+
+    expect(await watcher.readText(), 'copied on phone');
+    expect(calls, ['readText']);
+  });
+
   test('start and stop invoke their channel methods', () async {
     final calls = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
