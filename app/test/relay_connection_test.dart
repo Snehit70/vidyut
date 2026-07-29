@@ -164,6 +164,32 @@ void main() {
     );
   });
 
+  test('sends and emits typed transfer control messages', () async {
+    final transport = FakeRelayTransport();
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+    final message = <String, Object?>{
+      'v': 1,
+      'kind': 'transfer_cancel',
+      'transferId': 'transfer_1234567890',
+    };
+
+    await connection.start();
+    connection.sendTransferControl(message);
+    await expectLater(transport.sent, emits(message));
+
+    final incoming = connection.transferControls.first;
+    transport.receive(message);
+    expect(await incoming, message);
+  });
+
   test('socket-closed event carries the close code and reason', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(

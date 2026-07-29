@@ -54,6 +54,11 @@ class SharePublisher {
   final Duration connectionTimeout;
 
   Future<SharePublishResult> publish(SharePayload payload) async {
+    if (payload.type == SharePayloadType.file) {
+      return const SharePublishResult.failed(
+        'Files must use the transfer sender.',
+      );
+    }
     final pairing = await pairingRepository.load();
     if (pairing == null) {
       return const SharePublishResult.failed(
@@ -74,6 +79,9 @@ class SharePublisher {
             type: switch (payload.type) {
               SharePayloadType.text => PayloadType.text,
               SharePayloadType.image => PayloadType.image,
+              SharePayloadType.file => throw StateError(
+                'File reached clipboard publisher.',
+              ),
             },
             mime: payload.mime,
             origin: origin,
@@ -97,6 +105,9 @@ class SharePublisher {
     return switch (payload.type) {
       SharePayloadType.text => Future.value(utf8.encode(payload.text ?? '')),
       SharePayloadType.image => fileReader.readBytes(payload.path!),
+      SharePayloadType.file => Future.error(
+        StateError('File reached clipboard publisher.'),
+      ),
     };
   }
 

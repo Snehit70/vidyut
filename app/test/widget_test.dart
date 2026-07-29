@@ -201,13 +201,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Settings'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Notify when laptop payloads arrive'),
+      300,
+    );
     expect(find.text('Notify when laptop payloads arrive'), findsOneWidget);
-    expect(find.text('Sync with laptop'), findsOneWidget);
 
     await tester.tap(
       find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
     );
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Sync with laptop'), -300);
+    expect(find.text('Sync with laptop'), findsOneWidget);
     await tester.tap(find.widgetWithText(SwitchListTile, 'Sync with laptop'));
     await tester.pumpAndSettle();
 

@@ -73,8 +73,9 @@ class _SetupChecklistScreenState extends State<SetupChecklistScreen>
                       ? 'Receipts and the sync notification can show.'
                       : "You won't see receipts when the laptop sends "
                             'you things.',
-                  actionLabel:
-                      status.notificationsGranted ? null : 'Open settings',
+                  actionLabel: status.notificationsGranted
+                      ? null
+                      : 'Open settings',
                   onAction: widget.loader.actions.openAppSettings,
                 ).entrance(0),
                 _ChecklistRow(
@@ -127,10 +128,9 @@ class _SetupChecklistScreenState extends State<SetupChecklistScreen>
                   const SizedBox(height: 4),
                   Text(
                     "We can't check these for you — tick what you've done.",
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Palette.muted),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
                   ).entrance(4),
                   const SizedBox(height: 12),
                   MiuiSetupList(

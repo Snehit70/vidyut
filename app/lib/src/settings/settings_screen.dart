@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:vidyut_files/vidyut_files.dart';
 
 import '../debug/debug_log.dart';
 import '../debug/debug_log_screen.dart';
@@ -29,6 +30,7 @@ class SettingsScreen extends StatefulWidget {
     this.onForgetPairing,
     this.updateChecker,
     this.apkInstaller,
+    this.files,
   });
 
   final AppSettings settings;
@@ -60,6 +62,7 @@ class SettingsScreen extends StatefulWidget {
   /// Installs verified updates; injectable so widget tests can avoid platform
   /// channels and network access.
   final ApkInstaller? apkInstaller;
+  final VidyutFiles? files;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -70,6 +73,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int? _issueCount;
   String? _appVersion;
   bool _checkingForUpdates = false;
+  String _filesDestination = 'Downloads/Vidyut';
   late final ApkInstaller _apkInstaller = widget.apkInstaller ?? ApkInstaller();
 
   @override
@@ -77,6 +81,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     unawaited(_loadIssueCount());
     unawaited(_loadAppVersion());
+    unawaited(_loadFilesDestination());
+  }
+
+  Future<void> _loadFilesDestination() async {
+    final files = widget.files;
+    if (files == null) return;
+    final label = await files.destinationLabel();
+    if (mounted) setState(() => _filesDestination = label);
+  }
+
+  Future<void> _chooseFilesDestination() async {
+    final label = await widget.files?.chooseDestination();
+    if (label != null && mounted) setState(() => _filesDestination = label);
   }
 
   Future<void> _loadAppVersion() async {
@@ -120,6 +137,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => DebugLogScreen(log: log)));
+  }
+
+  Future<void> _chooseMaxTransferSize() async {
+    const options = <int, String>{
+      100 * 1024 * 1024: '100 MB',
+      500 * 1024 * 1024: '500 MB',
+      1024 * 1024 * 1024: '1 GB',
+      5 * 1024 * 1024 * 1024: '5 GB',
+    };
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: RadioGroup<int>(
+          groupValue: _settings.maxTransferFileBytes,
+          onChanged: (value) => Navigator.pop(context, value),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final option in options.entries)
+                RadioListTile<int>(
+                  value: option.key,
+                  title: Text(option.value),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null) {
+      await _updateSettings(_settings.copyWith(maxTransferFileBytes: selected));
+    }
   }
 
   Future<void> _confirmForget() async {
@@ -356,6 +405,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ).entrance(next()),
+          const _SectionHeader('Files'),
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: SwitchListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+              value: _settings.receiveFiles,
+              title: const Text('Receive files'),
+              subtitle: const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Automatically accept files from your paired laptop.',
+                ),
+              ),
+              onChanged: (value) =>
+                  _updateSettings(_settings.copyWith(receiveFiles: value)),
+            ),
+          ).entrance(next()),
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
+              title: const Text('Save received files to'),
+              subtitle: Text(_filesDestination),
+              trailing: const Icon(Icons.folder_outlined),
+              onTap: widget.files == null
+                  ? null
+                  : () => unawaited(_chooseFilesDestination()),
+            ),
+          ).entrance(next()),
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: ListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
+              title: const Text('Maximum file size'),
+              subtitle: Text(_transferSize(_settings.maxTransferFileBytes)),
+              trailing: const Icon(Icons.chevron_right, color: Palette.muted),
+              onTap: _chooseMaxTransferSize,
+            ),
+          ).entrance(next()),
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: SwitchListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+              value: _settings.allowMeteredFileTransfers,
+              title: const Text('Allow metered Wi-Fi'),
+              subtitle: const Text(
+                'Transfer files on hotspots and metered Wi-Fi.',
+              ),
+              onChanged: (value) => _updateSettings(
+                _settings.copyWith(allowMeteredFileTransfers: value),
+              ),
+            ),
+          ).entrance(next()),
           const _SectionHeader('Sync'),
           Card(
             child: SwitchListTile(
@@ -371,6 +473,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               onChanged: (value) => _updateSettings(
                 _settings.copyWith(autoPushScreenshots: value),
+              ),
+            ),
+          ).entrance(next()),
+          Card(
+            margin: const EdgeInsets.only(top: 12),
+            child: SwitchListTile(
+              contentPadding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+              value: _settings.fileTransferAlerts,
+              title: const Text('File transfer alerts'),
+              subtitle: const Text(
+                'Show completion and failure alerts for file batches.',
+              ),
+              onChanged: (value) => _updateSettings(
+                _settings.copyWith(fileTransferAlerts: value),
               ),
             ),
           ).entrance(next()),
@@ -491,6 +607,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _settings = next);
     await widget.onChanged(next);
   }
+}
+
+String _transferSize(int bytes) {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return '${bytes ~/ (1024 * 1024 * 1024)} GB';
+  }
+  return '${bytes ~/ (1024 * 1024)} MB';
 }
 
 /// Muted section label — the only typographic hierarchy in the flat UI

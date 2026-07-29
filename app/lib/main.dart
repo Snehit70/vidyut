@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:vidyut_files/vidyut_files.dart';
 
 import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
@@ -39,6 +40,9 @@ import 'src/settings/settings_screen.dart';
 import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
 import 'src/shared/relay_connection.dart';
+import 'src/transfer/phone_transfer_sender.dart';
+import 'src/transfer/transfer_files_screen.dart';
+import 'src/transfer/transfer_history.dart';
 import 'src/update/github_update_checker.dart';
 
 typedef RelayConnectionFactory = RelayConnection Function(PairingCode pairing);
@@ -212,6 +216,20 @@ class _PairingScreenState extends State<PairingScreen>
   LastActivity? _lastActivity;
   bool _loading = true;
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
+  late final TransferHistoryRepository _transferHistory =
+      TransferHistoryRepository(SharedPreferencesTransferHistoryStorage());
+  late final PhoneTransferSender _transferSender = PhoneTransferSender(
+    pairingRepository: widget.pairingRepository,
+    connectionFactory: widget.relayConnectionFactory,
+    history: _transferHistory,
+    maximumFileBytes: () async =>
+        (await widget.appSettingsRepository.load()).maxTransferFileBytes,
+    networkAllowed: () async {
+      final settings = await widget.appSettingsRepository.load();
+      return settings.allowMeteredFileTransfers ||
+          !await const VidyutFiles().isNetworkMetered();
+    },
+  );
 
   /// Live "connected" flag mirrored into the wizard's finale (D2).
   final _connectedNotifier = ValueNotifier<bool>(false);
@@ -326,6 +344,13 @@ class _PairingScreenState extends State<PairingScreen>
         }
       case 'sendClipboard':
         unawaited(_openSendClipboard());
+      case 'transfer':
+        final message = data['message'];
+        if (message is String) {
+          final failed = data['error'] == true;
+          _debugLog.add('transfer', message, isError: failed);
+          _showSnack(message);
+        }
     }
   }
 
@@ -380,6 +405,7 @@ class _PairingScreenState extends State<PairingScreen>
     final summary = switch (payload.type) {
       SharePayloadType.text => 'text (${payload.text?.length ?? 0} chars)',
       SharePayloadType.image => 'image',
+      SharePayloadType.file => 'file',
     };
     return _record(
       LastActivity(
@@ -582,6 +608,17 @@ class _PairingScreenState extends State<PairingScreen>
         crypto: PayloadCrypto(),
         fileReader: const LocalShareFileReader(),
       ),
+      transferSender: _transferSender,
+      onTransferResult: (result, {isError = false}) {
+        if (isError) {
+          _debugLog.add('transfer', '$result', isError: true);
+          if (mounted) _showSnack('File transfer failed: $result');
+          return;
+        }
+        final batch = result as PhoneTransferBatch;
+        _debugLog.add('transfer', 'Sent ${batch.files.length} file(s).');
+        if (mounted) _showSnack('Sent ${batch.files.length} file(s).');
+      },
       onResult: (payload, result) {
         _debugLog.add('send', result.message, isError: !result.published);
         if (!mounted) return;
@@ -608,10 +645,22 @@ class _PairingScreenState extends State<PairingScreen>
           paired: _pairing != null,
           onForgetPairing: _forgetPairing,
           updateChecker: GithubUpdateChecker(owner: 'Snehit70', repo: 'vidyut'),
+          files: const VidyutFiles(),
         ),
       ),
     );
     await _refreshSetupStatus();
+  }
+
+  Future<void> _openFiles() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TransferFilesScreen(
+          history: _transferHistory,
+          sender: _transferSender,
+        ),
+      ),
+    );
   }
 
   Future<void> _updateSettings(AppSettings settings) async {
@@ -646,6 +695,12 @@ class _PairingScreenState extends State<PairingScreen>
       appBar: AppBar(
         title: const Text('Vidyut'),
         actions: [
+          if (paired)
+            _AppBarAction(
+              tooltip: 'Files',
+              icon: Icons.folder_outlined,
+              onPressed: _openFiles,
+            ),
           _AppBarAction(
             tooltip: 'Settings',
             icon: Icons.settings_outlined,

@@ -87,7 +87,10 @@ class ScreenshotPushController {
   /// so it first detaches whatever session came before; a frame already
   /// pending stays pending and goes out on this session's `connected`
   /// transition.
-  void attachSession(RelayConnection connection, {required String pairingSecret}) {
+  void attachSession(
+    RelayConnection connection, {
+    required String pairingSecret,
+  }) {
     detachSession();
     _pairingSecret = pairingSecret;
     _connection = connection;
@@ -137,7 +140,8 @@ class ScreenshotPushController {
     unawaited(_process(event));
   }
 
-  int get _cap => _connection?.maxPayloadBytes ?? RelayConnection.defaultMaxPayloadBytes;
+  int get _cap =>
+      _connection?.maxPayloadBytes ?? RelayConnection.defaultMaxPayloadBytes;
 
   Future<void> _process(ScreenshotEvent event) async {
     _processing = true;
@@ -156,7 +160,10 @@ class ScreenshotPushController {
     if (secret == null) {
       // Never paired this service session: nothing to encrypt with. The
       // share sheet remains the fallback.
-      _log('Screenshot ${event.id} dropped: no pairing attached yet.', isError: true);
+      _log(
+        'Screenshot ${event.id} dropped: no pairing attached yet.',
+        isError: true,
+      );
       return;
     }
 

@@ -5,6 +5,7 @@ import 'package:cryptography/cryptography.dart' show Cryptography;
 import 'package:cryptography_flutter/cryptography_flutter.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
+import 'package:vidyut_files/vidyut_files.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
 import '../pairing/pairing_repository.dart';
@@ -17,6 +18,8 @@ import '../settings/app_settings_repository.dart';
 import '../share/share_publisher.dart';
 import '../shared/payload_crypto.dart';
 import '../shared/relay_connection.dart';
+import '../transfer/phone_transfer_receiver.dart';
+import '../transfer/transfer_history.dart';
 import 'foreground_service_client.dart';
 import 'service_relay_controller.dart';
 
@@ -76,6 +79,32 @@ class VidyutForegroundTaskHandler extends TaskHandler {
       screenOnEvents: ScreenOnEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
       autoSendPublish: sharePublisher.publish,
+      transferReceiver: PhoneTransferReceiver(
+        history: TransferHistoryRepository(
+          SharedPreferencesTransferHistoryStorage(),
+        ),
+        publisher: const AndroidReceivedFilePublisher(),
+        notifier: LocalTransferNotifier(),
+        onEvent: (message, {isError = false}) {
+          FlutterForegroundTask.sendDataToMain({
+            'kind': 'transfer',
+            'message': message,
+            'error': isError,
+          });
+        },
+        receiveEnabled: () async =>
+            (await settingsRepository.load()).receiveFiles,
+        maximumFileBytes: () async =>
+            (await settingsRepository.load()).maxTransferFileBytes,
+        alertsEnabled: () async =>
+            (await settingsRepository.load()).fileTransferAlerts,
+        networkAllowed: () async {
+          final settings = await settingsRepository.load();
+          return settings.allowMeteredFileTransfers ||
+              !await const VidyutFiles().isNetworkMetered();
+        },
+        destinationAvailable: const VidyutFiles().isDestinationAvailable,
+      ),
       connectionFactory: (pairing) => RelayConnection(
         pairing: pairing,
         deviceId: 'phone',

@@ -8,6 +8,10 @@ class AppSettings {
     this.showPersistentSendNotification = true,
     this.autoPushScreenshots = true,
     this.enableClipboardAutoSend = false,
+    this.receiveFiles = true,
+    this.fileTransferAlerts = true,
+    this.allowMeteredFileTransfers = true,
+    this.maxTransferFileBytes = 1024 * 1024 * 1024,
   });
 
   final bool showReceiveNotifications;
@@ -24,12 +28,20 @@ class AppSettings {
   /// reconciles the auto-send watcher against this flag and the grant on every
   /// sync.
   final bool enableClipboardAutoSend;
+  final bool receiveFiles;
+  final bool fileTransferAlerts;
+  final bool allowMeteredFileTransfers;
+  final int maxTransferFileBytes;
 
   AppSettings copyWith({
     bool? showReceiveNotifications,
     bool? showPersistentSendNotification,
     bool? autoPushScreenshots,
     bool? enableClipboardAutoSend,
+    bool? receiveFiles,
+    bool? fileTransferAlerts,
+    bool? allowMeteredFileTransfers,
+    int? maxTransferFileBytes,
   }) {
     return AppSettings(
       showReceiveNotifications:
@@ -39,6 +51,11 @@ class AppSettings {
       autoPushScreenshots: autoPushScreenshots ?? this.autoPushScreenshots,
       enableClipboardAutoSend:
           enableClipboardAutoSend ?? this.enableClipboardAutoSend,
+      receiveFiles: receiveFiles ?? this.receiveFiles,
+      fileTransferAlerts: fileTransferAlerts ?? this.fileTransferAlerts,
+      allowMeteredFileTransfers:
+          allowMeteredFileTransfers ?? this.allowMeteredFileTransfers,
+      maxTransferFileBytes: maxTransferFileBytes ?? this.maxTransferFileBytes,
     );
   }
 
@@ -46,9 +63,14 @@ class AppSettings {
   bool operator ==(Object other) {
     return other is AppSettings &&
         other.showReceiveNotifications == showReceiveNotifications &&
-        other.showPersistentSendNotification == showPersistentSendNotification &&
+        other.showPersistentSendNotification ==
+            showPersistentSendNotification &&
         other.autoPushScreenshots == autoPushScreenshots &&
-        other.enableClipboardAutoSend == enableClipboardAutoSend;
+        other.enableClipboardAutoSend == enableClipboardAutoSend &&
+        other.receiveFiles == receiveFiles &&
+        other.fileTransferAlerts == fileTransferAlerts &&
+        other.allowMeteredFileTransfers == allowMeteredFileTransfers &&
+        other.maxTransferFileBytes == maxTransferFileBytes;
   }
 
   @override
@@ -57,5 +79,9 @@ class AppSettings {
     showPersistentSendNotification,
     autoPushScreenshots,
     enableClipboardAutoSend,
+    receiveFiles,
+    fileTransferAlerts,
+    allowMeteredFileTransfers,
+    maxTransferFileBytes,
   );
 }

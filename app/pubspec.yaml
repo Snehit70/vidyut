@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   cryptography: ^2.9.0
   cryptography_flutter: ^2.3.2
+  crypto: ^3.0.6
   web_socket_channel: ^3.0.3
   flutter_secure_storage: ^10.3.1
   multicast_dns: ^0.3.3+1
@@ -48,8 +49,11 @@ dependencies:
   google_fonts: ^8.1.0
   package_info_plus: ^9.0.1
   shared_preferences: ^2.5.3
+  file_selector: ^1.0.3
   vidyut_clipboard:
     path: packages/vidyut_clipboard
+  vidyut_files:
+    path: packages/vidyut_files
   screenshot_observer:
     path: packages/screenshot_observer
   clipboard_autosend:

@@ -82,7 +82,10 @@ void main() {
       expect(result.message, 'Text copied from laptop.');
       expect(clipboard.text, 'hello phone');
       expect(await ReceivedTextRepository(storage).loadLatest(), 'hello phone');
-      expect(notifier.textReceipts.single, (preview: 'hello phone', copied: true));
+      expect(notifier.textReceipts.single, (
+        preview: 'hello phone',
+        copied: true,
+      ));
     },
   );
 
@@ -114,10 +117,10 @@ void main() {
         await ReceivedTextRepository(storage).loadLatest(),
         'blocked write',
       );
-      expect(
-        notifier.textReceipts.single,
-        (preview: 'blocked write', copied: false),
-      );
+      expect(notifier.textReceipts.single, (
+        preview: 'blocked write',
+        copied: false,
+      ));
       expect(notifier.miuiHintCount, 0);
       expect(logs.single.isError, isTrue);
     },
@@ -268,7 +271,10 @@ void main() {
         'Image received — clipboard blocked by the device. '
         'Tap the notification to copy.',
       );
-      expect(notifier.imageReceipts.single, (mime: 'image/jpeg', copied: false));
+      expect(notifier.imageReceipts.single, (
+        mime: 'image/jpeg',
+        copied: false,
+      ));
       expect(notifier.miuiHintCount, 1);
       final stored = await imageRepository(storage).loadLatest();
       expect(stored?.mime, 'image/jpeg');

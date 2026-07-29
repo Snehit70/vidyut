@@ -12,6 +12,7 @@ import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
 import '../shared/relay_connection.dart';
 import '../shared/wire.dart';
+import '../transfer/phone_transfer_receiver.dart';
 
 const serviceSyncCommand = {'kind': 'sync'};
 
@@ -86,6 +87,7 @@ class ServiceRelayController {
     this.screenOnEvents,
     this.clipboardAutoSendWatcher,
     this.autoSendPublish,
+    this.transferReceiver,
     this.deviceId = 'phone',
     this.reconnectBackoff = defaultReconnectBackoff,
     this.syncStepTimeout = defaultSyncStepTimeout,
@@ -129,6 +131,7 @@ class ServiceRelayController {
   /// The one publish path for auto-read text (D3). Left null when the auto-send
   /// watcher is absent (tests, no plugin).
   final ServiceAutoSendPublish? autoSendPublish;
+  final PhoneTransferReceiver? transferReceiver;
 
   final String deviceId;
   final List<Duration> reconnectBackoff;
@@ -467,6 +470,7 @@ class ServiceRelayController {
         });
       },
     )..start();
+    transferReceiver?.start(connection, pairing);
     await connection.start();
   }
 
@@ -703,6 +707,7 @@ class ServiceRelayController {
     _healthSubscription = null;
     await _receiveController?.dispose();
     _receiveController = null;
+    await transferReceiver?.dispose();
     await _connection?.close();
     _connection = null;
   }

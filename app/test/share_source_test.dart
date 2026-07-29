@@ -33,7 +33,7 @@ void main() {
     expect(payloads.last.mime, 'image/webp');
   });
 
-  test('filters unsupported file shares', () async {
+  test('maps regular file shares into the transfer path', () async {
     ReceiveSharingIntent.setMockValues(
       initialMedia: [
         SharedMediaFile(
@@ -45,7 +45,11 @@ void main() {
       mediaStream: const Stream.empty(),
     );
 
-    expect(await const ReceiveSharingIntentSource().initialPayloads(), isEmpty);
+    final payloads = await const ReceiveSharingIntentSource().initialPayloads();
+    expect(payloads.single.type, SharePayloadType.file);
+    expect(payloads.single.path, '/cache/report.pdf');
+    expect(payloads.single.filename, 'report.pdf');
+    expect(payloads.single.mime, 'application/pdf');
   });
 
   test('maps stream updates', () async {

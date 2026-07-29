@@ -43,12 +43,17 @@ class AppSettingsRepository {
       'vidyut.settings.showReceiveNotifications';
   static const _showPersistentSendNotificationKey =
       'vidyut.settings.showPersistentSendNotification';
-  static const _autoPushScreenshotsKey =
-      'vidyut.settings.autoPushScreenshots';
+  static const _autoPushScreenshotsKey = 'vidyut.settings.autoPushScreenshots';
   static const _enableClipboardAutoSendKey =
       'vidyut.settings.enableClipboardAutoSend';
   static const _miuiClipboardHintShownKey =
       'vidyut.settings.miuiClipboardHintShown';
+  static const _receiveFilesKey = 'vidyut.settings.receiveFiles';
+  static const _fileTransferAlertsKey = 'vidyut.settings.fileTransferAlerts';
+  static const _allowMeteredFileTransfersKey =
+      'vidyut.settings.allowMeteredFileTransfers';
+  static const _maxTransferFileBytesKey =
+      'vidyut.settings.maxTransferFileBytes';
 
   final AppSettingsStorage _storage;
 
@@ -58,6 +63,10 @@ class AppSettingsRepository {
       _storage.read(_showPersistentSendNotificationKey),
       _storage.read(_autoPushScreenshotsKey),
       _storage.read(_enableClipboardAutoSendKey),
+      _storage.read(_receiveFilesKey),
+      _storage.read(_fileTransferAlertsKey),
+      _storage.read(_allowMeteredFileTransfersKey),
+      _storage.read(_maxTransferFileBytesKey),
     ]);
     return AppSettings(
       showReceiveNotifications: _readBool(values[0], fallback: true),
@@ -65,6 +74,10 @@ class AppSettingsRepository {
       autoPushScreenshots: _readBool(values[2], fallback: true),
       // Default off (D1): a normal install is unaffected.
       enableClipboardAutoSend: _readBool(values[3], fallback: false),
+      receiveFiles: _readBool(values[4], fallback: true),
+      fileTransferAlerts: _readBool(values[5], fallback: true),
+      allowMeteredFileTransfers: _readBool(values[6], fallback: true),
+      maxTransferFileBytes: int.tryParse(values[7] ?? '') ?? 1024 * 1024 * 1024,
     );
   }
 
@@ -86,6 +99,19 @@ class AppSettingsRepository {
         _enableClipboardAutoSendKey,
         settings.enableClipboardAutoSend.toString(),
       ),
+      _storage.write(_receiveFilesKey, settings.receiveFiles.toString()),
+      _storage.write(
+        _fileTransferAlertsKey,
+        settings.fileTransferAlerts.toString(),
+      ),
+      _storage.write(
+        _allowMeteredFileTransfersKey,
+        settings.allowMeteredFileTransfers.toString(),
+      ),
+      _storage.write(
+        _maxTransferFileBytesKey,
+        settings.maxTransferFileBytes.toString(),
+      ),
     ]);
   }
 
@@ -103,8 +129,7 @@ class AppSettingsRepository {
     return _storage.write(_miuiClipboardHintShownKey, 'true');
   }
 
-  static const _onboardingCompleteKey =
-      'vidyut.settings.onboardingComplete';
+  static const _onboardingCompleteKey = 'vidyut.settings.onboardingComplete';
 
   /// Whether the first-run wizard has been completed (onboarding spec D1).
   /// Kept out of [AppSettings] like the hint flag: it is written from its own
