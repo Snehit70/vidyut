@@ -11,6 +11,8 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -20,6 +22,8 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 import io.flutter.plugin.common.StandardMethodCodec
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.UUID
 
 class VidyutFilesPlugin :
     FlutterPlugin,
@@ -31,6 +35,7 @@ class VidyutFilesPlugin :
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingResult: MethodChannel.Result? = null
+    private val ioExecutor = Executors.newSingleThreadExecutor()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -45,6 +50,7 @@ class VidyutFilesPlugin :
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        ioExecutor.shutdownNow()
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -62,7 +68,7 @@ class VidyutFilesPlugin :
         activityBinding?.removeActivityResultListener(this)
         pendingResult?.error(
             "activity-detached",
-            "The folder picker closed before a destination was selected.",
+            "The picker closed before a selection was returned.",
             null
         )
         pendingResult = null
@@ -74,6 +80,9 @@ class VidyutFilesPlugin :
         when (call.method) {
             "chooseDestination" -> Handler(Looper.getMainLooper()).post {
                 chooseDestination(result)
+            }
+            "pickFiles" -> Handler(Looper.getMainLooper()).post {
+                pickFiles(result)
             }
             "destinationLabel" -> result.success(destinationLabel())
             "isNetworkMetered" -> {
@@ -124,10 +133,55 @@ class VidyutFilesPlugin :
         )
     }
 
+    private fun pickFiles(result: MethodChannel.Result) {
+        val host = activity
+        if (host == null || pendingResult != null) {
+            result.error("no-activity", "A visible Vidyut activity is required.", null)
+            return
+        }
+        pendingResult = result
+        host.startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            REQUEST_FILES
+        )
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode != REQUEST_TREE) return false
+        if (requestCode != REQUEST_TREE && requestCode != REQUEST_FILES) return false
         val result = pendingResult ?: return true
         pendingResult = null
+        if (requestCode == REQUEST_FILES) {
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                result.success(emptyList<Map<String, String>>())
+                return true
+            }
+            val uris = linkedSetOf<Uri>().apply {
+                data.data?.let(::add)
+                data.clipData?.let { clipData ->
+                    for (index in 0 until clipData.itemCount) add(clipData.getItemAt(index).uri)
+                }
+            }
+            if (uris.size > MAX_PICKED_FILES) {
+                result.error(
+                    "too-many-files",
+                    "Select at most $MAX_PICKED_FILES files at a time.",
+                    null
+                )
+                return true
+            }
+            ioExecutor.execute {
+                try {
+                    result.success(uris.map(::copyPickedFile))
+                } catch (error: Exception) {
+                    result.error("pick-failed", error.message, null)
+                }
+            }
+            return true
+        }
         val uri = data?.data
         if (resultCode != Activity.RESULT_OK || uri == null) {
             result.success(null)
@@ -144,6 +198,46 @@ class VidyutFilesPlugin :
             result.error("destination-failed", error.message, null)
         }
         return true
+    }
+
+    /**
+     * Streams a selected content URI into cache and returns only metadata to Dart.
+     *
+     * file_selector_android reads the complete URI into a byte array before it
+     * returns control to Flutter, which crashes on large files under Android's
+     * per-app heap limit. This uses a bounded stream copy instead.
+     */
+    private fun copyPickedFile(uri: Uri): Map<String, String> {
+        val name = selectedFilename(uri)
+        val directory = File(context.cacheDir, "vidyut-picker/${UUID.randomUUID()}")
+        check(directory.mkdirs()) { "Could not create temporary file storage." }
+        val file = File(directory, name)
+        context.contentResolver.openInputStream(uri).use { input ->
+            requireNotNull(input) { "Could not open selected file." }
+            file.outputStream().use { output -> input.copyTo(output) }
+        }
+        val mime = context.contentResolver.getType(uri)
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', ""))
+            ?: "application/octet-stream"
+        return mapOf("path" to file.path, "filename" to name, "mime" to mime)
+    }
+
+    private fun selectedFilename(uri: Uri): String {
+        val displayName = context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+        }
+        return (displayName ?: "vidyut-file-${UUID.randomUUID()}")
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .replace('\u0000', '_')
+            .ifBlank { "vidyut-file-${UUID.randomUUID()}" }
     }
 
     private fun destinationLabel(): String {
@@ -247,6 +341,8 @@ class VidyutFilesPlugin :
 
     companion object {
         private const val REQUEST_TREE = 8401
+        private const val REQUEST_FILES = 8402
+        private const val MAX_PICKED_FILES = 100
         private const val KEY_TREE_URI = "destination_tree_uri"
     }
 }
