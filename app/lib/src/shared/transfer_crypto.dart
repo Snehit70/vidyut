@@ -42,7 +42,7 @@ class TransferCrypto {
     iterations: 200000,
     bits: 256,
   );
-  static final _salt = utf8.encode('vidyut-v1-file-transfer');
+  static const _saltPrefix = 'vidyut-v1-file-transfer';
 
   final Random _random;
   final _derivedKeys = <String, Future<SecretKey>>{};
@@ -61,7 +61,7 @@ class TransferCrypto {
     final nonceBase64 = base64Encode(nonce);
     final box = await _algorithm.encrypt(
       plaintext,
-      secretKey: await _deriveKey(pairingSecret),
+      secretKey: await _deriveKey(pairingSecret, metadata.transferId),
       nonce: nonce,
       aad: _associatedData(metadata, nonceBase64),
     );
@@ -89,7 +89,7 @@ class TransferCrypto {
         nonce: base64Decode(chunk.nonce),
         mac: Mac(chunk.ciphertext.sublist(macOffset)),
       ),
-      secretKey: await _deriveKey(pairingSecret),
+      secretKey: await _deriveKey(pairingSecret, chunk.transferId),
       aad: _associatedData(chunk, chunk.nonce),
     );
     if (plaintext.length != chunk.plaintextBytes) {
@@ -107,11 +107,12 @@ class TransferCrypto {
         .join();
   }
 
-  Future<SecretKey> _deriveKey(String pairingSecret) {
-    return _derivedKeys.putIfAbsent(pairingSecret, () {
+  Future<SecretKey> _deriveKey(String pairingSecret, String transferId) {
+    final cacheKey = '$pairingSecret\u0000$transferId';
+    return _derivedKeys.putIfAbsent(cacheKey, () {
       return _kdf.deriveKey(
         secretKey: SecretKey(utf8.encode(pairingSecret)),
-        nonce: _salt,
+        nonce: utf8.encode('$_saltPrefix\u0000$transferId'),
       );
     });
   }

@@ -6,7 +6,7 @@ if [[ ! -x "$relay" ]]; then
   relay="$(command -v vidyut-relay || true)"
 fi
 if [[ -z "$relay" || ! -x "$relay" ]]; then
-  notify-send "Vidyut" "The Vidyut relay is not installed."
+  notify-send "Vidyut" "The Vidyut relay is not installed." || true
   exit 1
 fi
 
@@ -26,8 +26,8 @@ done
 [[ ${#args[@]} -gt 0 ]] || exit 0
 
 if output="$("$relay" "${args[@]}" 2>&1)"; then
-  notify-send "Vidyut" "$output"
+  notify-send "Vidyut" "$output" || true
 else
-  notify-send -u critical "Vidyut file transfer failed" "$output"
+  notify-send -u critical "Vidyut file transfer failed" "$output" || true
   exit 1
 fi

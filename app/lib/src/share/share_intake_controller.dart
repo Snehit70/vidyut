@@ -46,7 +46,14 @@ class ShareIntakeController {
       onResult?.call(payload, await publisher.publish(payload));
     }
     final sender = transferSender;
-    if (files.isEmpty || sender == null) return;
+    if (files.isEmpty) return;
+    if (sender == null) {
+      onTransferResult?.call(
+        StateError('File transfer is unavailable.'),
+        isError: true,
+      );
+      return;
+    }
     try {
       final result = await sender.enqueue(
         files

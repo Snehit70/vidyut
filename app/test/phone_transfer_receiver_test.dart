@@ -50,14 +50,23 @@ void main() {
       deviceId: 'phone',
       transport: transport,
     );
+    var rootAttempts = 0;
+    final errors = <String>[];
     final receiver = PhoneTransferReceiver(
       history: history,
       crypto: crypto,
-      rootDirectory: () async => root,
+      rootDirectory: () async {
+        rootAttempts += 1;
+        if (rootAttempts == 1) throw StateError('temporary storage failure');
+        return root;
+      },
+      onEvent: (message, {isError = false}) {
+        if (isError) errors.add(message);
+      },
     );
     receiver.start(connection, pairing);
     await connection.start();
-    transport.receive({
+    final offer = {
       'v': 1,
       'kind': 'transfer_offer',
       'offer': {
@@ -79,7 +88,10 @@ void main() {
           },
         ],
       },
-    });
+    };
+    transport.receive(offer);
+    await _waitUntil(() async => errors.isNotEmpty);
+    transport.receive(offer);
 
     await _waitUntil(() async {
       final batches = await history.load();
@@ -88,6 +100,7 @@ void main() {
     });
 
     expect(await File('${root.path}/report.bin').readAsBytes(), bytes);
+    expect(errors.single, contains('temporary storage failure'));
     expect(
       transport.sent.map((message) => message['kind']),
       containsAll([

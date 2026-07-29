@@ -162,36 +162,97 @@ class PhoneTransferBatch {
 }
 
 abstract interface class TransferHistoryStorage {
-  Future<String?> read();
+  Future<Map<String, String>> readAll();
 
-  Future<void> write(String value);
+  Future<void> writeBatch(String transferId, String value);
+
+  Future<void> removeBatch(String transferId);
+
+  Future<void> clear();
 }
 
 class SharedPreferencesTransferHistoryStorage
     implements TransferHistoryStorage {
-  static const _key = 'vidyut.transfer.history.v1';
+  static const _legacyKey = 'vidyut.transfer.history.v1';
+  static const _keyPrefix = 'vidyut.transfer.batch.v1.';
 
   @override
-  Future<String?> read() async {
-    return (await SharedPreferences.getInstance()).getString(_key);
+  Future<Map<String, String>> readAll() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.reload();
+    final legacy = preferences.getString(_legacyKey);
+    if (legacy != null) {
+      try {
+        for (final rawBatch in jsonDecode(legacy) as List) {
+          final batch = (rawBatch as Map).cast<String, Object?>();
+          final transferId = batch['transferId'];
+          if (transferId is String) {
+            await preferences.setString(
+              '$_keyPrefix$transferId',
+              jsonEncode(batch),
+            );
+          }
+        }
+        await preferences.remove(_legacyKey);
+      } on Object {
+        // Keep malformed legacy data untouched; new per-batch records remain
+        // independently readable.
+      }
+    }
+    return {
+      for (final key in preferences.getKeys())
+        if (key.startsWith(_keyPrefix) && preferences.getString(key) != null)
+          key.substring(_keyPrefix.length): preferences.getString(key)!,
+    };
   }
 
   @override
-  Future<void> write(String value) async {
-    await (await SharedPreferences.getInstance()).setString(_key, value);
+  Future<void> writeBatch(String transferId, String value) async {
+    await (await SharedPreferences.getInstance()).setString(
+      '$_keyPrefix$transferId',
+      value,
+    );
+  }
+
+  @override
+  Future<void> removeBatch(String transferId) async {
+    await (await SharedPreferences.getInstance()).remove(
+      '$_keyPrefix$transferId',
+    );
+  }
+
+  @override
+  Future<void> clear() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.reload();
+    for (final key in preferences.getKeys().where(
+      (key) => key.startsWith(_keyPrefix),
+    )) {
+      await preferences.remove(key);
+    }
+    await preferences.remove(_legacyKey);
   }
 }
 
 class MemoryTransferHistoryStorage implements TransferHistoryStorage {
-  String? value;
+  final _values = <String, String>{};
+  String? get value => _values.isEmpty
+      ? null
+      : jsonEncode(_values.values.map(jsonDecode).toList());
 
   @override
-  Future<String?> read() async => value;
+  Future<Map<String, String>> readAll() async => Map.of(_values);
 
   @override
-  Future<void> write(String value) async {
-    this.value = value;
-  }
+  Future<void> writeBatch(String transferId, String value) async =>
+      _values[transferId] = value;
+
+  @override
+  Future<void> removeBatch(String transferId) async =>
+      _values.remove(transferId);
+
+  @override
+  Future<void> clear() async => _values.clear();
 }
 
 class TransferHistoryRepository {
@@ -200,49 +261,28 @@ class TransferHistoryRepository {
   final TransferHistoryStorage _storage;
 
   Future<List<PhoneTransferBatch>> load() async {
-    final raw = await _storage.read();
-    if (raw == null || raw.isEmpty) return [];
-    try {
-      final decoded = jsonDecode(raw) as List;
-      return decoded
-          .map(
-            (batch) => PhoneTransferBatch.fromJson(
-              (batch as Map).cast<Object?, Object?>(),
-            ),
-          )
-          .toList();
-    } on Object {
-      return [];
-    }
-  }
-
-  Future<void> upsert(PhoneTransferBatch batch) async {
-    final batches = await load();
-    final index = batches.indexWhere(
-      (candidate) => candidate.transferId == batch.transferId,
-    );
-    if (index == -1) {
-      batches.add(batch);
-    } else {
-      batches[index] = batch;
+    final batches = <PhoneTransferBatch>[];
+    for (final raw in (await _storage.readAll()).values) {
+      try {
+        batches.add(
+          PhoneTransferBatch.fromJson(
+            (jsonDecode(raw) as Map).cast<Object?, Object?>(),
+          ),
+        );
+      } on Object {
+        // A corrupt record must not hide independent healthy batches.
+      }
     }
     batches.sort(
       (left, right) => right.createdAtMs.compareTo(left.createdAtMs),
     );
-    await _save(batches);
+    return batches;
   }
 
-  Future<void> remove(String transferId) async {
-    final batches = await load()
-      ..removeWhere((batch) => batch.transferId == transferId);
-    await _save(batches);
-  }
+  Future<void> upsert(PhoneTransferBatch batch) =>
+      _storage.writeBatch(batch.transferId, jsonEncode(batch.toJson()));
 
-  Future<void> clear() => _save([]);
+  Future<void> remove(String transferId) => _storage.removeBatch(transferId);
 
-  Future<void> _save(List<PhoneTransferBatch> batches) {
-    return _storage.write(
-      jsonEncode(batches.map((batch) => batch.toJson()).toList()),
-    );
-  }
+  Future<void> clear() => _storage.clear();
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -216,6 +216,60 @@ describe("laptop transfer data plane", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("fails a resumed upload when its persisted partial is missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-missing-partial-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const queue = await emptyQueue();
+    const offer = {
+      transferId: "transfer_missing_1234",
+      batchId: "batch_missing_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_missing_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    let terminalCalls = 0;
+    const plane = new LaptopTransferDataPlane(
+      secret,
+      queue,
+      4,
+      undefined,
+      () => {
+        terminalCalls += 1;
+      },
+    );
+    expect(
+      (await putChunk(plane, offer.transferId, offer.files[0]!.fileId, 0, bytes.slice(0, 4))).status,
+    ).toBe(200);
+    await unlink(join(dir, `.report.bin.${offer.files[0]!.fileId}.vidyut-part`));
+
+    const resumed = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      4,
+      bytes.slice(4),
+    );
+
+    expect(resumed.status).toBe(409);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    expect(terminalCalls).toBe(1);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("queues signed local file-manager requests without exposing another port", async () => {
     const queue = await emptyQueue();
     const seen: string[][] = [];
@@ -250,10 +304,23 @@ describe("laptop transfer data plane", () => {
         },
         body: exactArrayBuffer(body),
       }),
+      { isLoopback: true },
     );
 
     expect(response?.status).toBe(202);
     expect(seen).toEqual([["/home/user/report.pdf"]]);
+
+    const remote = await plane.handle(
+      new Request(`http://relay${path}`, {
+        method: "POST",
+        headers: {
+          "x-vidyut-date": auth.date,
+          authorization: auth.authorization,
+        },
+        body: exactArrayBuffer(body),
+      }),
+    );
+    expect(remote?.status).toBe(403);
   });
 });
 

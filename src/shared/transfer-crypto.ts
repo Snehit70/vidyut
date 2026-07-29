@@ -1,5 +1,5 @@
 const textEncoder = new TextEncoder();
-const kdfSalt = textEncoder.encode("vidyut-v1-file-transfer");
+const kdfSaltPrefix = "vidyut-v1-file-transfer";
 const kdfIterations = 200_000;
 const keyCache = new Map<string, Promise<CryptoKey>>();
 
@@ -31,7 +31,7 @@ export async function encryptTransferChunk(
       iv: toArrayBuffer(nonceBytes),
       additionalData: associatedData(metadata, nonce),
     },
-    await deriveTransferKey(pairingSecret),
+    await deriveTransferKey(pairingSecret, metadata.transferId),
     toArrayBuffer(plaintext),
   );
   return {
@@ -52,7 +52,7 @@ export async function decryptTransferChunk(
         iv: toArrayBuffer(fromBase64(chunk.nonce)),
         additionalData: associatedData(chunk, chunk.nonce),
       },
-      await deriveTransferKey(pairingSecret),
+      await deriveTransferKey(pairingSecret, chunk.transferId),
       toArrayBuffer(chunk.ciphertext),
     ),
   );
@@ -67,8 +67,12 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Buffer.from(digest).toString("hex");
 }
 
-function deriveTransferKey(pairingSecret: string): Promise<CryptoKey> {
-  let key = keyCache.get(pairingSecret);
+function deriveTransferKey(
+  pairingSecret: string,
+  transferId: string,
+): Promise<CryptoKey> {
+  const cacheKey = `${pairingSecret}\u0000${transferId}`;
+  let key = keyCache.get(cacheKey);
   if (key) return key;
   key = (async () => {
     const baseKey = await crypto.subtle.importKey(
@@ -81,7 +85,7 @@ function deriveTransferKey(pairingSecret: string): Promise<CryptoKey> {
     return crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
-        salt: kdfSalt,
+        salt: textEncoder.encode(`${kdfSaltPrefix}\u0000${transferId}`),
         iterations: kdfIterations,
         hash: "SHA-256",
       },
@@ -91,7 +95,7 @@ function deriveTransferKey(pairingSecret: string): Promise<CryptoKey> {
       ["encrypt", "decrypt"],
     );
   })();
-  keyCache.set(pairingSecret, key);
+  keyCache.set(cacheKey, key);
   return key;
 }
 
@@ -126,4 +130,3 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   new Uint8Array(buffer).set(bytes);
   return buffer;
 }
-

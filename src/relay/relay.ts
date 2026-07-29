@@ -27,7 +27,10 @@ interface RelayOptions {
     message: TransferControlMessage,
     sourceDeviceId: string,
   ) => void | Promise<void>;
-  transferHttp?: (request: Request) => Promise<Response | undefined>;
+  transferHttp?: (
+    request: Request,
+    context: { isLoopback: boolean },
+  ) => Promise<Response | undefined>;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -113,7 +116,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         return undefined;
       }
       if (new URL(request.url).pathname.startsWith("/transfer/v1/")) {
-        const response = await options.transferHttp?.(request);
+        const response = await options.transferHttp?.(request, {
+          isLoopback: isLoopbackAddress(address?.address),
+        });
         return (
           response ??
           Response.json(
@@ -159,10 +164,27 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         }
 
         if (isTransferControlMessage(message)) {
-          await options.transferControl?.(
-            message,
-            socket.data.deviceId ?? "unknown",
-          );
+          try {
+            await options.transferControl?.(
+              message,
+              socket.data.deviceId ?? "unknown",
+            );
+          } catch (error) {
+            logger.error("transfer_control_failed", {
+              connId: socket.data.connId,
+              deviceId: socket.data.deviceId,
+              kind: message.kind,
+              transferId: transferIdOf(message),
+              error: error instanceof Error ? error.message : String(error),
+            });
+            sendError(
+              logger,
+              socket,
+              "transfer_control_failed",
+              "Transfer control could not be processed.",
+            );
+            return;
+          }
           const recipients = broadcast(devices, socket, message);
           logger.info("transfer_control_routed", {
             connId: socket.data.connId,
@@ -261,6 +283,15 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       devices.clear();
     },
   };
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  return (
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address?.startsWith("127.") === true ||
+    address?.startsWith("::ffff:127.") === true
+  );
 }
 
 async function authenticate(

@@ -80,6 +80,8 @@ file type are valid.
 - A batch has no separate application limit; available destination and staging
   storage are checked before transfer when possible.
 - Derive a dedicated file-transfer key from the pairing secret.
+- Pairing secrets are generated with 256 bits of entropy; manual entry copies
+  that generated secret rather than accepting a user-chosen password.
 - Every chunk is independently authenticated and bound to transfer ID, file ID,
   chunk offset, and declared metadata.
 - Verify a final whole-file hash before finalization.

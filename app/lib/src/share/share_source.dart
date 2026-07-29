@@ -41,12 +41,7 @@ SharePayload? _mapFile(SharedMediaFile file) {
       path: file.path,
       mime: mime,
     ),
-    SharedMediaType.file => SharePayload.file(
-      path: file.path,
-      mime: mime,
-      filename: _filename(file.path),
-    ),
-    _ => SharePayload.file(
+    SharedMediaType.file || _ => SharePayload.file(
       path: file.path,
       mime: mime,
       filename: _filename(file.path),

@@ -104,6 +104,30 @@ class PhoneTransferSender {
   }
 
   Future<PhoneTransferBatch> retry(PhoneTransferBatch batch) async {
+    if (networkAllowed != null && !await networkAllowed!()) {
+      throw StateError('File transfers are disabled on this metered network.');
+    }
+    final maxBytes = maximumFileBytes == null
+        ? 1024 * 1024 * 1024
+        : await maximumFileBytes!();
+    if (batch.files.any((file) => file.size > maxBytes)) {
+      throw StateError('A file exceeds the configured maximum file size.');
+    }
+    for (final transferFile in batch.files.where(
+      (file) => file.status != PhoneTransferStatus.completed,
+    )) {
+      final sourcePath = transferFile.sourcePath;
+      if (sourcePath == null) {
+        throw StateError('${transferFile.filename} is no longer available.');
+      }
+      final source = await File(sourcePath).stat();
+      if (source.type != FileSystemEntityType.file ||
+          source.size != transferFile.size ||
+          source.modified.millisecondsSinceEpoch !=
+              transferFile.lastModifiedMs) {
+        throw StateError('${transferFile.filename} changed after selection.');
+      }
+    }
     final pairing = await pairingRepository.load();
     if (pairing == null) {
       throw StateError('Pair with a laptop before retrying.');
@@ -138,6 +162,7 @@ class PhoneTransferSender {
     await history.upsert(batch);
     final connection = connectionFactory(pairing);
     final inbox = _TransferControlInbox(connection.transferControls);
+    final client = HttpClient();
     try {
       final connected = connection.status.firstWhere(
         (status) => status == ConnectionStatus.connected,
@@ -169,6 +194,7 @@ class PhoneTransferSender {
           );
         }
         var offset = rawOffset;
+        var lastPersistedOffset = offset;
         transferFile = transferFile.copyWith(
           status: PhoneTransferStatus.active,
           confirmedOffset: offset,
@@ -199,10 +225,33 @@ class PhoneTransferSender {
               plaintext: plaintext,
               pairingSecret: pairing.secret,
             );
-            final result = await _putChunk(pairing: pairing, chunk: encrypted);
+            final result = await _putChunk(
+              pairing: pairing,
+              chunk: encrypted,
+              client: client,
+            );
+            if (result.confirmedOffset > transferFile.size ||
+                result.confirmedOffset > offset + plaintext.length ||
+                (result.complete &&
+                    result.confirmedOffset != transferFile.size)) {
+              throw StateError('Laptop returned invalid transfer progress.');
+            }
+            if (result.confirmedOffset <= offset && !result.complete) {
+              throw StateError('Laptop did not advance transfer progress.');
+            }
             offset = result.confirmedOffset;
             transferFile = transferFile.copyWith(confirmedOffset: offset);
-            batch = await _replaceFile(batch, index, transferFile);
+            final shouldPersist =
+                result.complete ||
+                offset == transferFile.size ||
+                offset - lastPersistedOffset >= 4 * 1024 * 1024;
+            batch = await _replaceFile(
+              batch,
+              index,
+              transferFile,
+              persist: shouldPersist,
+            );
+            if (shouldPersist) lastPersistedOffset = offset;
             if (result.complete) break;
           }
         } finally {
@@ -226,7 +275,9 @@ class PhoneTransferSender {
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
         files: batch.files
             .map(
-              (file) => file.status == PhoneTransferStatus.active
+              (file) =>
+                  file.status != PhoneTransferStatus.completed &&
+                      file.status != PhoneTransferStatus.cancelled
                   ? file.copyWith(
                       status: PhoneTransferStatus.failed,
                       errorCode: _errorCode(error),
@@ -238,6 +289,7 @@ class PhoneTransferSender {
       await history.upsert(batch);
       rethrow;
     } finally {
+      client.close(force: true);
       await inbox.close();
       await connection.close();
     }
@@ -246,6 +298,7 @@ class PhoneTransferSender {
   Future<_ChunkResult> _putChunk({
     required PairingCode pairing,
     required EncryptedTransferChunk chunk,
+    required HttpClient client,
   }) async {
     final path =
         '/transfer/v1/${chunk.transferId}/${chunk.fileId}?offset=${chunk.offset}';
@@ -254,49 +307,45 @@ class PhoneTransferSender {
       method: 'PUT',
       pathAndQuery: path,
     );
-    final client = HttpClient();
-    try {
-      final request = await client.putUrl(
-        Uri.parse('http://${pairing.host}:${pairing.port}$path'),
+    final request = await client.putUrl(
+      Uri.parse('http://${pairing.host}:${pairing.port}$path'),
+    );
+    auth.headers.forEach(request.headers.set);
+    request.headers
+      ..set('x-vidyut-nonce', chunk.nonce)
+      ..set('x-vidyut-plaintext-bytes', chunk.plaintextBytes.toString())
+      ..contentLength = chunk.ciphertext.length;
+    request.add(chunk.ciphertext);
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    final body = await utf8.decodeStream(
+      response.timeout(const Duration(seconds: 30)),
+    );
+    final json = body.isEmpty
+        ? <String, Object?>{}
+        : (jsonDecode(body) as Map).cast<String, Object?>();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        (json['code'] as String?) ?? 'HTTP ${response.statusCode}',
       );
-      auth.headers.forEach(request.headers.set);
-      request.headers
-        ..set('x-vidyut-nonce', chunk.nonce)
-        ..set('x-vidyut-plaintext-bytes', chunk.plaintextBytes.toString())
-        ..contentLength = chunk.ciphertext.length;
-      request.add(chunk.ciphertext);
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
-      );
-      final body = await utf8.decodeStream(response);
-      final json = body.isEmpty
-          ? <String, Object?>{}
-          : (jsonDecode(body) as Map).cast<String, Object?>();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError(
-          (json['code'] as String?) ?? 'HTTP ${response.statusCode}',
-        );
-      }
-      return _ChunkResult(
-        confirmedOffset: json['confirmedOffset']! as int,
-        complete: json['complete'] == true,
-      );
-    } finally {
-      client.close(force: true);
     }
+    return _ChunkResult(
+      confirmedOffset: json['confirmedOffset']! as int,
+      complete: json['complete'] == true,
+    );
   }
 
   Future<PhoneTransferBatch> _replaceFile(
     PhoneTransferBatch batch,
     int index,
-    PhoneTransferFile file,
-  ) async {
+    PhoneTransferFile file, {
+    bool persist = true,
+  }) async {
     final files = [...batch.files]..[index] = file;
     final updated = batch.copyWith(
       files: files,
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
-    await history.upsert(updated);
+    if (persist) await history.upsert(updated);
     return updated;
   }
 

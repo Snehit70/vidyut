@@ -282,6 +282,7 @@ async function sendFilesToRunningRelay({
         authorization: auth.authorization,
       },
       body: exactArrayBuffer(body),
+      signal: AbortSignal.timeout(30_000),
     });
   } catch {
     throw new Error(

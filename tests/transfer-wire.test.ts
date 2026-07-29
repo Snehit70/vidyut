@@ -53,6 +53,18 @@ describe("transfer wire contract", () => {
     expect(
       isTransferOffer({
         ...offer,
+        files: [{ ...fileOffer, filename: "unsafe\u0000name.pdf" }],
+      }),
+    ).toBe(false);
+    expect(
+      isTransferOffer({
+        ...offer,
+        files: [{ ...fileOffer, filename: "é".repeat(128) }],
+      }),
+    ).toBe(false);
+    expect(
+      isTransferOffer({
+        ...offer,
         files: [fileOffer, { ...fileOffer, filename: "copy.pdf" }],
       }),
     ).toBe(false);

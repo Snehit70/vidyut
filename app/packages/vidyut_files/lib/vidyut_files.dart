@@ -15,7 +15,7 @@ class VidyutFiles {
   }
 
   Future<bool> isNetworkMetered() async {
-    return await _channel.invokeMethod<bool>('isNetworkMetered') ?? false;
+    return await _channel.invokeMethod<bool>('isNetworkMetered') ?? true;
   }
 
   Future<bool> isDestinationAvailable() async {

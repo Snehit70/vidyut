@@ -4,6 +4,7 @@ import type {
   TransferControlMessage,
   TransferOffer,
 } from "../shared/wire";
+import { isTransferOffer } from "../shared/wire";
 import {
   TransferQueue,
   type EnqueueTransferFile,
@@ -39,7 +40,7 @@ export class TransferCoordinator {
       }
       files.push({
         filename: basename(path),
-        mime: "application/octet-stream",
+        mime: mimeForPath(path),
         size: info.size,
         lastModifiedMs: info.mtimeMs,
         sha256: await hashPath(path),
@@ -130,6 +131,9 @@ export class TransferCoordinator {
   }
 
   private async acceptPhoneOffer(offer: TransferOffer): Promise<void> {
+    if (!isTransferOffer(offer)) {
+      throw new Error("Invalid phone transfer offer.");
+    }
     if (offer.direction !== "phone_to_laptop") {
       throw new Error("Phone may only offer phone-to-laptop transfers.");
     }
@@ -198,6 +202,24 @@ export class TransferCoordinator {
       );
     }
   }
+}
+
+function mimeForPath(path: string): string {
+  const extension = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  return ({
+    txt: "text/plain",
+    pdf: "application/pdf",
+    json: "application/json",
+    csv: "text/csv",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+    zip: "application/zip",
+  } as Record<string, string>)[extension ?? ""] ?? "application/octet-stream";
 }
 
 async function hashPath(path: string): Promise<string> {

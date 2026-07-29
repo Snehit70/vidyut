@@ -53,6 +53,24 @@ void main() {
         () => TransferOffer.fromJson({
           ...offer,
           'files': [
+            {...file, 'filename': 'unsafe\u0000name.pdf'},
+          ],
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => TransferOffer.fromJson({
+          ...offer,
+          'files': [
+            {...file, 'filename': List.filled(128, 'é').join()},
+          ],
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => TransferOffer.fromJson({
+          ...offer,
+          'files': [
             file,
             {...file, 'filename': 'copy.pdf'},
           ],

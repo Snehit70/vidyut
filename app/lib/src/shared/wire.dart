@@ -171,7 +171,8 @@ class TransferFileOffer {
     final json = value.cast<Object?, Object?>();
     final fileId = _transferIdField(json, 'fileId');
     final filename = _stringField(json, 'filename');
-    if (filename.length > 255 ||
+    if (utf8.encode(filename).length > 255 ||
+        filename.runes.any((rune) => rune <= 0x1f || rune == 0x7f) ||
         filename == '.' ||
         filename == '..' ||
         filename.contains('/') ||
@@ -227,8 +228,10 @@ class TransferOffer {
     }
     final json = value.cast<Object?, Object?>();
     final rawFiles = json['files'];
-    if (rawFiles is! List || rawFiles.isEmpty) {
-      throw const FormatException('files must be a non-empty list.');
+    if (rawFiles is! List || rawFiles.isEmpty || rawFiles.length > 100) {
+      throw const FormatException(
+        'files must contain between 1 and 100 items.',
+      );
     }
     final files = rawFiles.map(TransferFileOffer.fromJson).toList();
     if (files.map((file) => file.fileId).toSet().length != files.length) {

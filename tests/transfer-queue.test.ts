@@ -162,14 +162,26 @@ describe("durable transfer queue", () => {
           lastModifiedMs: 1_753_689_500_000,
           sha256: "a".repeat(64),
         },
+        {
+          fileId: "file_remote_654321",
+          filename: "notes.txt",
+          mime: "text/plain",
+          size: 5,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: "b".repeat(64),
+        },
       ],
     };
     const destinations = new Map([
       [offer.files[0]!.fileId, "/downloads/report.pdf"],
+      [offer.files[1]!.fileId, "/downloads/notes.txt"],
     ]);
 
     const accepted = await queue.acceptOffer(offer, destinations);
-    const duplicate = await queue.acceptOffer(offer, destinations);
+    const duplicate = await queue.acceptOffer(
+      { ...offer, files: [...offer.files].reverse() },
+      destinations,
+    );
 
     expect(accepted.files[0]!.destinationPath).toBe("/downloads/report.pdf");
     expect(duplicate).toEqual(accepted);

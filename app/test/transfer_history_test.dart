@@ -2,6 +2,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
 
 void main() {
+  PhoneTransferBatch batch(String suffix) => PhoneTransferBatch(
+    transferId: 'transfer_${suffix}000000000000',
+    batchId: 'batch_${suffix}000000000000',
+    direction: PhoneTransferDirection.sent,
+    createdAtMs: suffix.codeUnitAt(0),
+    updatedAtMs: 10,
+    status: PhoneTransferStatus.queued,
+    files: [
+      PhoneTransferFile(
+        fileId: 'file_${suffix}000000000000',
+        filename: '$suffix.pdf',
+        mime: 'application/pdf',
+        size: 1,
+        lastModifiedMs: 9,
+        sha256: List.filled(64, 'a').join(),
+        status: PhoneTransferStatus.queued,
+        confirmedOffset: 0,
+      ),
+    ],
+  );
+
+  test('serializes mutations across repository instances', () async {
+    final storage = MemoryTransferHistoryStorage();
+    final first = TransferHistoryRepository(storage);
+    final second = TransferHistoryRepository(storage);
+
+    await Future.wait([first.upsert(batch('a')), second.upsert(batch('b'))]);
+
+    expect((await first.load()).map((item) => item.transferId), hasLength(2));
+  });
+
   test('persists unlimited transfer metadata without file contents', () async {
     final storage = MemoryTransferHistoryStorage();
     final repository = TransferHistoryRepository(storage);

@@ -29,7 +29,9 @@ class PhoneTransferReceiver {
     this.alertsEnabled,
     this.networkAllowed,
     this.destinationAvailable,
-  }) : crypto = crypto ?? TransferCrypto();
+    HttpClient? httpClient,
+  }) : crypto = crypto ?? TransferCrypto(),
+       _httpClient = httpClient ?? HttpClient();
 
   final TransferHistoryRepository history;
   final TransferCrypto crypto;
@@ -44,21 +46,27 @@ class PhoneTransferReceiver {
   final Future<bool> Function()? alertsEnabled;
   final Future<bool> Function()? networkAllowed;
   final Future<bool> Function()? destinationAvailable;
+  final HttpClient _httpClient;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Future<void> _serial = Future.value();
 
   void start(RelayConnection connection, PairingCode pairing) {
     _subscription = connection.transferControls.listen((message) {
       if (message['kind'] != 'transfer_offer') return;
-      _serial = _serial.then(
-        (_) => _receiveOffer(connection, pairing, message['offer']),
-      );
+      _serial = _serial.then((_) async {
+        try {
+          await _receiveOffer(connection, pairing, message['offer']);
+        } on Object catch (error) {
+          onEvent?.call('File transfer failed: $error', isError: true);
+        }
+      });
     });
   }
 
   Future<void> dispose() async {
     await _subscription?.cancel();
     await _serial;
+    _httpClient.close(force: true);
   }
 
   Future<void> _receiveOffer(
@@ -152,6 +160,7 @@ class PhoneTransferReceiver {
       });
 
       try {
+        var lastOffset = offset;
         final sink = await partial.open(mode: FileMode.writeOnlyAppend);
         try {
           while (offset < offeredFile.size || offeredFile.size == 0) {
@@ -168,6 +177,10 @@ class PhoneTransferReceiver {
             await sink.writeFrom(plaintext);
             await sink.flush();
             offset += plaintext.length;
+            if (offset <= lastOffset && !response.eof) {
+              throw const FormatException('chunk_made_no_progress');
+            }
+            lastOffset = offset;
             record = record.copyWith(confirmedOffset: offset);
             batch = await _replaceFile(batch, index, record);
             connection.sendTransferControl({
@@ -266,51 +279,45 @@ class PhoneTransferReceiver {
       method: 'GET',
       pathAndQuery: path,
     );
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(
-        Uri.parse('http://${pairing.host}:${pairing.port}$path'),
+    final request = await _httpClient.getUrl(
+      Uri.parse('http://${pairing.host}:${pairing.port}$path'),
+    );
+    auth.headers.forEach(request.headers.set);
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      final body = await utf8.decodeStream(
+        response.timeout(const Duration(seconds: 30)),
       );
-      auth.headers.forEach(request.headers.set);
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
-      );
-      if (response.statusCode != 200) {
-        final body = await utf8.decodeStream(response);
-        throw StateError(body);
-      }
-      final nonce = response.headers.value('x-vidyut-nonce');
-      final responseOffset = int.tryParse(
-        response.headers.value('x-vidyut-offset') ?? '',
-      );
-      final plaintextBytes = int.tryParse(
-        response.headers.value('x-vidyut-plaintext-bytes') ?? '',
-      );
-      if (nonce == null ||
-          responseOffset != offset ||
-          plaintextBytes == null ||
-          plaintextBytes < 0 ||
-          plaintextBytes > chunkBytes) {
-        throw const FormatException('Invalid encrypted chunk headers.');
-      }
-      final ciphertext = await response.fold<List<int>>(
-        <int>[],
-        (bytes, chunk) => bytes..addAll(chunk),
-      );
-      return _DownloadChunk(
-        chunk: EncryptedTransferChunk(
-          transferId: transferId,
-          fileId: fileId,
-          offset: offset,
-          plaintextBytes: plaintextBytes,
-          nonce: nonce,
-          ciphertext: ciphertext,
-        ),
-        eof: response.headers.value('x-vidyut-eof') == 'true',
-      );
-    } finally {
-      client.close(force: true);
+      throw StateError(body);
     }
+    final nonce = response.headers.value('x-vidyut-nonce');
+    final responseOffset = int.tryParse(
+      response.headers.value('x-vidyut-offset') ?? '',
+    );
+    final plaintextBytes = int.tryParse(
+      response.headers.value('x-vidyut-plaintext-bytes') ?? '',
+    );
+    if (nonce == null ||
+        responseOffset != offset ||
+        plaintextBytes == null ||
+        plaintextBytes < 0 ||
+        plaintextBytes > chunkBytes) {
+      throw const FormatException('Invalid encrypted chunk headers.');
+    }
+    final ciphertext = await response
+        .timeout(const Duration(seconds: 30))
+        .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
+    return _DownloadChunk(
+      chunk: EncryptedTransferChunk(
+        transferId: transferId,
+        fileId: fileId,
+        offset: offset,
+        plaintextBytes: plaintextBytes,
+        nonce: nonce,
+        ciphertext: ciphertext,
+      ),
+      eof: response.headers.value('x-vidyut-eof') == 'true',
+    );
   }
 
   Future<PhoneTransferBatch> _existingOrCreate(TransferOffer offer) async {

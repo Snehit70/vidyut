@@ -8,6 +8,8 @@ import android.net.Uri
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -16,6 +18,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
+import io.flutter.plugin.common.StandardMethodCodec
 import java.io.File
 
 class VidyutFilesPlugin :
@@ -31,7 +34,12 @@ class VidyutFilesPlugin :
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
-        channel = MethodChannel(binding.binaryMessenger, "vidyut/files")
+        channel = MethodChannel(
+            binding.binaryMessenger,
+            "vidyut/files",
+            StandardMethodCodec.INSTANCE,
+            binding.binaryMessenger.makeBackgroundTaskQueue()
+        )
         channel.setMethodCallHandler(this)
     }
 
@@ -52,13 +60,21 @@ class VidyutFilesPlugin :
 
     private fun detachActivity() {
         activityBinding?.removeActivityResultListener(this)
+        pendingResult?.error(
+            "activity-detached",
+            "The folder picker closed before a destination was selected.",
+            null
+        )
+        pendingResult = null
         activityBinding = null
         activity = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "chooseDestination" -> chooseDestination(result)
+            "chooseDestination" -> Handler(Looper.getMainLooper()).post {
+                chooseDestination(result)
+            }
             "destinationLabel" -> result.success(destinationLabel())
             "isNetworkMetered" -> {
                 val manager =
@@ -143,7 +159,9 @@ class VidyutFilesPlugin :
         } else {
             publishToTree(source, Uri.parse(tree), filename, mime)
         }
-        check(source.delete()) { "Published file but could not remove private source." }
+        // Publishing succeeded. Cleanup is best-effort and must not turn a
+        // completed transfer into a reported failure.
+        source.delete()
         return destination
     }
 
@@ -151,12 +169,14 @@ class VidyutFilesPlugin :
         val root = DocumentFile.fromTreeUri(context, treeUri)
             ?: error("Configured destination is no longer available.")
         val unique = uniqueName(filename) { root.findFile(it) != null }
-        val target = root.createFile(mime, unique) ?: error("Could not create destination file.")
+        val target = root.createFile(mime, ".$unique.vidyut-part")
+            ?: error("Could not create destination file.")
         try {
             context.contentResolver.openOutputStream(target.uri, "w").use { output ->
                 requireNotNull(output) { "Could not open destination." }
                 source.inputStream().use { it.copyTo(output) }
             }
+            check(target.renameTo(unique)) { "Could not finalize destination file." }
         } catch (error: Exception) {
             target.delete()
             throw error

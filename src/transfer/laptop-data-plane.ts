@@ -40,12 +40,16 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
 
   protected override async handleAuthenticated(
     request: Request,
+    context: { isLoopback: boolean },
   ): Promise<Response | undefined> {
     const url = new URL(request.url);
     if (
       request.method === "POST" &&
       url.pathname === "/transfer/v1/local/enqueue"
     ) {
+      if (!context.isLoopback) {
+        return Response.json({ code: "local_only" }, { status: 403 });
+      }
       return this.handleLocalEnqueue(request, url);
     }
     if (request.method !== "GET" && request.method !== "PUT") {
@@ -285,6 +289,19 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         "code" in error &&
         error.code === "ENOENT"
       ) {
+        await this.queue.fail(
+          transferId,
+          fileId,
+          "partial_state_missing",
+        );
+        this.publishControl({
+          v: 1,
+          kind: "transfer_file_failed",
+          transferId,
+          fileId,
+          code: "partial_state_missing",
+        });
+        await this.onFileTerminal();
         return Response.json(
           { code: "partial_state_missing", confirmedOffset: 0 },
           { status: 409 },
@@ -375,13 +392,13 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
 }
 
 function parseOffset(value: string | null): number | undefined {
-  if (value === null || value === "") return undefined;
+  if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
   const offset = Number(value);
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : undefined;
 }
 
 function parseNonNegativeInteger(value: string | null): number | undefined {
-  if (value === null || value === "") return undefined;
+  if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }

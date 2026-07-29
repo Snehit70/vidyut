@@ -147,7 +147,7 @@ export class TransferQueue {
       (batch) => batch.transferId === offer.transferId,
     );
     if (existing) {
-      if (JSON.stringify(this.offer(existing.transferId)) !== JSON.stringify(offer)) {
+      if (!offersMatch(this.offer(existing.transferId), offer)) {
         throw new Error("Transfer identity conflicts with an existing offer.");
       }
       return structuredClone(existing);
@@ -437,6 +437,18 @@ export class TransferQueue {
   private async persist(): Promise<void> {
     await this.storage.save(this.snapshot());
   }
+}
+
+function offersMatch(left: TransferOffer, right: TransferOffer): boolean {
+  const normalize = (offer: TransferOffer) => ({
+    transferId: offer.transferId,
+    batchId: offer.batchId,
+    origin: offer.origin,
+    direction: offer.direction,
+    createdAtMs: offer.createdAtMs,
+    files: [...offer.files].sort((a, b) => a.fileId.localeCompare(b.fileId)),
+  });
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
 export class JsonTransferQueueStorage implements TransferQueueStorage {

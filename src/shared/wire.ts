@@ -131,6 +131,7 @@ export function isTransferOffer(value: unknown): value is TransferOffer {
     isNonNegativeSafeInteger(offer.createdAtMs) &&
     Array.isArray(offer.files) &&
     offer.files.length > 0 &&
+    offer.files.length <= 100 &&
     offer.files.every(isTransferFileOffer) &&
     new Set(
       offer.files.map((file) => (file as TransferFileOffer).fileId),
@@ -188,7 +189,8 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
     isId(file.fileId) &&
     typeof file.filename === "string" &&
     file.filename.length > 0 &&
-    file.filename.length <= 255 &&
+    new TextEncoder().encode(file.filename).byteLength <= 255 &&
+    !/[\u0000-\u001f\u007f]/u.test(file.filename) &&
     !file.filename.includes("/") &&
     !file.filename.includes("\\") &&
     file.filename !== "." &&

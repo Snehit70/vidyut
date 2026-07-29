@@ -115,7 +115,7 @@ Everything else lives behind the **gear icon → Settings**.
 
 Field-verified symptom → cause → fix entries live in
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
-# File sharing
+## File sharing
 
 On Android, open **Files** in Vidyut and tap **Send files**, or share one or
 more files to Vidyut from another app. Received files appear in

@@ -36,7 +36,7 @@ This file is a live gap map against `docs/PRD.md`. It is not a replacement for t
 - Android accepts generic single/multiple share intents and system-picker
   selections, provides searchable/filterable Files history with retry/remove/
   clear actions, and receives in the foreground-service engine.
-- Android publishes verified receives to `Downloads/Vidyut` through MediaStore
+- Android publishes verified received files to `Downloads/Vidyut` through MediaStore
   or a persisted custom Storage Access Framework folder, preserving both files
   on collisions. Private staging is removed only after publishing succeeds.
 - Receive, maximum-size, metered-network, destination, and batch-alert settings
