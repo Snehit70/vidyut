@@ -4,9 +4,11 @@ import { PayloadPool } from "./payload-pool";
 import {
   encodedPayloadBytes,
   isPayloadFrame,
+  isTransferControlMessage,
   type PayloadFrame,
   type RelayHealth,
   type RelayMessage,
+  type TransferControlMessage,
 } from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
 
@@ -21,6 +23,11 @@ interface RelayOptions {
   logger?: Logger;
   clipboardHealth?: () => ClipboardHealth;
   relayName?: string;
+  transferControl?: (
+    message: TransferControlMessage,
+    sourceDeviceId: string,
+  ) => void | Promise<void>;
+  transferHttp?: (request: Request) => Promise<Response | undefined>;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -42,6 +49,7 @@ export interface RelayHandle {
   url: string;
   pool: PayloadPool;
   publishHealth(): void;
+  publishTransferControl(message: TransferControlMessage): void;
   stop(): Promise<void>;
 }
 
@@ -87,7 +95,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
   const server = Bun.serve<DeviceSocketData>({
     hostname: options.hostname,
     port: options.port,
-    fetch(request, bunServer) {
+    async fetch(request, bunServer) {
       const address = bunServer.requestIP(request);
       const now = Date.now();
       if (
@@ -103,6 +111,16 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         })
       ) {
         return undefined;
+      }
+      if (new URL(request.url).pathname.startsWith("/transfer/v1/")) {
+        const response = await options.transferHttp?.(request);
+        return (
+          response ??
+          Response.json(
+            { code: "transfer_not_found" },
+            { status: 404 },
+          )
+        );
       }
       if (new URL(request.url).pathname === "/health") {
         return Response.json(healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.()));
@@ -140,8 +158,29 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
 
+        if (isTransferControlMessage(message)) {
+          await options.transferControl?.(
+            message,
+            socket.data.deviceId ?? "unknown",
+          );
+          const recipients = broadcast(devices, socket, message);
+          logger.info("transfer_control_routed", {
+            connId: socket.data.connId,
+            deviceId: socket.data.deviceId,
+            kind: message.kind,
+            transferId: transferIdOf(message),
+            recipients,
+          });
+          return;
+        }
+
         if (message.kind !== "publish" || !isPayloadFrame(message.frame)) {
-          sendError(logger, socket, "bad_message", "Authenticated devices may only publish payload frames.");
+          sendError(
+            logger,
+            socket,
+            "bad_message",
+            "Authenticated devices may publish payload frames or valid transfer control messages.",
+          );
           return;
         }
 
@@ -202,6 +241,18 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           ),
         },
       );
+    },
+    publishTransferControl(message) {
+      if (!isTransferControlMessage(message)) {
+        throw new TypeError("Invalid transfer control message.");
+      }
+      const recipients = broadcast(devices, undefined, message);
+      logger.info("transfer_control_routed", {
+        origin: "local",
+        kind: message.kind,
+        transferId: transferIdOf(message),
+        recipients,
+      });
     },
     async stop() {
       clearInterval(heartbeat);
@@ -325,6 +376,12 @@ function frameIdentity(frame: PayloadFrame): Record<string, unknown> {
     nonce: frame.nonce,
     frameTs: frame.ts,
   };
+}
+
+function transferIdOf(message: TransferControlMessage): string {
+  return message.kind === "transfer_offer"
+    ? message.offer.transferId
+    : message.transferId;
 }
 
 function send(socket: RelaySocket, message: RelayMessage): void {

@@ -1,0 +1,199 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  JsonTransferQueueStorage,
+  TransferQueue,
+  type EnqueueTransferFile,
+} from "../src/transfer/transfer-queue";
+import type { TransferOffer } from "../src/shared/wire";
+
+const file = (
+  filename: string,
+  size = 10,
+): EnqueueTransferFile => ({
+  filename,
+  mime: "application/octet-stream",
+  size,
+  lastModifiedMs: 1_753_689_500_000,
+  sha256: filename[0]!.repeat(64),
+  sourcePath: `/source/${filename}`,
+});
+
+describe("durable transfer queue", () => {
+  test("persists FIFO batches and resumes confirmed progress after restart", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-transfer-queue-"));
+    const path = join(dir, "queue.json");
+    let sequence = 0;
+    const id = (prefix: string) => `${prefix}_${String(++sequence).padStart(16, "0")}`;
+    const storage = new JsonTransferQueueStorage(path);
+    const first = await TransferQueue.open({ storage, id });
+    const batchA = await first.enqueue({
+      direction: "laptop_to_phone",
+      origin: "laptop",
+      files: [file("alpha.bin")],
+    });
+    const batchB = await first.enqueue({
+      direction: "laptop_to_phone",
+      origin: "laptop",
+      files: [file("beta.bin")],
+    });
+
+    const claim = await first.claimNext();
+    expect(claim?.batch.transferId).toBe(batchA.transferId);
+    await first.confirmProgress(batchA.transferId, batchA.files[0]!.fileId, 4);
+
+    const restarted = await TransferQueue.open({ storage, id });
+    const snapshot = restarted.snapshot();
+    expect(snapshot.batches.map((batch) => batch.transferId)).toEqual([
+      batchA.transferId,
+      batchB.transferId,
+    ]);
+    expect(snapshot.batches[0]!.files[0]!.confirmedOffset).toBe(4);
+    const resumed = await restarted.claimNext();
+    expect(resumed?.batch.transferId).toBe(batchA.transferId);
+    expect(resumed?.file.confirmedOffset).toBe(4);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("enforces monotonic bounded progress and verified completion", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("alpha.bin")],
+    });
+    const fileRecord = batch.files[0]!;
+    await queue.claimNext();
+    await queue.confirmProgress(batch.transferId, fileRecord.fileId, 10);
+
+    await expect(
+      queue.confirmProgress(batch.transferId, fileRecord.fileId, 9),
+    ).rejects.toThrow(/monotonic/);
+    await expect(
+      queue.complete(batch.transferId, fileRecord.fileId, "b".repeat(64)),
+    ).rejects.toThrow(/hash/);
+    await queue.complete(
+      batch.transferId,
+      fileRecord.fileId,
+      fileRecord.sha256,
+    );
+
+    expect(queue.snapshot().batches[0]!.status).toBe("completed");
+  });
+
+  test("continues a batch after one file fails and retries only failures", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "laptop_to_phone",
+      origin: "laptop",
+      files: [file("alpha.bin"), file("beta.bin")],
+    });
+    const first = (await queue.claimNext())!;
+    await queue.fail(batch.transferId, first.file.fileId, "source_unavailable");
+    const second = (await queue.claimNext())!;
+    expect(second.file.filename).toBe("beta.bin");
+    await queue.confirmProgress(batch.transferId, second.file.fileId, 10);
+    await queue.complete(
+      batch.transferId,
+      second.file.fileId,
+      second.file.sha256,
+    );
+    expect(queue.snapshot().batches[0]!.status).toBe(
+      "completed_with_issues",
+    );
+
+    await queue.retry(batch.transferId);
+    expect(queue.snapshot().batches[0]!.status).toBe("queued");
+    expect((await queue.claimNext())!.file.filename).toBe("alpha.bin");
+  });
+
+  test("pauses, resumes and cancels without discarding confirmed progress", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("alpha.bin")],
+    });
+    const fileId = batch.files[0]!.fileId;
+    await queue.claimNext();
+    await queue.confirmProgress(batch.transferId, fileId, 4);
+    await queue.pause(batch.transferId);
+    expect(queue.snapshot().batches[0]!.status).toBe("paused");
+    await queue.resume(batch.transferId);
+    expect((await queue.claimNext())!.file.confirmedOffset).toBe(4);
+    await queue.cancel(batch.transferId);
+    expect(queue.snapshot().batches[0]!.status).toBe("cancelled");
+  });
+
+  test("expires unfinished work after seven days but retains history", async () => {
+    let now = 1_753_689_600_000;
+    const queue = await memoryQueue(() => now);
+    await queue.enqueue({
+      direction: "laptop_to_phone",
+      origin: "laptop",
+      files: [file("alpha.bin")],
+    });
+
+    now += 7 * 24 * 60 * 60 * 1000 + 1;
+    await queue.expire();
+
+    const batch = queue.snapshot().batches[0]!;
+    expect(batch.status).toBe("expired");
+    expect(batch.files[0]!.errorCode).toBe("transfer_expired");
+  });
+
+  test("accepts an idempotent remote offer with resolved destinations", async () => {
+    const queue = await memoryQueue();
+    const offer: TransferOffer = {
+      transferId: "transfer_remote_1234",
+      batchId: "batch_remote_123456",
+      origin: "phone",
+      direction: "phone_to_laptop",
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_remote_123456",
+          filename: "report.pdf",
+          mime: "application/pdf",
+          size: 10,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: "a".repeat(64),
+        },
+      ],
+    };
+    const destinations = new Map([
+      [offer.files[0]!.fileId, "/downloads/report.pdf"],
+    ]);
+
+    const accepted = await queue.acceptOffer(offer, destinations);
+    const duplicate = await queue.acceptOffer(offer, destinations);
+
+    expect(accepted.files[0]!.destinationPath).toBe("/downloads/report.pdf");
+    expect(duplicate).toEqual(accepted);
+    expect(queue.snapshot().batches).toHaveLength(1);
+  });
+});
+
+async function memoryQueue(now: () => number = Date.now) {
+  let snapshot:
+    | ReturnType<TransferQueue["snapshot"]>
+    | undefined;
+  let sequence = 0;
+  return TransferQueue.open({
+    storage: {
+      async load() {
+        return snapshot;
+      },
+      async save(value) {
+        snapshot = structuredClone(value);
+      },
+    },
+    now,
+    id(prefix) {
+      return `${prefix}_${String(++sequence).padStart(16, "0")}`;
+    },
+  });
+}
