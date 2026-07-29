@@ -150,6 +150,7 @@ class RelayConnection implements RelaySession {
   final _events = StreamController<RelayEvent>.broadcast();
   final _acks = StreamController<int>.broadcast();
   final _health = StreamController<RelayHealth>.broadcast();
+  final _transferControls = StreamController<Map<String, Object?>>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
 
@@ -164,6 +165,7 @@ class RelayConnection implements RelaySession {
   /// `{kind: "ack", ts}`; the push pipeline clears its pending slot on these.
   Stream<int> get acks => _acks.stream;
   Stream<RelayHealth> get health => _health.stream;
+  Stream<Map<String, Object?>> get transferControls => _transferControls.stream;
 
   /// The cap advertised by the relay hello, measured on the decoded
   /// ciphertext (plaintext + 16-byte GCM tag); [defaultMaxPayloadBytes]
@@ -203,6 +205,14 @@ class RelayConnection implements RelaySession {
     transport.send({'v': 1, 'kind': 'publish', 'frame': frame.toJson()});
   }
 
+  void sendTransferControl(Map<String, Object?> message) {
+    final kind = message['kind'];
+    if (message['v'] != 1 || kind is! String || !kind.startsWith('transfer_')) {
+      throw const FormatException('Invalid transfer control message.');
+    }
+    transport.send(message);
+  }
+
   @override
   Future<void> close() async {
     await _guardedClose(_subscription?.cancel());
@@ -212,6 +222,7 @@ class RelayConnection implements RelaySession {
     await _guardedClose(_events.close());
     await _guardedClose(_acks.close());
     await _guardedClose(_health.close());
+    await _guardedClose(_transferControls.close());
   }
 
   Future<void> _guardedClose(Future<void>? step) async {
@@ -256,6 +267,8 @@ class RelayConnection implements RelaySession {
       case 'ack':
         final ts = message['ts'];
         if (ts is int) _acks.add(ts);
+      case String kind when kind.startsWith('transfer_'):
+        _transferControls.add(message);
       case 'error':
         final code = message['code'];
         final detail = message['message'];

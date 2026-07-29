@@ -18,16 +18,20 @@ class FixedRandom implements Random {
   int nextInt(int max) => _bytes[_index++] % max;
 
   @override
-  bool nextBool() => throw UnsupportedError('FixedRandom only supports nextInt');
+  bool nextBool() =>
+      throw UnsupportedError('FixedRandom only supports nextInt');
 
   @override
-  double nextDouble() => throw UnsupportedError('FixedRandom only supports nextInt');
+  double nextDouble() =>
+      throw UnsupportedError('FixedRandom only supports nextInt');
 }
 
 void main() {
-  final fixtures = jsonDecode(
-    File('../tests/fixtures/crypto-fixtures.json').readAsStringSync(),
-  ) as Map<String, Object?>;
+  final fixtures =
+      jsonDecode(
+            File('../tests/fixtures/crypto-fixtures.json').readAsStringSync(),
+          )
+          as Map<String, Object?>;
   final payloadVectors = (fixtures['payloadVectors'] as List<Object?>)
       .cast<Map<String, Object?>>();
   final proofVectors = (fixtures['pairingProofVectors'] as List<Object?>)
@@ -49,7 +53,9 @@ void main() {
     });
 
     test('re-encrypts payload vector $name byte-for-byte', () async {
-      final crypto = PayloadCrypto(random: FixedRandom(base64Decode(frame.nonce)));
+      final crypto = PayloadCrypto(
+        random: FixedRandom(base64Decode(frame.nonce)),
+      );
 
       final encrypted = await crypto.encrypt(
         metadata: PayloadMetadata(

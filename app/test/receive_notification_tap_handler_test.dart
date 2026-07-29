@@ -38,55 +38,59 @@ void main() {
     );
   }
 
-  test('copies the latest received text when the notification is tapped',
-      () async {
-    final storage = MemoryReceivedPayloadStorage();
-    await ReceivedTextRepository(storage).saveLatest('laptop text');
-    final clipboard = _FakeClipboard();
-    final messages = <String>[];
-    final tapHandler = handler(
-      storage,
-      clipboard: clipboard,
-      imageClipboard: _FakeImageClipboard(),
-    )..onCopied = messages.add;
+  test(
+    'copies the latest received text when the notification is tapped',
+    () async {
+      final storage = MemoryReceivedPayloadStorage();
+      await ReceivedTextRepository(storage).saveLatest('laptop text');
+      final clipboard = _FakeClipboard();
+      final messages = <String>[];
+      final tapHandler = handler(
+        storage,
+        clipboard: clipboard,
+        imageClipboard: _FakeImageClipboard(),
+      )..onCopied = messages.add;
 
-    await tapHandler.handleResponse(
-      const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
-        payload: copyLatestTextNotificationPayload,
-      ),
-    );
+      await tapHandler.handleResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: copyLatestTextNotificationPayload,
+        ),
+      );
 
-    expect(clipboard.text, 'laptop text');
-    expect(messages.single, 'Text copied from laptop.');
-  });
+      expect(clipboard.text, 'laptop text');
+      expect(messages.single, 'Text copied from laptop.');
+    },
+  );
 
-  test('copies the latest received image when the notification is tapped',
-      () async {
-    final storage = MemoryReceivedPayloadStorage();
-    await imageRepository(storage).saveLatest([1, 2, 3], 'image/png');
-    final imageClipboard = _FakeImageClipboard();
-    final messages = <String>[];
-    final tapHandler = handler(
-      storage,
-      clipboard: _FakeClipboard(),
-      imageClipboard: imageClipboard,
-    )..onCopied = messages.add;
+  test(
+    'copies the latest received image when the notification is tapped',
+    () async {
+      final storage = MemoryReceivedPayloadStorage();
+      await imageRepository(storage).saveLatest([1, 2, 3], 'image/png');
+      final imageClipboard = _FakeImageClipboard();
+      final messages = <String>[];
+      final tapHandler = handler(
+        storage,
+        clipboard: _FakeClipboard(),
+        imageClipboard: imageClipboard,
+      )..onCopied = messages.add;
 
-    await tapHandler.handleResponse(
-      const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
-        payload: copyLatestImageNotificationPayload,
-      ),
-    );
+      await tapHandler.handleResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: copyLatestImageNotificationPayload,
+        ),
+      );
 
-    final written = imageClipboard.images.single;
-    expect(written.mime, 'image/png');
-    expect(await File(written.path).readAsBytes(), [1, 2, 3]);
-    expect(messages.single, 'Image copied from laptop.');
-  });
+      final written = imageClipboard.images.single;
+      expect(written.mime, 'image/png');
+      expect(await File(written.path).readAsBytes(), [1, 2, 3]);
+      expect(messages.single, 'Image copied from laptop.');
+    },
+  );
 
   test('ignores notification taps without a copy payload', () async {
     final storage = MemoryReceivedPayloadStorage();
@@ -101,8 +105,7 @@ void main() {
 
     await tapHandler.handleResponse(
       const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
+        notificationResponseType: NotificationResponseType.selectedNotification,
       ),
     );
 
@@ -121,8 +124,7 @@ void main() {
 
     await tapHandler.handleResponse(
       const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
+        notificationResponseType: NotificationResponseType.selectedNotification,
         payload: copyLatestTextNotificationPayload,
       ),
     );
@@ -142,8 +144,7 @@ void main() {
 
     await tapHandler.handleResponse(
       const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
+        notificationResponseType: NotificationResponseType.selectedNotification,
         payload: copyLatestImageNotificationPayload,
       ),
     );
@@ -152,52 +153,55 @@ void main() {
     expect(messages.single, 'No received image to copy.');
   });
 
-  test('opens the clipboard permission settings from the MIUI hint tap',
-      () async {
-    final opener = _FakePermissionSettingsOpener();
-    final tapHandler = ReceiveNotificationTapHandler(
-      repository: ReceivedTextRepository(MemoryReceivedPayloadStorage()),
-      imageRepository: imageRepository(MemoryReceivedPayloadStorage()),
-      clipboard: _FakeClipboard(),
-      imageClipboard: _FakeImageClipboard(),
-      permissionSettingsOpener: opener,
-    );
+  test(
+    'opens the clipboard permission settings from the MIUI hint tap',
+    () async {
+      final opener = _FakePermissionSettingsOpener();
+      final tapHandler = ReceiveNotificationTapHandler(
+        repository: ReceivedTextRepository(MemoryReceivedPayloadStorage()),
+        imageRepository: imageRepository(MemoryReceivedPayloadStorage()),
+        clipboard: _FakeClipboard(),
+        imageClipboard: _FakeImageClipboard(),
+        permissionSettingsOpener: opener,
+      );
 
-    await tapHandler.handleResponse(
-      const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
-        payload: openClipboardPermissionNotificationPayload,
-      ),
-    );
+      await tapHandler.handleResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: openClipboardPermissionNotificationPayload,
+        ),
+      );
 
-    expect(opener.openCount, 1);
-  });
+      expect(opener.openCount, 1);
+    },
+  );
 
-  test('surfaces a failure to open the clipboard permission settings',
-      () async {
-    final messages = <String>[];
-    final tapHandler = ReceiveNotificationTapHandler(
-      repository: ReceivedTextRepository(MemoryReceivedPayloadStorage()),
-      imageRepository: imageRepository(MemoryReceivedPayloadStorage()),
-      clipboard: _FakeClipboard(),
-      imageClipboard: _FakeImageClipboard(),
-      permissionSettingsOpener: _ThrowingPermissionSettingsOpener(),
-    )..onCopied = messages.add;
+  test(
+    'surfaces a failure to open the clipboard permission settings',
+    () async {
+      final messages = <String>[];
+      final tapHandler = ReceiveNotificationTapHandler(
+        repository: ReceivedTextRepository(MemoryReceivedPayloadStorage()),
+        imageRepository: imageRepository(MemoryReceivedPayloadStorage()),
+        clipboard: _FakeClipboard(),
+        imageClipboard: _FakeImageClipboard(),
+        permissionSettingsOpener: _ThrowingPermissionSettingsOpener(),
+      )..onCopied = messages.add;
 
-    await tapHandler.handleResponse(
-      const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
-        payload: openClipboardPermissionNotificationPayload,
-      ),
-    );
+      await tapHandler.handleResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: openClipboardPermissionNotificationPayload,
+        ),
+      );
 
-    expect(messages.single, startsWith('Could not open clipboard settings:'));
-  });
+      expect(messages.single, startsWith('Could not open clipboard settings:'));
+    },
+  );
 
-  test('surfaces image clipboard write failures instead of throwing',
-      () async {
+  test('surfaces image clipboard write failures instead of throwing', () async {
     final storage = MemoryReceivedPayloadStorage();
     await imageRepository(storage).saveLatest([1], 'image/png');
     final messages = <String>[];
@@ -210,8 +214,7 @@ void main() {
 
     await tapHandler.handleResponse(
       const NotificationResponse(
-        notificationResponseType:
-            NotificationResponseType.selectedNotification,
+        notificationResponseType: NotificationResponseType.selectedNotification,
         payload: copyLatestImageNotificationPayload,
       ),
     );

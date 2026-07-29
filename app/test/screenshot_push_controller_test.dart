@@ -11,68 +11,73 @@ import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
 
 void main() {
-  test('publishes a screenshot end to end and clears the slot on ack',
-      () async {
-    final harness = _Harness();
-    await harness.connect();
+  test(
+    'publishes a screenshot end to end and clears the slot on ack',
+    () async {
+      final harness = _Harness();
+      await harness.connect();
 
-    harness.controller.handleEvent(_event(id: 7, detectedAt: 1000));
-    await _waitUntil(() => harness.published.length == 1);
+      harness.controller.handleEvent(_event(id: 7, detectedAt: 1000));
+      await _waitUntil(() => harness.published.length == 1);
 
-    final frame = harness.published.single;
-    expect(frame['type'], 'image');
-    expect(frame['mime'], 'image/png');
-    expect(frame['origin'], 'phone');
-    expect(frame['ts'], 1000);
+      final frame = harness.published.single;
+      expect(frame['type'], 'image');
+      expect(frame['mime'], 'image/png');
+      expect(frame['origin'], 'phone');
+      expect(frame['ts'], 1000);
 
-    expect(harness.logs, contains(startsWith('screenshot_read id=7 ')));
-    expect(harness.logs.join('\n'), contains('attempts=1'));
-    expect(
-      harness.logs,
-      contains(allOf(startsWith('screenshot_encrypted '), contains('ts=1000'))),
-    );
-    expect(
-      harness.logs,
-      contains(allOf(startsWith('screenshot_publish '), contains('ts=1000'))),
-    );
+      expect(harness.logs, contains(startsWith('screenshot_read id=7 ')));
+      expect(harness.logs.join('\n'), contains('attempts=1'));
+      expect(
+        harness.logs,
+        contains(
+          allOf(startsWith('screenshot_encrypted '), contains('ts=1000')),
+        ),
+      );
+      expect(
+        harness.logs,
+        contains(allOf(startsWith('screenshot_publish '), contains('ts=1000'))),
+      );
 
-    harness.transport.receive({'v': 1, 'kind': 'ack', 'ts': 1000});
-    await _waitUntil(
-      () => harness.logs.any((l) => l.startsWith('screenshot_acked ')),
-    );
-    expect(harness.logs, contains(startsWith('screenshot_acked ts=1000 ')));
+      harness.transport.receive({'v': 1, 'kind': 'ack', 'ts': 1000});
+      await _waitUntil(
+        () => harness.logs.any((l) => l.startsWith('screenshot_acked ')),
+      );
+      expect(harness.logs, contains(startsWith('screenshot_acked ts=1000 ')));
 
-    // Slot cleared: a reconnect must not republish.
-    await harness.reconnect();
-    await _drain();
-    expect(harness.published, hasLength(1));
-    expect(
-      harness.logs.where((l) => l.startsWith('screenshot_republished')),
-      isEmpty,
-    );
-  });
+      // Slot cleared: a reconnect must not republish.
+      await harness.reconnect();
+      await _drain();
+      expect(harness.published, hasLength(1));
+      expect(
+        harness.logs.where((l) => l.startsWith('screenshot_republished')),
+        isEmpty,
+      );
+    },
+  );
 
-  test('holds while disconnected and republishes verbatim on connect',
-      () async {
-    final harness = _Harness();
-    harness.attach(); // attached but never authenticated
+  test(
+    'holds while disconnected and republishes verbatim on connect',
+    () async {
+      final harness = _Harness();
+      harness.attach(); // attached but never authenticated
 
-    harness.controller.handleEvent(_event(id: 3, detectedAt: 500));
-    await _waitUntil(
-      () => harness.logs.any((l) => l.startsWith('screenshot_held ')),
-    );
-    expect(harness.published, isEmpty);
+      harness.controller.handleEvent(_event(id: 3, detectedAt: 500));
+      await _waitUntil(
+        () => harness.logs.any((l) => l.startsWith('screenshot_held ')),
+      );
+      expect(harness.published, isEmpty);
 
-    harness.transport.receive({'v': 1, 'kind': 'auth_ok'});
-    await _waitUntil(() => harness.published.length == 1);
-    expect(
-      harness.logs,
-      contains(allOf(
-        startsWith('screenshot_republished '),
-        contains('ts=500'),
-      )),
-    );
-  });
+      harness.transport.receive({'v': 1, 'kind': 'auth_ok'});
+      await _waitUntil(() => harness.published.length == 1);
+      expect(
+        harness.logs,
+        contains(
+          allOf(startsWith('screenshot_republished '), contains('ts=500')),
+        ),
+      );
+    },
+  );
 
   test('re-sends an unacked frame verbatim after a reconnect', () async {
     final harness = _Harness();
@@ -87,10 +92,7 @@ void main() {
     await _waitUntil(() => harness.published.length == 2);
 
     expect(harness.published.last, first); // same nonce, same ciphertext
-    expect(
-      harness.logs,
-      contains(startsWith('screenshot_republished ')),
-    );
+    expect(harness.logs, contains(startsWith('screenshot_republished ')));
 
     harness.transport.receive({'v': 1, 'kind': 'ack', 'ts': 2000});
     await _waitUntil(
@@ -156,45 +158,53 @@ void main() {
 
     // sizeBytes 0: MIUI still indexing, so the pre-check passes and the
     // post-read check must catch it.
-    harness.controller.handleEvent(_event(id: 8, detectedAt: 100, sizeBytes: 0));
+    harness.controller.handleEvent(
+      _event(id: 8, detectedAt: 100, sizeBytes: 0),
+    );
     await _waitUntil(
       () => harness.logs.contains('screenshot_skipped id=8 reason=too_large'),
     );
     expect(harness.published, isEmpty);
   });
 
-  test('burst resolves latest-wins: newest publishes, rest are superseded',
-      () async {
-    final gates = <int, Completer<void>>{};
-    final harness = _Harness(
-      readImage: (id) async {
-        final gate = gates.putIfAbsent(id, Completer.new);
-        await gate.future;
-        return _bytes();
-      },
-    );
-    await harness.connect();
+  test(
+    'burst resolves latest-wins: newest publishes, rest are superseded',
+    () async {
+      final gates = <int, Completer<void>>{};
+      final harness = _Harness(
+        readImage: (id) async {
+          final gate = gates.putIfAbsent(id, Completer.new);
+          await gate.future;
+          return _bytes();
+        },
+      );
+      await harness.connect();
 
-    harness.controller.handleEvent(_event(id: 1, detectedAt: 100));
-    await _drain();
-    harness.controller.handleEvent(_event(id: 2, detectedAt: 200));
-    harness.controller.handleEvent(_event(id: 3, detectedAt: 300));
-    await _drain();
+      harness.controller.handleEvent(_event(id: 1, detectedAt: 100));
+      await _drain();
+      harness.controller.handleEvent(_event(id: 2, detectedAt: 200));
+      harness.controller.handleEvent(_event(id: 3, detectedAt: 300));
+      await _drain();
 
-    // 2 was displaced from the waiting slot by 3 before ever starting.
-    expect(harness.logs, contains('screenshot_skipped id=2 reason=superseded'));
+      // 2 was displaced from the waiting slot by 3 before ever starting.
+      expect(
+        harness.logs,
+        contains('screenshot_skipped id=2 reason=superseded'),
+      );
 
-    gates[1]!.complete();
-    await _waitUntil(
-      () => harness.logs.contains('screenshot_skipped id=1 reason=superseded'),
-    );
-    // 1 finished encrypting but a newer event was waiting: not published.
-    expect(harness.published, isEmpty);
+      gates[1]!.complete();
+      await _waitUntil(
+        () =>
+            harness.logs.contains('screenshot_skipped id=1 reason=superseded'),
+      );
+      // 1 finished encrypting but a newer event was waiting: not published.
+      expect(harness.published, isEmpty);
 
-    gates[3]!.complete();
-    await _waitUntil(() => harness.published.length == 1);
-    expect(harness.published.single['ts'], 300);
-  });
+      gates[3]!.complete();
+      await _waitUntil(() => harness.published.length == 1);
+      expect(harness.published.single['ts'], 300);
+    },
+  );
 
   test('bumps a non-increasing detection ts by one millisecond', () async {
     final harness = _Harness();
@@ -226,8 +236,7 @@ void main() {
       'message': 'Payload exceeds 10 bytes.',
     });
     await _waitUntil(
-      () =>
-          harness.logs.contains('screenshot_skipped id=11 reason=too_large'),
+      () => harness.logs.contains('screenshot_skipped id=11 reason=too_large'),
     );
 
     // Not republished on the next connect: the loop is broken.
@@ -259,10 +268,7 @@ void main() {
     await _drain();
 
     expect(harness.published, isEmpty);
-    expect(
-      harness.logs,
-      contains(contains('no pairing attached yet')),
-    );
+    expect(harness.logs, contains(contains('no pairing attached yet')));
   });
 }
 

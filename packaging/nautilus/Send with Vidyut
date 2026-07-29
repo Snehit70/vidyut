@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+files=()
+while IFS= read -r uri; do
+  [[ "$uri" == file://* ]] || continue
+  files+=("$(python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path))' "$uri")")
+done <<<"${NAUTILUS_SCRIPT_SELECTED_URIS:-}"
+sender="${XDG_BIN_HOME:-$HOME/.local/bin}/vidyut-send"
+exec "$sender" "${files[@]}"

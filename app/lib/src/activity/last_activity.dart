@@ -53,7 +53,9 @@ class LastActivity {
     final summary = json['summary'];
     final counterpart = json['counterpart'];
     final ts = json['ts'];
-    if (direction == null || summary is! String || counterpart is! String ||
+    if (direction == null ||
+        summary is! String ||
+        counterpart is! String ||
         ts is! int) {
       return null;
     }

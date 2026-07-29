@@ -195,7 +195,9 @@ Each deliverable has explicit acceptance criteria. "Done" = all criteria met.
 - Cross-network sync (different WiFi / cellular) — see ADR 0001.
 - Background auto-copy on the phone (Android restriction) — see ADR 0002.
 - Clipboard **history** / multiple items — pool is latest-only.
-- Arbitrary file transfer (this is a clipboard, not AirDrop).
+- Arbitrary file transfer was out of scope for v1. It is now designed as the
+  next feature in `docs/specs/file-sharing.md` and remains separate from the
+  clipboard pool.
 - iOS, Windows, macOS clients (Linux/Wayland + Android only for v1).
 - X11 laptops (Wayland/`wl-clipboard` only for v1).
 - Play Store publishing / signed release APK (debug APK is enough for v1).

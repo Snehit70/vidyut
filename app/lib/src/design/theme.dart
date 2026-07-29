@@ -26,14 +26,18 @@ ThemeData buildVidyutTheme() {
   final base = ThemeData(colorScheme: scheme, useMaterial3: true);
   final jakarta = GoogleFonts.plusJakartaSansTextTheme(base.textTheme);
 
-  TextStyle style(double size, FontWeight weight, {Color color = Palette.ink, double? tracking}) =>
-      GoogleFonts.plusJakartaSans(
-        fontSize: size,
-        fontWeight: weight,
-        color: color,
-        letterSpacing: tracking ?? 0,
-        height: 1.3,
-      );
+  TextStyle style(
+    double size,
+    FontWeight weight, {
+    Color color = Palette.ink,
+    double? tracking,
+  }) => GoogleFonts.plusJakartaSans(
+    fontSize: size,
+    fontWeight: weight,
+    color: color,
+    letterSpacing: tracking ?? 0,
+    height: 1.3,
+  );
 
   final textTheme = jakarta.copyWith(
     // Display: weight 800 with tight tracking (-0.03em).
@@ -67,7 +71,9 @@ ThemeData buildVidyutTheme() {
       color: Palette.mist,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(20))),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(20)),
+      ),
       margin: EdgeInsets.zero,
     ),
     filledButtonTheme: FilledButtonThemeData(
@@ -119,22 +125,31 @@ ThemeData buildVidyutTheme() {
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected) ? Colors.white : Palette.muted,
+        (states) => states.contains(WidgetState.selected)
+            ? Colors.white
+            : Palette.muted,
       ),
       trackColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected) ? Palette.raspberry : Palette.mist,
+        (states) => states.contains(WidgetState.selected)
+            ? Palette.raspberry
+            : Palette.mist,
       ),
       trackOutlineColor: WidgetStateProperty.resolveWith(
-        (states) =>
-            states.contains(WidgetState.selected) ? Colors.transparent : Palette.hairline,
+        (states) => states.contains(WidgetState.selected)
+            ? Colors.transparent
+            : Palette.hairline,
       ),
     ),
     listTileTheme: const ListTileThemeData(
       iconColor: Palette.raspberry,
       textColor: Palette.ink,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
     ),
-    progressIndicatorTheme: const ProgressIndicatorThemeData(color: Palette.raspberry),
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: Palette.raspberry,
+    ),
     snackBarTheme: SnackBarThemeData(
       backgroundColor: Palette.ink,
       contentTextStyle: style(14, FontWeight.w500, color: Colors.white),

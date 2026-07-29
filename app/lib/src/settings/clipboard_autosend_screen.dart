@@ -78,11 +78,13 @@ class _ClipboardAutoSendScreenState extends State<ClipboardAutoSendScreen>
   }
 
   Future<void> _copyCommands() async {
-    await Clipboard.setData(const ClipboardData(text: clipboardAutoSendAdbCommands));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Commands copied.')),
+    await Clipboard.setData(
+      const ClipboardData(text: clipboardAutoSendAdbCommands),
     );
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Commands copied.')));
   }
 
   @override
@@ -154,15 +156,15 @@ class _GrantStateCard extends StatelessWidget {
     final (icon, color, text) = switch (granted) {
       null => (Icons.hourglass_empty, Palette.muted, 'Checking permission...'),
       true => (
-          Icons.check_circle,
-          Palette.raspberry,
-          'READ_LOGS granted — auto-send can run.',
-        ),
+        Icons.check_circle,
+        Palette.raspberry,
+        'READ_LOGS granted — auto-send can run.',
+      ),
       false => (
-          Icons.error_outline,
-          Palette.error,
-          'READ_LOGS not granted — run the setup below.',
-        ),
+        Icons.error_outline,
+        Palette.error,
+        'READ_LOGS not granted — run the setup below.',
+      ),
     };
     return Card(
       child: ListTile(

@@ -115,3 +115,20 @@ Everything else lives behind the **gear icon → Settings**.
 
 Field-verified symptom → cause → fix entries live in
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+## File sharing
+
+On Android, open **Files** in Vidyut and tap **Send files**, or share one or
+more files to Vidyut from another app. Received files appear in
+`Downloads/Vidyut` by default; change the folder under **Settings → Files**.
+
+On Linux, select files in Dolphin or Nautilus and choose **Send with Vidyut**,
+or click the Vidyut tray icon. From a terminal:
+
+```bash
+vidyut-relay --send "/path/to/file"
+vidyut-relay --transfers
+```
+
+Files are transferred only over the paired LAN connection. Interrupted
+transfers retain receiver-confirmed progress and complete files are verified
+with SHA-256 before they become visible.

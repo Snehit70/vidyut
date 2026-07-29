@@ -1,0 +1,24 @@
+name: vidyut_files
+description: Android Downloads and persisted document-tree publishing for Vidyut.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.12.2
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.snehit.vidyut.vidyut_files
+        pluginClass: VidyutFilesPlugin

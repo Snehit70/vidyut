@@ -137,10 +137,7 @@ void main() {
       final repository = AppSettingsRepository(storage);
       expect(await repository.onboardingComplete(), isFalse);
       await repository.markOnboardingComplete();
-      expect(
-        await AppSettingsRepository(storage).onboardingComplete(),
-        isTrue,
-      );
+      expect(await AppSettingsRepository(storage).onboardingComplete(), isTrue);
     });
 
     test('MIUI setup flags persist per item', () async {
@@ -238,24 +235,23 @@ void main() {
       expect(find.text('Connect to your laptop'), findsOneWidget);
     });
 
-    testWidgets(
-      'partial photos grant flips to the recovery state (D3)',
-      (tester) async {
-        actions.photosAfterRequest = ScreenshotAccessLevel.partial;
-        await tester.pumpWidget(wizard());
-        await tester.pumpAndSettle();
+    testWidgets('partial photos grant flips to the recovery state (D3)', (
+      tester,
+    ) async {
+      actions.photosAfterRequest = ScreenshotAccessLevel.partial;
+      await tester.pumpWidget(wizard());
+      await tester.pumpAndSettle();
 
-        await tester.tap(find.text('Skip'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Allow access'));
-        await tester.pumpAndSettle();
+      await tester.tap(find.text('Skip'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Allow access'));
+      await tester.pumpAndSettle();
 
-        expect(find.text('Almost — one change needed'), findsOneWidget);
-        await tester.tap(find.text('Open settings'));
-        await tester.pumpAndSettle();
-        expect(actions.opened, contains('app-settings'));
-      },
-    );
+      expect(find.text('Almost — one change needed'), findsOneWidget);
+      await tester.tap(find.text('Open settings'));
+      await tester.pumpAndSettle();
+      expect(actions.opened, contains('app-settings'));
+    });
 
     testWidgets(
       'pairing finale shows live Connected and Done completes onboarding',

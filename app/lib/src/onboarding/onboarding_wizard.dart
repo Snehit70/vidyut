@@ -334,7 +334,8 @@ class _OnboardingWizardState extends State<OnboardingWizard>
   }
 
   Widget _photosStep() {
-    final partial = _photosAccess == ScreenshotAccessLevel.partial ||
+    final partial =
+        _photosAccess == ScreenshotAccessLevel.partial ||
         (_photosRequested && _photosAccess == ScreenshotAccessLevel.denied);
     if (partial) {
       // D3 recovery state: the system dialog can no longer offer "Allow all",
@@ -393,8 +394,10 @@ class _OnboardingWizardState extends State<OnboardingWizard>
     return ListView(
       key: const ValueKey('step-xiaomi'),
       children: [
-        Text('Xiaomi needs a little extra', style: textTheme.titleLarge)
-            .entrance(0),
+        Text(
+          'Xiaomi needs a little extra',
+          style: textTheme.titleLarge,
+        ).entrance(0),
         const SizedBox(height: 10),
         Text(
           'MIUI closes background apps aggressively. These four switches keep '
@@ -471,10 +474,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
           ).entrance(2),
           const SizedBox(height: 32),
           PressableScale(
-            child: FilledButton(
-              onPressed: _finish,
-              child: const Text('Done'),
-            ),
+            child: FilledButton(onPressed: _finish, child: const Text('Done')),
           ).entrance(3),
         ],
       );
@@ -482,8 +482,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
     return ListView(
       key: const ValueKey('step-pairing'),
       children: [
-        Text('Connect to your laptop', style: textTheme.titleLarge)
-            .entrance(0),
+        Text('Connect to your laptop', style: textTheme.titleLarge).entrance(0),
         const SizedBox(height: 10),
         Text(
           'Run the relay on your laptop, then pick it below or scan its QR '
@@ -569,8 +568,11 @@ class _StepScaffold extends StatelessWidget {
           ),
         ).entrance(0),
         const SizedBox(height: 28),
-        Text(title, textAlign: TextAlign.center, style: textTheme.titleLarge)
-            .entrance(1),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: textTheme.titleLarge,
+        ).entrance(1),
         const SizedBox(height: 12),
         Text(
           body,

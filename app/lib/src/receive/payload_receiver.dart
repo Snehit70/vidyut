@@ -119,7 +119,8 @@ class LocalPayloadNotifier implements PayloadNotifier {
     android: AndroidNotificationDetails(
       'vidyut_receipts',
       'Vidyut receipts',
-      channelDescription: 'Quiet receipts for payloads received from the laptop',
+      channelDescription:
+          'Quiet receipts for payloads received from the laptop',
       importance: Importance.low,
       priority: Priority.low,
     ),
@@ -294,7 +295,9 @@ class PayloadReceiver {
             plaintext,
             frame.mime,
           );
-          final outcome = await _tryWrite(() => imageClipboard.writeImage(image));
+          final outcome = await _tryWrite(
+            () => imageClipboard.writeImage(image),
+          );
           await notifier.showImageReceipt(
             frame.mime,
             copied: outcome == ClipboardWriteOutcome.confirmed,
@@ -352,8 +355,7 @@ class PayloadReceiver {
       ClipboardWriteOutcome.blocked =>
         '$what received — clipboard blocked by the device. '
             'Tap the notification to copy.',
-      ClipboardWriteOutcome.wiringBug ||
-      ClipboardWriteOutcome.failed =>
+      ClipboardWriteOutcome.wiringBug || ClipboardWriteOutcome.failed =>
         '$what received. Tap the notification to copy.',
     };
   }

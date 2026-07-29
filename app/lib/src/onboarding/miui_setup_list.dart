@@ -114,8 +114,9 @@ class _MiuiItemState extends State<_MiuiItem> {
                     const SizedBox(height: 2),
                     Text(
                       widget.description!,
-                      style:
-                          textTheme.bodySmall?.copyWith(color: Palette.muted),
+                      style: textTheme.bodySmall?.copyWith(
+                        color: Palette.muted,
+                      ),
                     ),
                   ],
                   if (widget.actionLabel != null)
@@ -141,8 +142,9 @@ class _MiuiItemState extends State<_MiuiItem> {
                     if (_expanded)
                       Text(
                         widget.expandableHow!,
-                        style:
-                            textTheme.bodySmall?.copyWith(color: Palette.muted),
+                        style: textTheme.bodySmall?.copyWith(
+                          color: Palette.muted,
+                        ),
                       ),
                   ],
                 ],

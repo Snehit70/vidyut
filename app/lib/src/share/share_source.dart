@@ -41,8 +41,17 @@ SharePayload? _mapFile(SharedMediaFile file) {
       path: file.path,
       mime: mime,
     ),
-    _ => null,
+    SharedMediaType.file || _ => SharePayload.file(
+      path: file.path,
+      mime: mime,
+      filename: _filename(file.path),
+    ),
   };
+}
+
+String _filename(String path) {
+  final normalized = path.replaceAll(r'\', '/');
+  return normalized.split('/').last;
 }
 
 String _defaultMime(SharedMediaFile file) {

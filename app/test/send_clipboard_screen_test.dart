@@ -25,9 +25,7 @@ void main() {
     expect(publisher.published.single.text, 'hello from phone');
   });
 
-  testWidgets('shows an empty clipboard message after retries', (
-    tester,
-  ) async {
+  testWidgets('shows an empty clipboard message after retries', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: SendClipboardScreen(

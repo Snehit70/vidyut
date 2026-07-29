@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=Send with Vidyut
+MimeType=all/allfiles;
+Actions=sendWithVidyut;
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+
+[Desktop Action sendWithVidyut]
+Name=Send with Vidyut
+Icon=folder-send-symbolic
+Exec=@VIDYUT_BIN_DIR@/vidyut-send %F

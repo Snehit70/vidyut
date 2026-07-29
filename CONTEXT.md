@@ -58,3 +58,19 @@ The persistent checklist of everything that can degrade after pairing
 each row showing live health and a one-tap fix. The designed recovery surface
 for anything skipped in the onboarding wizard.
 _Avoid_: permissions screen, diagnostics
+
+**Transfer**:
+A durable, explicitly initiated movement of one regular file between the paired
+devices. Unlike a clipboard payload, a transfer has progress, pause, resume,
+cancellation, a destination, and history.
+_Avoid_: file payload, file sync
+
+**Batch**:
+The files selected in one send action. Batches wait FIFO and files inside a
+batch transfer sequentially.
+_Avoid_: folder, archive, pool
+
+**Files**:
+The phone and laptop surface for active batches and local transfer history.
+History stores metadata only; completed files remain owned by the filesystem.
+_Avoid_: library, file manager
