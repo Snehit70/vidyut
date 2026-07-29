@@ -31,6 +31,11 @@ bun run install:relay
 
 This builds `dist/vidyut-relay`, installs it to `~/.local/bin/vidyut-relay`, installs the unit from `packaging/systemd/vidyut-relay.service` to `~/.config/systemd/user/`, and enables + starts the service.
 
+It also installs the Vidyut file picker/tray, a Dolphin **Send with Vidyut**
+service menu, and a Nautilus **Send with Vidyut** script. The tray uses `yad`
+and the picker uses `zenity`; file-manager actions work independently of the
+tray.
+
 The unit is tied to `graphical-session.target`, so the relay starts with your desktop session and stops when you log out.
 
 ## Pairing

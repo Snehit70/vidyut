@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Send with Vidyut
+Comment=Send selected files to your paired phone
+Icon=folder-send-symbolic
+Exec=vidyut-send %F
+Terminal=false
+MimeType=application/octet-stream;
+NoDisplay=true

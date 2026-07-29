@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+relay="${VIDYUT_RELAY_BIN:-$HOME/.local/bin/vidyut-relay}"
+output="$("$relay" --transfers 2>&1 || true)"
+if command -v kdialog >/dev/null; then
+  kdialog --title "Vidyut transfers" --textbox <(printf '%s\n' "$output") 640 420
+else
+  zenity --text-info --title="Vidyut transfers" --width=640 --height=420 \
+    <<<"$output"
+fi

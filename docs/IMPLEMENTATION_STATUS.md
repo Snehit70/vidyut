@@ -2,6 +2,51 @@
 
 This file is a live gap map against `docs/PRD.md`. It is not a replacement for the PRD.
 
+## File Sharing Implemented
+
+- The accepted two-way file-sharing product and behavior contract lives in
+  `docs/specs/file-sharing.md`; KDE Connect and Android storage research lives
+  in `docs/research/kde-connect-file-transfer.md`.
+- File sharing is a separate durable transfer module rather than a new
+  clipboard payload type (ADR 0007).
+- TypeScript and Dart share validated transfer-offer metadata: stable
+  transfer/batch/file identities, direction, safe basenames, MIME, size,
+  modified time, and whole-file SHA-256.
+- The authenticated relay routes typed transfer control between the phone and a
+  local laptop transfer adapter without logging filenames.
+- TypeScript and Dart implement a dedicated file-transfer key derivation and
+  independently authenticated AES-GCM chunks bound to transfer ID, file ID,
+  offset, byte count, and nonce.
+- The laptop has a durable JSON-backed FIFO queue with atomic persistence,
+  crash recovery from receiver-confirmed progress, seven-day expiry,
+  pause/resume/cancel/retry, partial-batch continuation, and unlimited retained
+  metadata history.
+- Pairing-secret-authenticated transfer HTTP requests share the relay's existing
+  port; method, path, query, and a bounded timestamp are signed.
+- The laptop→phone data-plane adapter serves independently encrypted 256 KiB
+  source ranges only from the last receiver-confirmed offset, supports empty
+  files, and rejects changed, missing, short, or inaccessible sources.
+- Phone→laptop uploads use the same authenticated encrypted chunk plane,
+  hidden partial files, final SHA-256 verification, collision-safe atomic
+  finalization, and preserved modified times.
+- `vidyut-relay --send` queues selected laptop files through the running relay;
+  `--transfers` prints durable queue/history state. The installer adds a
+  picker, Yad tray, transfer-history panel, Dolphin service menu, and Nautilus
+  script.
+- Android accepts generic single/multiple share intents and system-picker
+  selections, provides searchable/filterable Files history with retry/remove/
+  clear actions, and receives in the foreground-service engine.
+- Android publishes verified receives to `Downloads/Vidyut` through MediaStore
+  or a persisted custom Storage Access Framework folder, preserving both files
+  on collisions. Private staging is removed only after publishing succeeds.
+- Receive, maximum-size, metered-network, destination, and batch-alert settings
+  are enforced. Batch completion/failure uses one notification.
+- Automated TypeScript/Dart seams cover wire validation, auth, chunk crypto,
+  relay routing, queue persistence/recovery, both data-plane directions, and
+  Android sender/receiver/history.
+- Remaining release gate: physical-device/laptop fault-injection and 1 GB
+  transfers in both directions, as required by `docs/specs/file-sharing.md`.
+
 ## Implemented And Verified
 
 - Relay WebSocket authentication rejects wrong pairing secrets.

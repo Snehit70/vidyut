@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+history_cmd="$bin_dir/vidyut-transfer-history"
+send_cmd="$bin_dir/vidyut-send"
+
+exec yad --notification \
+  --image=folder-send-symbolic \
+  --text="Vidyut file sharing" \
+  --command="$send_cmd" \
+  --menu="Send files!$send_cmd|Transfers!$history_cmd|Quit!quit"
