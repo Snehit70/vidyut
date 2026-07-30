@@ -301,56 +301,123 @@ class PhoneTransferSender {
         var effectiveChunkBytes = applied.effectiveChunkBytes;
         var lastPersistedOffset = offset;
 
-        final sourcePath = transferFile.sourcePath;
-        if (sourcePath == null) throw StateError('Source file is unavailable.');
-        final source = await File(sourcePath).open();
-        try {
-          while (!accepted.complete &&
-              (offset < transferFile.size || transferFile.size == 0)) {
-            await source.setPosition(offset);
-            final remaining = transferFile.size - offset;
-            final count = transferFile.size == 0
-                ? 0
-                : min(effectiveChunkBytes, remaining);
-            final plaintext = count == 0 ? <int>[] : await source.read(count);
-            if (plaintext.length != count) {
-              throw StateError('Source file changed during transfer.');
-            }
-            final encrypted = await crypto.encrypt(
-              metadata: TransferChunkMetadata(
-                transferId: batch.transferId,
-                fileId: transferFile.fileId,
-                offset: offset,
-                plaintextBytes: plaintext.length,
-              ),
-              plaintext: plaintext,
-              pairingSecret: pairing.secret,
-            );
-            _ChunkResult result;
-            try {
-              result = await _putChunk(
-                pairing: pairing,
-                chunk: encrypted,
-                client: activeSession.client,
+        if (!accepted.complete) {
+          final sourcePath = transferFile.sourcePath;
+          if (sourcePath == null) {
+            throw StateError('Source file is unavailable.');
+          }
+          final source = await File(sourcePath).open();
+          try {
+            while (!accepted.complete &&
+                (offset < transferFile.size || transferFile.size == 0)) {
+              await source.setPosition(offset);
+              final remaining = transferFile.size - offset;
+              final count = transferFile.size == 0
+                  ? 0
+                  : min(effectiveChunkBytes, remaining);
+              final plaintext = count == 0 ? <int>[] : await source.read(count);
+              if (plaintext.length != count) {
+                throw StateError('Source file changed during transfer.');
+              }
+              final encrypted = await crypto.encrypt(
+                metadata: TransferChunkMetadata(
+                  transferId: batch.transferId,
+                  fileId: transferFile.fileId,
+                  offset: offset,
+                  plaintextBytes: plaintext.length,
+                ),
+                plaintext: plaintext,
+                pairingSecret: pairing.secret,
               );
-            } catch (error) {
-              if (error case _TransferOffsetConflict(:final confirmedOffset)) {
-                if (confirmedOffset < 0 ||
-                    confirmedOffset > transferFile.size) {
-                  throw const FormatException(
-                    'Laptop returned an invalid resume offset.',
-                  );
-                }
-                if (confirmedOffset <= offset) {
-                  throw StateError(
-                    'Laptop returned a non-advancing resume offset.',
-                  );
-                }
-                accepted = _AcceptedTransfer(
-                  confirmedOffset: confirmedOffset,
-                  maxChunkBytes: effectiveChunkBytes,
-                  complete: false,
+              _ChunkResult result;
+              try {
+                result = await _putChunk(
+                  pairing: pairing,
+                  chunk: encrypted,
+                  client: activeSession.client,
                 );
+              } catch (error) {
+                if (error case _TransferOffsetConflict(
+                  :final confirmedOffset,
+                )) {
+                  if (confirmedOffset < 0 ||
+                      confirmedOffset > transferFile.size) {
+                    throw const FormatException(
+                      'Laptop returned an invalid resume offset.',
+                    );
+                  }
+                  if (confirmedOffset <= offset) {
+                    throw StateError(
+                      'Laptop returned a non-advancing resume offset.',
+                    );
+                  }
+                  if (confirmedOffset == transferFile.size) {
+                    acceptedSession = await _acceptWithReconnect(
+                      pairing: pairing,
+                      batch: batch,
+                      transferFile: transferFile,
+                      currentSession: activeSession,
+                      timeout: const Duration(minutes: 5),
+                      terminalOnly: true,
+                    );
+                    session = acceptedSession.session;
+                    activeSession = acceptedSession.session;
+                    accepted = acceptedSession.accepted;
+                    applied = await _applyAcceptance(
+                      batch: batch,
+                      index: index,
+                      transferFile: transferFile,
+                      accepted: accepted,
+                      stopwatch: stopwatch,
+                    );
+                    batch = applied.batch;
+                    transferFile = applied.transferFile;
+                    offset = applied.offset;
+                    effectiveChunkBytes = applied.effectiveChunkBytes;
+                    lastPersistedOffset = offset;
+                    continue;
+                  }
+                  accepted = _AcceptedTransfer(
+                    confirmedOffset: confirmedOffset,
+                    maxChunkBytes: effectiveChunkBytes,
+                    complete: false,
+                  );
+                  applied = await _applyAcceptance(
+                    batch: batch,
+                    index: index,
+                    transferFile: transferFile,
+                    accepted: accepted,
+                    stopwatch: stopwatch,
+                  );
+                  batch = applied.batch;
+                  transferFile = applied.transferFile;
+                  offset = applied.offset;
+                  effectiveChunkBytes = applied.effectiveChunkBytes;
+                  lastPersistedOffset = offset;
+                  continue;
+                }
+                if (!_isTransientTransferError(error) ||
+                    reconnectBackoff.isEmpty) {
+                  rethrow;
+                }
+                _publishBatch(
+                  batch,
+                  stage: PhoneTransferProgressStage.connecting,
+                  currentFileIndex: index,
+                  currentFilename: transferFile.filename,
+                );
+                acceptedSession = await _acceptWithReconnect(
+                  pairing: pairing,
+                  batch: batch,
+                  transferFile: transferFile,
+                  currentSession: activeSession,
+                  timeout: const Duration(seconds: 15),
+                  forceReconnect: true,
+                  cause: error,
+                );
+                session = acceptedSession.session;
+                activeSession = acceptedSession.session;
+                accepted = acceptedSession.accepted;
                 applied = await _applyAcceptance(
                   batch: batch,
                   index: index,
@@ -365,75 +432,40 @@ class PhoneTransferSender {
                 lastPersistedOffset = offset;
                 continue;
               }
-              if (!_isTransientTransferError(error) ||
-                  reconnectBackoff.isEmpty) {
-                rethrow;
+              if (result.confirmedOffset > transferFile.size ||
+                  result.confirmedOffset > offset + plaintext.length ||
+                  (result.complete &&
+                      result.confirmedOffset != transferFile.size)) {
+                throw StateError('Laptop returned invalid transfer progress.');
               }
+              if (result.confirmedOffset <= offset && !result.complete) {
+                throw StateError('Laptop did not advance transfer progress.');
+              }
+              offset = result.confirmedOffset;
+              transferFile = transferFile.copyWith(confirmedOffset: offset);
+              final shouldPersist =
+                  result.complete ||
+                  offset == transferFile.size ||
+                  offset - lastPersistedOffset >= 4 * 1024 * 1024;
+              batch = await _replaceFile(
+                batch,
+                index,
+                transferFile,
+                persist: shouldPersist,
+              );
+              if (shouldPersist) lastPersistedOffset = offset;
               _publishBatch(
                 batch,
-                stage: PhoneTransferProgressStage.connecting,
+                stage: PhoneTransferProgressStage.transferring,
                 currentFileIndex: index,
                 currentFilename: transferFile.filename,
+                bytesPerSecond: _bytesPerSecond(batch, stopwatch),
               );
-              acceptedSession = await _acceptWithReconnect(
-                pairing: pairing,
-                batch: batch,
-                transferFile: transferFile,
-                currentSession: activeSession,
-                timeout: const Duration(seconds: 15),
-                forceReconnect: true,
-                cause: error,
-              );
-              session = acceptedSession.session;
-              activeSession = acceptedSession.session;
-              accepted = acceptedSession.accepted;
-              applied = await _applyAcceptance(
-                batch: batch,
-                index: index,
-                transferFile: transferFile,
-                accepted: accepted,
-                stopwatch: stopwatch,
-              );
-              batch = applied.batch;
-              transferFile = applied.transferFile;
-              offset = applied.offset;
-              effectiveChunkBytes = applied.effectiveChunkBytes;
-              lastPersistedOffset = offset;
-              continue;
+              if (result.complete) break;
             }
-            if (result.confirmedOffset > transferFile.size ||
-                result.confirmedOffset > offset + plaintext.length ||
-                (result.complete &&
-                    result.confirmedOffset != transferFile.size)) {
-              throw StateError('Laptop returned invalid transfer progress.');
-            }
-            if (result.confirmedOffset <= offset && !result.complete) {
-              throw StateError('Laptop did not advance transfer progress.');
-            }
-            offset = result.confirmedOffset;
-            transferFile = transferFile.copyWith(confirmedOffset: offset);
-            final shouldPersist =
-                result.complete ||
-                offset == transferFile.size ||
-                offset - lastPersistedOffset >= 4 * 1024 * 1024;
-            batch = await _replaceFile(
-              batch,
-              index,
-              transferFile,
-              persist: shouldPersist,
-            );
-            if (shouldPersist) lastPersistedOffset = offset;
-            _publishBatch(
-              batch,
-              stage: PhoneTransferProgressStage.transferring,
-              currentFileIndex: index,
-              currentFilename: transferFile.filename,
-              bytesPerSecond: _bytesPerSecond(batch, stopwatch),
-            );
-            if (result.complete) break;
+          } finally {
+            await source.close();
           }
-        } finally {
-          await source.close();
         }
         transferFile = transferFile.copyWith(
           status: PhoneTransferStatus.completed,
@@ -515,6 +547,7 @@ class PhoneTransferSender {
     required PhoneTransferFile transferFile,
     required _TransferSession currentSession,
     required Duration timeout,
+    bool terminalOnly = false,
     bool forceReconnect = false,
     Object? cause,
   }) async {
@@ -529,6 +562,7 @@ class PhoneTransferSender {
               batch,
               transferFile,
               timeout: timeout,
+              terminalOnly: terminalOnly,
             ),
           ),
         );
@@ -553,6 +587,7 @@ class PhoneTransferSender {
               batch,
               transferFile,
               timeout: const Duration(seconds: 15),
+              terminalOnly: terminalOnly,
             ),
           ),
         );
@@ -601,10 +636,11 @@ class PhoneTransferSender {
     PhoneTransferBatch batch,
     PhoneTransferFile transferFile, {
     required Duration timeout,
+    bool terminalOnly = false,
   }) async {
     final accepted = await inbox.nextWhere(
       (message) =>
-          (message['kind'] == 'transfer_accept' ||
+          ((!terminalOnly && message['kind'] == 'transfer_accept') ||
               message['kind'] == 'transfer_file_complete' ||
               message['kind'] == 'transfer_file_failed') &&
           message['transferId'] == batch.transferId &&

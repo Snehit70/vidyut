@@ -178,6 +178,61 @@ void main() {
     },
   );
 
+  test('accepts verified completion after the source is removed', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requestCount = 0;
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response.statusCode = 500;
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-complete-no-source-',
+    );
+    try {
+      final source = File('${directory.path}/moved.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) => RelayConnection(
+          pairing: pairing,
+          deviceId: 'phone',
+          transport: _CompletedTransferTransport(
+            onOffer: () async {
+              await source.delete();
+            },
+          ),
+        ),
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+      );
+
+      final result = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'moved.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      expect(result.status, PhoneTransferStatus.completed);
+      expect(await source.exists(), isFalse);
+      expect(requestCount, 0);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('fails immediately when the laptop rejects an offered file', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var requestCount = 0;
@@ -355,6 +410,67 @@ void main() {
         throwsA(isA<StateError>()),
       );
 
+      expect(requestCount, 1);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('waits for verification after a full-size offset conflict', () async {
+    var requestCount = 0;
+    late _FinalizingTransferTransport transport;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response
+        ..statusCode = 409
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({'code': 'offset_not_confirmed', 'confirmedOffset': 3}),
+        );
+      await request.response.close();
+      scheduleMicrotask(transport.complete);
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-finalizing-',
+    );
+    try {
+      final source = File('${directory.path}/finalizing.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          transport = _FinalizingTransferTransport();
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: transport,
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+      );
+
+      final result = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'finalizing.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      expect(result.status, PhoneTransferStatus.completed);
       expect(requestCount, 1);
     } finally {
       await server.close(force: true);
@@ -580,10 +696,11 @@ class _ScriptedTransferTransport implements RelayTransport {
 }
 
 class _CompletedTransferTransport implements RelayTransport {
-  _CompletedTransferTransport() {
+  _CompletedTransferTransport({this.onOffer}) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
+  final Future<void> Function()? onOffer;
   final _incoming = StreamController<Object?>();
 
   @override
@@ -601,15 +718,67 @@ class _CompletedTransferTransport implements RelayTransport {
     final offer = (message['offer']! as Map).cast<String, Object?>();
     final file = ((offer['files']! as List).first as Map)
         .cast<String, Object?>();
-    scheduleMicrotask(
-      () => _incoming.add({
+    scheduleMicrotask(() async {
+      await onOffer?.call();
+      _incoming.add({
         'v': 1,
         'kind': 'transfer_file_complete',
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'sha256': file['sha256'],
+      });
+    });
+  }
+
+  @override
+  Future<void> close() => _incoming.close();
+}
+
+class _FinalizingTransferTransport implements RelayTransport {
+  _FinalizingTransferTransport() {
+    scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
+  }
+
+  final _incoming = StreamController<Object?>();
+  Map<String, Object?>? _offer;
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
+
+  @override
+  Stream<Object?> get messages => _incoming.stream;
+
+  @override
+  void send(Map<String, Object?> message) {
+    if (message['kind'] != 'transfer_offer') return;
+    _offer = (message['offer']! as Map).cast<String, Object?>();
+    final file = ((_offer!['files']! as List).first as Map)
+        .cast<String, Object?>();
+    scheduleMicrotask(
+      () => _incoming.add({
+        'v': 1,
+        'kind': 'transfer_accept',
+        'transferId': _offer!['transferId'],
+        'fileId': file['fileId'],
+        'confirmedOffset': 0,
       }),
     );
+  }
+
+  void complete() {
+    final offer = _offer!;
+    final file = ((offer['files']! as List).first as Map)
+        .cast<String, Object?>();
+    _incoming.add({
+      'v': 1,
+      'kind': 'transfer_file_complete',
+      'transferId': offer['transferId'],
+      'fileId': file['fileId'],
+      'sha256': file['sha256'],
+    });
   }
 
   @override

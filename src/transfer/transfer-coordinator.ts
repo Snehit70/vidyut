@@ -149,6 +149,8 @@ export class TransferCoordinator {
     for (const file of batch.files) {
       if (file.status === "completed") {
         this.publishPhoneComplete(batch.transferId, file);
+      } else if (file.status === "failed") {
+        this.publishPhoneFailure(batch.transferId, file);
       } else if (
         includeActive &&
         file.status === "active" &&
@@ -185,6 +187,19 @@ export class TransferCoordinator {
       transferId,
       fileId: file.fileId,
       sha256: file.sha256,
+    });
+  }
+
+  private publishPhoneFailure(
+    transferId: string,
+    file: { fileId: string; errorCode?: string },
+  ): void {
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_file_failed",
+      transferId,
+      fileId: file.fileId,
+      code: file.errorCode ?? "transfer_failed",
     });
   }
 
