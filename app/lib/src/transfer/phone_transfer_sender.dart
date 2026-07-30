@@ -341,6 +341,11 @@ class PhoneTransferSender {
                     'Laptop returned an invalid resume offset.',
                   );
                 }
+                if (confirmedOffset <= offset) {
+                  throw StateError(
+                    'Laptop returned a non-advancing resume offset.',
+                  );
+                }
                 accepted = _AcceptedTransfer(
                   confirmedOffset: confirmedOffset,
                   maxChunkBytes: effectiveChunkBytes,
@@ -600,11 +605,19 @@ class PhoneTransferSender {
     final accepted = await inbox.nextWhere(
       (message) =>
           (message['kind'] == 'transfer_accept' ||
-              message['kind'] == 'transfer_file_complete') &&
+              message['kind'] == 'transfer_file_complete' ||
+              message['kind'] == 'transfer_file_failed') &&
           message['transferId'] == batch.transferId &&
           message['fileId'] == transferFile.fileId,
       timeout: timeout,
     );
+    if (accepted['kind'] == 'transfer_file_failed') {
+      throw _TransferRejected(
+        accepted['code'] is String
+            ? accepted['code']! as String
+            : 'transfer_rejected',
+      );
+    }
     if (accepted['kind'] == 'transfer_file_complete') {
       if (accepted['sha256'] != transferFile.sha256) {
         throw const FormatException(
@@ -640,9 +653,8 @@ class PhoneTransferSender {
       method: 'PUT',
       pathAndQuery: path,
     );
-    final request = await client.putUrl(
-      Uri.parse('http://${pairing.host}:${pairing.port}$path'),
-    );
+    final uri = Uri.parse('http://${pairing.host}:${pairing.port}$path');
+    final request = await client.putUrl(uri);
     auth.headers.forEach(request.headers.set);
     request.headers
       ..set('x-vidyut-nonce', chunk.nonce)
@@ -653,13 +665,28 @@ class PhoneTransferSender {
     final body = await utf8.decodeStream(
       response.timeout(const Duration(seconds: 30)),
     );
-    final json = body.isEmpty
-        ? <String, Object?>{}
-        : (jsonDecode(body) as Map).cast<String, Object?>();
+    Map<String, Object?> json = {};
+    if (body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is! Map) {
+          throw const FormatException('Transfer response must be an object.');
+        }
+        json = decoded.cast<String, Object?>();
+      } catch (_) {
+        if (response.statusCode >= 200 && response.statusCode < 300) rethrow;
+      }
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (json['code'] == 'offset_not_confirmed' &&
           json['confirmedOffset'] is int) {
         throw _TransferOffsetConflict(json['confirmedOffset']! as int);
+      }
+      if (response.statusCode == 429 || response.statusCode >= 500) {
+        throw HttpException(
+          (json['code'] as String?) ?? 'HTTP ${response.statusCode}',
+          uri: uri,
+        );
       }
       throw StateError(
         (json['code'] as String?) ?? 'HTTP ${response.statusCode}',
@@ -802,6 +829,15 @@ class _TransferOffsetConflict implements Exception {
   final int confirmedOffset;
 }
 
+class _TransferRejected implements Exception {
+  const _TransferRejected(this.code);
+
+  final String code;
+
+  @override
+  String toString() => 'Transfer rejected: $code';
+}
+
 class _TransferSession {
   _TransferSession({
     required this.connection,
@@ -917,6 +953,7 @@ String _safeBasename(String value) {
 }
 
 String _errorCode(Object error) {
+  if (error case _TransferRejected(:final code)) return code;
   final message = error.toString().toLowerCase();
   if (message.contains('timeout')) return 'timeout';
   if (message.contains('source')) return 'source_unavailable';

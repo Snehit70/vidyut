@@ -178,6 +178,191 @@ void main() {
     },
   );
 
+  test('fails immediately when the laptop rejects an offered file', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requestCount = 0;
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response.statusCode = 500;
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-rejected-',
+    );
+    try {
+      final source = File('${directory.path}/rejected.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) => RelayConnection(
+          pairing: pairing,
+          deviceId: 'phone',
+          transport: _RejectedTransferTransport('insufficient_storage'),
+        ),
+        history: history,
+      );
+
+      await expectLater(
+        sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'rejected.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]),
+        throwsA(
+          predicate(
+            (error) => error.toString().contains('insufficient_storage'),
+          ),
+        ),
+      );
+
+      expect(requestCount, 0);
+      expect(
+        (await history.load()).single.files.single.errorCode,
+        'insufficient_storage',
+      );
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('retries HTTP 503 responses through a fresh session', () async {
+    var requestCount = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      if (requestCount == 1) {
+        request.response
+          ..statusCode = 503
+          ..write(jsonEncode({'code': 'relay_restarting'}));
+      } else {
+        request.response
+          ..statusCode = 200
+          ..write(jsonEncode({'confirmedOffset': 3, 'complete': true}));
+      }
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-http-retry-',
+    );
+    try {
+      final source = File('${directory.path}/retry.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      var connectionCount = 0;
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          connectionCount += 1;
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: _ScriptedTransferTransport(),
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+        reconnectBackoff: const [Duration.zero],
+      );
+
+      final result = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'retry.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      expect(result.status, PhoneTransferStatus.completed);
+      expect(requestCount, 2);
+      expect(connectionCount, 2);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('rejects a non-advancing offset conflict without looping', () async {
+    var requestCount = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response
+        ..statusCode = 409
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({'code': 'offset_not_confirmed', 'confirmedOffset': 0}),
+        );
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-offset-stall-',
+    );
+    try {
+      final source = File('${directory.path}/offset.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) => RelayConnection(
+          pairing: pairing,
+          deviceId: 'phone',
+          transport: _ScriptedTransferTransport(),
+        ),
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+      );
+
+      await expectLater(
+        sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'offset.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(requestCount, 1);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
   test(
     'falls back to legacy chunks when the relay omits negotiation',
     () async {
@@ -423,6 +608,44 @@ class _CompletedTransferTransport implements RelayTransport {
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'sha256': file['sha256'],
+      }),
+    );
+  }
+
+  @override
+  Future<void> close() => _incoming.close();
+}
+
+class _RejectedTransferTransport implements RelayTransport {
+  _RejectedTransferTransport(this.code) {
+    scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
+  }
+
+  final String code;
+  final _incoming = StreamController<Object?>();
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
+
+  @override
+  Stream<Object?> get messages => _incoming.stream;
+
+  @override
+  void send(Map<String, Object?> message) {
+    if (message['kind'] != 'transfer_offer') return;
+    final offer = (message['offer']! as Map).cast<String, Object?>();
+    final file = ((offer['files']! as List).first as Map)
+        .cast<String, Object?>();
+    scheduleMicrotask(
+      () => _incoming.add({
+        'v': 1,
+        'kind': 'transfer_file_failed',
+        'transferId': offer['transferId'],
+        'fileId': file['fileId'],
+        'code': code,
       }),
     );
   }
