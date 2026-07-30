@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { link, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   type EnqueueTransferFile,
 } from "../src/transfer/transfer-queue";
 import type { TransferOffer } from "../src/shared/wire";
+import { partialPathFor } from "../src/transfer/transfer-paths";
 
 const file = (
   filename: string,
@@ -82,6 +83,120 @@ describe("durable transfer queue", () => {
     );
 
     expect(queue.snapshot().batches[0]!.status).toBe("completed");
+  });
+
+  test("persists verification separately from an untouched active file", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("empty.bin", 0)],
+    });
+    const fileId = batch.files[0]!.fileId;
+    await queue.claimNext();
+
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await queue.beginVerification(batch.transferId, fileId, 0);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("verifying");
+
+    await queue.complete(batch.transferId, fileId, batch.files[0]!.sha256);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
+  });
+
+  test("recovers an untouched empty file without inventing verification", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-empty-recovery-"));
+    const path = join(dir, "queue.json");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("empty.bin", 0)],
+    });
+    await queue.claimNext();
+
+    const restarted = await TransferQueue.open({ storage });
+    const recovered = restarted.snapshot().batches[0]!.files[0]!;
+    expect(recovered.status).toBe("queued");
+    expect(recovered.errorCode).toBeUndefined();
+    expect((await restarted.claimNext())!.file.fileId).toBe(
+      batch.files[0]!.fileId,
+    );
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("removes an abandoned partial after interrupted verification", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-verify-recovery-"));
+    const path = join(dir, "queue.json");
+    const destination = join(dir, "report.bin");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("report.bin"), destinationPath: destination }],
+    });
+    const claimed = (await queue.claimNext())!;
+    const partial = partialPathFor(destination, claimed.file.fileId);
+    await writeFile(partial, new Uint8Array(10));
+    await queue.beginVerification(
+      batch.transferId,
+      claimed.file.fileId,
+      claimed.file.size,
+    );
+
+    const restarted = await TransferQueue.open({ storage });
+    expect(restarted.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    await expect(stat(partial)).rejects.toThrow();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("recovers a verified file linked before queue completion", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-finalize-recovery-"));
+    const path = join(dir, "queue.json");
+    const destination = join(dir, "report.bin");
+    const finalized = join(dir, "report (1).bin");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("report.bin"), destinationPath: destination }],
+    });
+    const claimed = (await queue.claimNext())!;
+    const partial = partialPathFor(destination, claimed.file.fileId);
+    await writeFile(partial, new Uint8Array(10));
+    await queue.beginVerification(
+      batch.transferId,
+      claimed.file.fileId,
+      claimed.file.size,
+    );
+    await queue.beginFinalization(
+      batch.transferId,
+      claimed.file.fileId,
+      finalized,
+    );
+    await link(partial, finalized);
+
+    let persistedBeforePartialRemoval = false;
+    const restarted = await TransferQueue.open({
+      storage: {
+        load: () => storage.load(),
+        async save(snapshot) {
+          if (snapshot.batches[0]!.files[0]!.status === "completed") {
+            persistedBeforePartialRemoval = (await stat(partial)).isFile();
+          }
+          await storage.save(snapshot);
+        },
+      },
+    });
+    const recovered = restarted.snapshot().batches[0]!.files[0]!;
+    expect(recovered.status).toBe("completed");
+    expect(recovered.destinationPath).toBe(finalized);
+    expect(persistedBeforePartialRemoval).toBe(true);
+    await expect(stat(partial)).rejects.toThrow();
+    expect((await stat(finalized)).size).toBe(10);
+    await rm(dir, { recursive: true, force: true });
   });
 
   test("continues a batch after one file fails and retries only failures", async () => {

@@ -22,6 +22,7 @@ import {
   legacyTransferChunkBytes,
   preferredTransferChunkBytes,
 } from "./transfer-chunk-policy";
+import { partialPathFor } from "./transfer-paths";
 
 export class LaptopTransferDataPlane extends TransferHttpDataPlane {
   constructor(
@@ -292,6 +293,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         "code" in error &&
         error.code === "ENOENT"
       ) {
+        await unlink(partialPath).catch(() => undefined);
         await this.queue.fail(
           transferId,
           fileId,
@@ -333,7 +335,15 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     }
 
     const confirmedOffset = offset + plaintext.byteLength;
-    await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
+    if (confirmedOffset === record.size) {
+      await this.queue.beginVerification(
+        transferId,
+        fileId,
+        confirmedOffset,
+      );
+    } else {
+      await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
+    }
     this.publishControl({
       v: 1,
       kind: "transfer_progress",
@@ -343,28 +353,70 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     });
 
     if (confirmedOffset === record.size) {
-      const verifiedSha256 = await hashFile(partialPath);
-      if (verifiedSha256 !== record.sha256) {
+      let verifiedSha256: string;
+      try {
+        verifiedSha256 = await hashFile(partialPath);
+        if (verifiedSha256 !== record.sha256) {
+          await unlink(partialPath).catch(() => undefined);
+          await this.queue.fail(transferId, fileId, "hash_mismatch");
+          this.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId,
+            fileId,
+            code: "hash_mismatch",
+          });
+          await this.onFileTerminal();
+          return Response.json({ code: "hash_mismatch" }, { status: 409 });
+        }
+        const finalizedPath = await finalizeWithoutOverwrite(
+          partialPath,
+          record.destinationPath,
+          (candidate) =>
+            this.queue.beginFinalization(transferId, fileId, candidate),
+        );
+        await this.queue.complete(transferId, fileId, verifiedSha256);
         await unlink(partialPath).catch(() => undefined);
-        await this.queue.fail(transferId, fileId, "hash_mismatch");
+        const modified = new Date(record.lastModifiedMs);
+        await utimes(finalizedPath, modified, modified).catch(() => undefined);
+      } catch {
+        const current = this.lookup(transferId, fileId, "phone_to_laptop");
+        if (current?.status === "completed") {
+          this.publishControl({
+            v: 1,
+            kind: "transfer_file_complete",
+            transferId,
+            fileId,
+            sha256: record.sha256,
+          });
+          await this.onFileTerminal();
+          return Response.json({ confirmedOffset, complete: true });
+        }
+        if (current?.finalizingPath) {
+          await unlinkFinalizedLink(
+            partialPath,
+            current.finalizingPath,
+          );
+        }
+        await unlink(partialPath).catch(() => undefined);
+        await this.queue.fail(
+          transferId,
+          fileId,
+          "terminal_processing_failed",
+        );
         this.publishControl({
           v: 1,
           kind: "transfer_file_failed",
           transferId,
           fileId,
-          code: "hash_mismatch",
+          code: "terminal_processing_failed",
         });
         await this.onFileTerminal();
-        return Response.json({ code: "hash_mismatch" }, { status: 409 });
+        return Response.json(
+          { code: "terminal_processing_failed" },
+          { status: 500 },
+        );
       }
-      const finalizedPath = await finalizeWithoutOverwrite(
-        partialPath,
-        record.destinationPath,
-      );
-      await this.queue.setDestinationPath(transferId, fileId, finalizedPath);
-      const modified = new Date(record.lastModifiedMs);
-      await utimes(finalizedPath, modified, modified).catch(() => undefined);
-      await this.queue.complete(transferId, fileId, verifiedSha256);
       this.publishControl({
         v: 1,
         kind: "transfer_file_complete",
@@ -406,13 +458,6 @@ function parseNonNegativeInteger(value: string | null): number | undefined {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-function partialPathFor(destinationPath: string, fileId: string): string {
-  return join(
-    dirname(destinationPath),
-    `.${basename(destinationPath)}.${fileId}.vidyut-part`,
-  );
-}
-
 async function hashFile(path: string): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
   for await (const chunk of Bun.file(path).stream()) {
@@ -424,6 +469,7 @@ async function hashFile(path: string): Promise<string> {
 async function finalizeWithoutOverwrite(
   partialPath: string,
   requestedPath: string,
+  beforeLink: (candidate: string) => Promise<void>,
 ): Promise<string> {
   const extension = extname(requestedPath);
   const stem = basename(requestedPath, extension);
@@ -433,9 +479,9 @@ async function finalizeWithoutOverwrite(
       suffix === 0
         ? requestedPath
         : join(parent, `${stem} (${suffix})${extension}`);
+    await beforeLink(candidate);
     try {
       await link(partialPath, candidate);
-      await unlink(partialPath);
       return candidate;
     } catch (error) {
       if (
@@ -450,6 +496,23 @@ async function finalizeWithoutOverwrite(
     }
   }
   throw new Error("Could not resolve a collision-free destination.");
+}
+
+async function unlinkFinalizedLink(
+  partialPath: string,
+  finalizedPath: string,
+): Promise<void> {
+  try {
+    const [partial, finalized] = await Promise.all([
+      stat(partialPath),
+      stat(finalizedPath),
+    ]);
+    if (partial.dev === finalized.dev && partial.ino === finalized.ino) {
+      await unlink(finalizedPath);
+    }
+  } catch {
+    // A missing or unrelated destination must never be removed.
+  }
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

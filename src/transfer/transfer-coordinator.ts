@@ -67,8 +67,17 @@ export class TransferCoordinator {
   ): Promise<void> {
     switch (message.kind) {
       case "transfer_offer":
-        await this.acceptPhoneOffer(message.offer);
-        await this.activateNext();
+        {
+          const result = await this.acceptPhoneOffer(message.offer);
+          if (result === "rejected") return;
+          const activated = await this.activateNext();
+          if (result === "existing") {
+            this.republishPhoneProgress(
+              message.offer.transferId,
+              activated === undefined,
+            );
+          }
+        }
         return;
       case "transfer_accept":
         await this.acceptReceiverOffset(
@@ -119,16 +128,7 @@ export class TransferCoordinator {
     const claim = await this.options.queue.claimNext();
     if (!claim) return undefined;
     if (claim.batch.direction === "phone_to_laptop") {
-      this.options.publishControl({
-        v: 1,
-        kind: "transfer_accept",
-        transferId: claim.batch.transferId,
-        fileId: claim.file.fileId,
-        confirmedOffset: claim.file.confirmedOffset,
-        ...(this.options.maxChunkBytes === undefined
-          ? {}
-          : { maxChunkBytes: this.options.maxChunkBytes }),
-      });
+      this.publishPhoneAccept(claim.batch.transferId, claim.file);
     } else {
       this.options.publishControl({
         v: 1,
@@ -139,52 +139,169 @@ export class TransferCoordinator {
     return claim;
   }
 
-  private async acceptPhoneOffer(offer: TransferOffer): Promise<void> {
+  private republishPhoneProgress(
+    transferId: string,
+    includeActive: boolean,
+  ): void {
+    const batch = this.options.queue.snapshot().batches.find(
+      (candidate) => candidate.transferId === transferId,
+    );
+    if (!batch || batch.direction !== "phone_to_laptop") return;
+    for (const file of batch.files) {
+      if (file.status === "completed") {
+        this.publishPhoneComplete(batch.transferId, file);
+      } else if (file.status === "failed") {
+        this.publishPhoneFailure(batch.transferId, file);
+      } else if (
+        includeActive &&
+        file.status === "active" &&
+        (file.size === 0 || file.confirmedOffset < file.size)
+      ) {
+        this.publishPhoneAccept(batch.transferId, file);
+      }
+    }
+  }
+
+  private publishPhoneAccept(
+    transferId: string,
+    file: { fileId: string; confirmedOffset: number },
+  ): void {
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_accept",
+      transferId,
+      fileId: file.fileId,
+      confirmedOffset: file.confirmedOffset,
+      ...(this.options.maxChunkBytes === undefined
+        ? {}
+        : { maxChunkBytes: this.options.maxChunkBytes }),
+    });
+  }
+
+  private publishPhoneComplete(
+    transferId: string,
+    file: { fileId: string; sha256: string },
+  ): void {
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_file_complete",
+      transferId,
+      fileId: file.fileId,
+      sha256: file.sha256,
+    });
+  }
+
+  private publishPhoneFailure(
+    transferId: string,
+    file: { fileId: string; errorCode?: string },
+  ): void {
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_file_failed",
+      transferId,
+      fileId: file.fileId,
+      code: file.errorCode ?? "transfer_failed",
+    });
+  }
+
+  private async acceptPhoneOffer(
+    offer: TransferOffer,
+  ): Promise<"new" | "existing" | "rejected"> {
     if (!isTransferOffer(offer)) {
       throw new Error("Invalid phone transfer offer.");
     }
     if (offer.direction !== "phone_to_laptop") {
       throw new Error("Phone may only offer phone-to-laptop transfers.");
     }
-    const tooLarge = offer.files.find(
-      (file) => file.size > this.options.maxFileBytes,
+    const existingBatch = this.options.queue
+      .snapshot()
+      .batches.find((batch) => batch.transferId === offer.transferId);
+    const destinationPaths = new Map(
+      offer.files.map((file) => [
+        file.fileId,
+        join(this.options.destinationDirectory, file.filename),
+      ]),
     );
-    if (tooLarge) {
-      this.options.publishControl({
-        v: 1,
-        kind: "transfer_file_failed",
-        transferId: offer.transferId,
-        fileId: tooLarge.fileId,
-        code: "file_too_large",
-      });
-      return;
-    }
-    const totalBytes = offer.files.reduce((total, file) => total + file.size, 0);
-    const availableBytes = await (
-      this.options.availableBytes ?? defaultAvailableBytes
-    )(this.options.destinationDirectory);
-    if (totalBytes > availableBytes) {
-      for (const file of offer.files) {
+    if (existingBatch) {
+      await this.options.queue.acceptOffer(offer, destinationPaths);
+    } else {
+      const tooLarge = offer.files.find(
+        (file) => file.size > this.options.maxFileBytes,
+      );
+      if (tooLarge) {
         this.options.publishControl({
           v: 1,
           kind: "transfer_file_failed",
           transferId: offer.transferId,
-          fileId: file.fileId,
-          code: "insufficient_storage",
+          fileId: tooLarge.fileId,
+          code: "file_too_large",
         });
+        return "rejected";
       }
-      return;
+    }
+    const availableBytes = await (
+      this.options.availableBytes ?? defaultAvailableBytes
+    )(this.options.destinationDirectory);
+    const currentBatch = existingBatch
+      ? this.options.queue
+          .snapshot()
+          .batches.find((batch) => batch.transferId === offer.transferId)
+      : undefined;
+    const requiredBytes = currentBatch
+      ? currentBatch.files.reduce(
+          (total, file) =>
+            file.status === "queued" ||
+            file.status === "active" ||
+            file.status === "verifying" ||
+            file.status === "finalizing" ||
+            file.status === "paused"
+              ? total + Math.max(0, file.size - file.confirmedOffset)
+              : total,
+          0,
+        )
+      : offer.files.reduce((total, file) => total + file.size, 0);
+    if (requiredBytes > availableBytes) {
+      if (currentBatch) {
+        for (const file of currentBatch.files) {
+          if (file.status === "completed") {
+            this.publishPhoneComplete(offer.transferId, file);
+            continue;
+          }
+          if (file.status === "failed") {
+            this.publishPhoneFailure(offer.transferId, file);
+            continue;
+          }
+          await this.options.queue.fail(
+            offer.transferId,
+            file.fileId,
+            "insufficient_storage",
+          );
+          this.options.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId: offer.transferId,
+            fileId: file.fileId,
+            code: "insufficient_storage",
+          });
+        }
+      } else {
+        for (const file of offer.files) {
+          this.options.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId: offer.transferId,
+            fileId: file.fileId,
+            code: "insufficient_storage",
+          });
+        }
+      }
+      return "rejected";
     }
     await mkdir(this.options.destinationDirectory, { recursive: true });
-    await this.options.queue.acceptOffer(
-      offer,
-      new Map(
-        offer.files.map((file) => [
-          file.fileId,
-          join(this.options.destinationDirectory, file.filename),
-        ]),
-      ),
-    );
+    if (!existingBatch) {
+      await this.options.queue.acceptOffer(offer, destinationPaths);
+    }
+    return existingBatch ? "existing" : "new";
   }
 
   private async acceptReceiverOffset(

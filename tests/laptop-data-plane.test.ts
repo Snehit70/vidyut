@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -299,6 +299,75 @@ describe("laptop transfer data plane", () => {
     expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
     expect(terminalCalls).toBe(1);
     await rm(dir, { recursive: true, force: true });
+  });
+
+  test("fails cleanly when terminal processing throws", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-terminal-fail-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const queue = await emptyQueue();
+    const offer = {
+      transferId: "transfer_terminal_1234",
+      batchId: "batch_terminal_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_terminal_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const controls: unknown[] = [];
+    let terminalCalls = 0;
+    const plane = new LaptopTransferDataPlane(
+      secret,
+      queue,
+      4,
+      (message) => controls.push(message),
+      () => {
+        terminalCalls += 1;
+      },
+    );
+    try {
+      expect(
+        (await putChunk(
+          plane,
+          offer.transferId,
+          offer.files[0]!.fileId,
+          0,
+          bytes.slice(0, 4),
+        )).status,
+      ).toBe(200);
+      await chmod(dir, 0o500);
+
+      const response = await putChunk(
+        plane,
+        offer.transferId,
+        offer.files[0]!.fileId,
+        4,
+        bytes.slice(4),
+      );
+
+      expect(response.status).toBe(500);
+      expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+      expect(controls.at(-1)).toMatchObject({
+        kind: "transfer_file_failed",
+        code: "terminal_processing_failed",
+      });
+      expect(terminalCalls).toBe(1);
+    } finally {
+      await chmod(dir, 0o700);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("queues signed local file-manager requests without exposing another port", async () => {
