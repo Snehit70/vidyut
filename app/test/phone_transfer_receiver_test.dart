@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
 import 'package:vidyut/src/shared/transfer_crypto.dart';
+import 'package:vidyut/src/transfer/transfer_chunk_policy.dart';
 import 'package:vidyut/src/transfer/phone_transfer_receiver.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
 
@@ -108,6 +109,12 @@ void main() {
         'transfer_progress',
         'transfer_file_complete',
       ]),
+    );
+    expect(
+      transport.sent.firstWhere(
+        (message) => message['kind'] == 'transfer_accept',
+      )['maxChunkBytes'],
+      TransferChunkPolicy.preferredBytes,
     );
     await receiver.dispose();
     await connection.close();
