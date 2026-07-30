@@ -154,7 +154,21 @@ void main() {
       );
       requestOffsets.add(offset);
       await request.drain<void>();
+      if (offset != confirmedOffset) {
+        request.response
+          ..statusCode = 409
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'code': 'offset_not_confirmed',
+              'confirmedOffset': confirmedOffset,
+            }),
+          );
+        await request.response.close();
+        return;
+      }
       if (requestCount == 2) {
+        confirmedOffset = offset + plaintextBytes;
         final socket = await request.response.detachSocket();
         socket.destroy();
         return;
@@ -189,8 +203,9 @@ void main() {
       final sender = PhoneTransferSender(
         pairingRepository: pairingRepository,
         connectionFactory: (pairing) {
+          final acceptedOffset = transports.isEmpty ? 0 : 3;
           final transport = _ScriptedTransferTransport(
-            confirmedOffset: () => confirmedOffset,
+            confirmedOffset: () => acceptedOffset,
           );
           transports.add(transport);
           return RelayConnection(
@@ -216,6 +231,65 @@ void main() {
       expect(result.files.single.confirmedOffset, 9);
       expect(transports, hasLength(2));
       expect(requestOffsets, [0, 3, 3, 6]);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('reconnects when the relay drops before initial acceptance', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      await request.drain<void>();
+      request.response
+        ..statusCode = 200
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'confirmedOffset': 3, 'complete': true}));
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-accept-resume-',
+    );
+    try {
+      final source = File('${directory.path}/accept.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      var connectionCount = 0;
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          connectionCount += 1;
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: connectionCount == 1
+                ? _DisconnectBeforeAcceptanceTransport()
+                : _ScriptedTransferTransport(),
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+        reconnectBackoff: const [Duration.zero],
+      );
+
+      final result = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'accept.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      expect(result.status, PhoneTransferStatus.completed);
+      expect(connectionCount, 2);
     } finally {
       await server.close(force: true);
       await serving.cancel();
@@ -264,6 +338,38 @@ class _ScriptedTransferTransport implements RelayTransport {
 
   @override
   Future<void> close() => _incoming.close();
+}
+
+class _DisconnectBeforeAcceptanceTransport implements RelayTransport {
+  _DisconnectBeforeAcceptanceTransport() {
+    scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
+  }
+
+  final _incoming = StreamController<Object?>();
+  bool _closed = false;
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
+
+  @override
+  Stream<Object?> get messages => _incoming.stream;
+
+  @override
+  void send(Map<String, Object?> message) {
+    if (message['kind'] == 'transfer_offer') {
+      scheduleMicrotask(close);
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _incoming.close();
+  }
 }
 
 Future<List<int>> _sendChunkedFile({required int? advertisedChunkBytes}) async {

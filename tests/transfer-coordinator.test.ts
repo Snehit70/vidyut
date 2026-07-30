@@ -152,6 +152,98 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("re-advertises a file completed before its response was interrupted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-complete-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const firstBytes = new Uint8Array([1, 2, 3]);
+    const secondBytes = new Uint8Array([4, 5]);
+    const offer = {
+      transferId: "transfer_completed_1234",
+      batchId: "batch_completed_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_completed_123456",
+          filename: "first.bin",
+          mime: "application/octet-stream",
+          size: firstBytes.length,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(firstBytes),
+        },
+        {
+          fileId: "file_queued_12345678",
+          filename: "second.bin",
+          mime: "application/octet-stream",
+          size: secondBytes.length,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(secondBytes),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_progress",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: firstBytes.length,
+      },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_file_complete",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        sha256: offer.files[0]!.sha256,
+      },
+      "phone",
+    );
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: firstBytes.length,
+        maxChunkBytes: 1024 * 1024,
+      },
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[1]!.fileId,
+        confirmedOffset: 0,
+        maxChunkBytes: 1024 * 1024,
+      },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("rejects over-limit offers without persisting them", async () => {
     const queue = await memoryQueue();
     const controls: TransferControlMessage[] = [];

@@ -277,31 +277,29 @@ class PhoneTransferSender {
           currentFileIndex: index,
           currentFilename: transferFile.filename,
         );
-        var accepted = await _waitForAcceptance(
-          activeSession.inbox,
-          batch,
-          transferFile,
+        var acceptedSession = await _acceptWithReconnect(
+          pairing: pairing,
+          batch: batch,
+          transferFile: transferFile,
+          currentSession: activeSession,
           timeout: const Duration(minutes: 5),
         );
-        var offset = accepted.confirmedOffset;
-        var effectiveChunkBytes = TransferChunkPolicy.negotiate(
-          accepted.maxChunkBytes,
-          localMaximum: chunkBytes,
-        );
-        var lastPersistedOffset = offset;
-        transferFile = transferFile.copyWith(
-          status: PhoneTransferStatus.active,
-          confirmedOffset: offset,
-        );
-        batch = await _replaceFile(batch, index, transferFile);
+        session = acceptedSession.session;
+        activeSession = acceptedSession.session;
+        var accepted = acceptedSession.accepted;
         if (!stopwatch.isRunning) stopwatch.start();
-        _publishBatch(
-          batch,
-          stage: PhoneTransferProgressStage.transferring,
-          currentFileIndex: index,
-          currentFilename: transferFile.filename,
-          bytesPerSecond: _bytesPerSecond(batch, stopwatch),
+        var applied = await _applyAcceptance(
+          batch: batch,
+          index: index,
+          transferFile: transferFile,
+          accepted: accepted,
+          stopwatch: stopwatch,
         );
+        batch = applied.batch;
+        transferFile = applied.transferFile;
+        var offset = applied.offset;
+        var effectiveChunkBytes = applied.effectiveChunkBytes;
+        var lastPersistedOffset = offset;
 
         final sourcePath = transferFile.sourcePath;
         if (sourcePath == null) throw StateError('Source file is unavailable.');
@@ -335,6 +333,31 @@ class PhoneTransferSender {
                 client: activeSession.client,
               );
             } catch (error) {
+              if (error case _TransferOffsetConflict(:final confirmedOffset)) {
+                if (confirmedOffset < 0 ||
+                    confirmedOffset > transferFile.size) {
+                  throw const FormatException(
+                    'Laptop returned an invalid resume offset.',
+                  );
+                }
+                accepted = _AcceptedTransfer(
+                  confirmedOffset: confirmedOffset,
+                  maxChunkBytes: effectiveChunkBytes,
+                );
+                applied = await _applyAcceptance(
+                  batch: batch,
+                  index: index,
+                  transferFile: transferFile,
+                  accepted: accepted,
+                  stopwatch: stopwatch,
+                );
+                batch = applied.batch;
+                transferFile = applied.transferFile;
+                offset = applied.offset;
+                effectiveChunkBytes = applied.effectiveChunkBytes;
+                lastPersistedOffset = offset;
+                continue;
+              }
               if (!_isTransientTransferError(error) ||
                   reconnectBackoff.isEmpty) {
                 rethrow;
@@ -345,50 +368,30 @@ class PhoneTransferSender {
                 currentFileIndex: index,
                 currentFilename: transferFile.filename,
               );
-              Object? reconnectError;
-              _TransferSession? replacement;
-              await activeSession.close();
-              for (final delay in reconnectBackoff) {
-                if (delay > Duration.zero) await Future<void>.delayed(delay);
-                try {
-                  replacement = await _openSession(pairing, batch);
-                  accepted = await _waitForAcceptance(
-                    replacement.inbox,
-                    batch,
-                    transferFile,
-                    timeout: const Duration(seconds: 15),
-                  );
-                  reconnectError = null;
-                  break;
-                } catch (candidate) {
-                  reconnectError = candidate;
-                  await replacement?.close();
-                  replacement = null;
-                }
-              }
-              if (replacement == null) {
-                throw reconnectError ?? error;
-              }
-              session = replacement;
-              activeSession = replacement;
-              offset = accepted.confirmedOffset;
-              effectiveChunkBytes = TransferChunkPolicy.negotiate(
-                accepted.maxChunkBytes,
-                localMaximum: chunkBytes,
+              acceptedSession = await _acceptWithReconnect(
+                pairing: pairing,
+                batch: batch,
+                transferFile: transferFile,
+                currentSession: activeSession,
+                timeout: const Duration(seconds: 15),
+                forceReconnect: true,
+                cause: error,
               );
+              session = acceptedSession.session;
+              activeSession = acceptedSession.session;
+              accepted = acceptedSession.accepted;
+              applied = await _applyAcceptance(
+                batch: batch,
+                index: index,
+                transferFile: transferFile,
+                accepted: accepted,
+                stopwatch: stopwatch,
+              );
+              batch = applied.batch;
+              transferFile = applied.transferFile;
+              offset = applied.offset;
+              effectiveChunkBytes = applied.effectiveChunkBytes;
               lastPersistedOffset = offset;
-              transferFile = transferFile.copyWith(
-                status: PhoneTransferStatus.active,
-                confirmedOffset: offset,
-              );
-              batch = await _replaceFile(batch, index, transferFile);
-              _publishBatch(
-                batch,
-                stage: PhoneTransferProgressStage.transferring,
-                currentFileIndex: index,
-                currentFilename: transferFile.filename,
-                bytesPerSecond: _bytesPerSecond(batch, stopwatch),
-              );
               continue;
             }
             if (result.confirmedOffset > transferFile.size ||
@@ -499,6 +502,89 @@ class PhoneTransferSender {
     }
   }
 
+  Future<_AcceptedSession> _acceptWithReconnect({
+    required PairingCode pairing,
+    required PhoneTransferBatch batch,
+    required PhoneTransferFile transferFile,
+    required _TransferSession currentSession,
+    required Duration timeout,
+    bool forceReconnect = false,
+    Object? cause,
+  }) async {
+    Object? reconnectError = cause;
+    if (!forceReconnect) {
+      try {
+        return _AcceptedSession(
+          session: currentSession,
+          accepted: await _waitForAcceptance(
+            currentSession.inbox,
+            batch,
+            transferFile,
+            timeout: timeout,
+          ),
+        );
+      } catch (error) {
+        if (!_isTransientTransferError(error) || reconnectBackoff.isEmpty) {
+          rethrow;
+        }
+        reconnectError = error;
+      }
+    }
+    await currentSession.close();
+    for (final delay in reconnectBackoff) {
+      if (delay > Duration.zero) await Future<void>.delayed(delay);
+      _TransferSession? replacement;
+      try {
+        replacement = await _openSession(pairing, batch);
+        return _AcceptedSession(
+          session: replacement,
+          accepted: await _waitForAcceptance(
+            replacement.inbox,
+            batch,
+            transferFile,
+            timeout: const Duration(seconds: 15),
+          ),
+        );
+      } catch (candidate) {
+        reconnectError = candidate;
+        await replacement?.close();
+        if (!_isTransientTransferError(candidate)) rethrow;
+      }
+    }
+    throw reconnectError ?? StateError('Transfer reconnect failed.');
+  }
+
+  Future<_AppliedAcceptance> _applyAcceptance({
+    required PhoneTransferBatch batch,
+    required int index,
+    required PhoneTransferFile transferFile,
+    required _AcceptedTransfer accepted,
+    required Stopwatch stopwatch,
+  }) async {
+    final effectiveChunkBytes = TransferChunkPolicy.negotiate(
+      accepted.maxChunkBytes,
+      localMaximum: chunkBytes,
+    );
+    final updatedFile = transferFile.copyWith(
+      status: PhoneTransferStatus.active,
+      confirmedOffset: accepted.confirmedOffset,
+    );
+    final updatedBatch = await _replaceFile(batch, index, updatedFile);
+    _publishBatch(
+      updatedBatch,
+      stage: PhoneTransferProgressStage.transferring,
+      currentFileIndex: index,
+      currentFilename: updatedFile.filename,
+      bytesPerSecond: _bytesPerSecond(updatedBatch, stopwatch),
+    );
+    return _AppliedAcceptance(
+      batch: updatedBatch,
+      transferFile: updatedFile,
+      offset: accepted.confirmedOffset,
+      effectiveChunkBytes: effectiveChunkBytes,
+    );
+  }
+
   Future<_AcceptedTransfer> _waitForAcceptance(
     _TransferControlInbox inbox,
     PhoneTransferBatch batch,
@@ -551,6 +637,10 @@ class PhoneTransferSender {
         ? <String, Object?>{}
         : (jsonDecode(body) as Map).cast<String, Object?>();
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (json['code'] == 'offset_not_confirmed' &&
+          json['confirmedOffset'] is int) {
+        throw _TransferOffsetConflict(json['confirmedOffset']! as int);
+      }
       throw StateError(
         (json['code'] as String?) ?? 'HTTP ${response.statusCode}',
       );
@@ -663,6 +753,33 @@ class _AcceptedTransfer {
   final Object? maxChunkBytes;
 }
 
+class _AcceptedSession {
+  const _AcceptedSession({required this.session, required this.accepted});
+
+  final _TransferSession session;
+  final _AcceptedTransfer accepted;
+}
+
+class _AppliedAcceptance {
+  const _AppliedAcceptance({
+    required this.batch,
+    required this.transferFile,
+    required this.offset,
+    required this.effectiveChunkBytes,
+  });
+
+  final PhoneTransferBatch batch;
+  final PhoneTransferFile transferFile;
+  final int offset;
+  final int effectiveChunkBytes;
+}
+
+class _TransferOffsetConflict implements Exception {
+  const _TransferOffsetConflict(this.confirmedOffset);
+
+  final int confirmedOffset;
+}
+
 class _TransferSession {
   _TransferSession({
     required this.connection,
@@ -686,7 +803,15 @@ class _TransferSession {
 
 class _TransferControlInbox {
   _TransferControlInbox(Stream<Map<String, Object?>> stream) {
-    _subscription = stream.listen(_receive);
+    _subscription = stream.listen(
+      _receive,
+      onDone: () => _failPending(
+        const SocketException('Relay transfer control disconnected.'),
+      ),
+      onError: (Object error, StackTrace stackTrace) {
+        _failPending(error, stackTrace);
+      },
+    );
   }
 
   final _pending = <Map<String, Object?>>[];
@@ -718,6 +843,14 @@ class _TransferControlInbox {
       return;
     }
     _waiters.removeAt(index).completer.complete(message);
+  }
+
+  void _failPending(Object error, [StackTrace? stackTrace]) {
+    final waiters = [..._waiters];
+    _waiters.clear();
+    for (final waiter in waiters) {
+      waiter.completer.completeError(error, stackTrace);
+    }
   }
 
   Future<void> close() => _subscription.cancel();

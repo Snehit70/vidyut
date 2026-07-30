@@ -67,9 +67,15 @@ export class TransferCoordinator {
   ): Promise<void> {
     switch (message.kind) {
       case "transfer_offer":
-        await this.acceptPhoneOffer(message.offer);
-        if (!await this.activateNext()) {
-          this.republishActivePhoneFile(message.offer.transferId);
+        {
+          const existing = await this.acceptPhoneOffer(message.offer);
+          const activated = await this.activateNext();
+          if (existing) {
+            this.republishPhoneProgress(
+              message.offer.transferId,
+              activated === undefined,
+            );
+          }
         }
         return;
       case "transfer_accept":
@@ -121,16 +127,7 @@ export class TransferCoordinator {
     const claim = await this.options.queue.claimNext();
     if (!claim) return undefined;
     if (claim.batch.direction === "phone_to_laptop") {
-      this.options.publishControl({
-        v: 1,
-        kind: "transfer_accept",
-        transferId: claim.batch.transferId,
-        fileId: claim.file.fileId,
-        confirmedOffset: claim.file.confirmedOffset,
-        ...(this.options.maxChunkBytes === undefined
-          ? {}
-          : { maxChunkBytes: this.options.maxChunkBytes }),
-      });
+      this.publishPhoneAccept(claim.batch.transferId, claim.file);
     } else {
       this.options.publishControl({
         v: 1,
@@ -141,26 +138,41 @@ export class TransferCoordinator {
     return claim;
   }
 
-  private republishActivePhoneFile(transferId: string): boolean {
+  private republishPhoneProgress(
+    transferId: string,
+    includeActive: boolean,
+  ): void {
     const batch = this.options.queue.snapshot().batches.find(
       (candidate) => candidate.transferId === transferId,
     );
-    const file = batch?.files.find((candidate) => candidate.status === "active");
-    if (!batch || !file || batch.direction !== "phone_to_laptop") return false;
+    if (!batch || batch.direction !== "phone_to_laptop") return;
+    for (const file of batch.files) {
+      if (
+        file.status === "completed" ||
+        (includeActive && file.status === "active")
+      ) {
+        this.publishPhoneAccept(batch.transferId, file);
+      }
+    }
+  }
+
+  private publishPhoneAccept(
+    transferId: string,
+    file: { fileId: string; confirmedOffset: number },
+  ): void {
     this.options.publishControl({
       v: 1,
       kind: "transfer_accept",
-      transferId: batch.transferId,
+      transferId,
       fileId: file.fileId,
       confirmedOffset: file.confirmedOffset,
       ...(this.options.maxChunkBytes === undefined
         ? {}
         : { maxChunkBytes: this.options.maxChunkBytes }),
     });
-    return true;
   }
 
-  private async acceptPhoneOffer(offer: TransferOffer): Promise<void> {
+  private async acceptPhoneOffer(offer: TransferOffer): Promise<boolean> {
     if (!isTransferOffer(offer)) {
       throw new Error("Invalid phone transfer offer.");
     }
@@ -178,7 +190,7 @@ export class TransferCoordinator {
         fileId: tooLarge.fileId,
         code: "file_too_large",
       });
-      return;
+      return false;
     }
     const totalBytes = offer.files.reduce((total, file) => total + file.size, 0);
     const availableBytes = await (
@@ -194,8 +206,11 @@ export class TransferCoordinator {
           code: "insufficient_storage",
         });
       }
-      return;
+      return false;
     }
+    const existing = this.options.queue.snapshot().batches.some(
+      (batch) => batch.transferId === offer.transferId,
+    );
     await mkdir(this.options.destinationDirectory, { recursive: true });
     await this.options.queue.acceptOffer(
       offer,
@@ -206,6 +221,7 @@ export class TransferCoordinator {
         ]),
       ),
     );
+    return existing;
   }
 
   private async acceptReceiverOffset(
