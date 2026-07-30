@@ -28,11 +28,16 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   bool _failedOnly = false;
   bool _loading = true;
   bool _sending = false;
+  PhoneTransferProgress? _liveProgress;
+  StreamSubscription<PhoneTransferProgress>? _progressSubscription;
 
   @override
   void initState() {
     super.initState();
     _search.addListener(_refreshView);
+    _progressSubscription = widget.sender.progress.listen((progress) {
+      if (mounted) setState(() => _liveProgress = progress);
+    });
     unawaited(_load());
   }
 
@@ -41,6 +46,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     _search
       ..removeListener(_refreshView)
       ..dispose();
+    unawaited(_progressSubscription?.cancel());
     super.dispose();
   }
 
@@ -89,12 +95,19 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         ).showSnackBar(SnackBar(content: Text('Transfer failed: $error')));
       }
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _liveProgress = null;
+        });
+      }
       await _load();
     }
   }
 
   Future<void> _retry(PhoneTransferBatch batch) async {
+    if (_sending) return;
+    setState(() => _sending = true);
     try {
       await widget.sender.retry(batch);
     } on Object catch (error) {
@@ -102,6 +115,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Retry failed: $error')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _liveProgress = null;
+        });
       }
     }
     await _load();
@@ -140,6 +160,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   Iterable<PhoneTransferBatch> get _visible {
     final query = _search.text.trim().toLowerCase();
     return _batches.where((batch) {
+      if (_liveProgress?.transferId == batch.transferId) return false;
       if (_direction != null && batch.direction != _direction) return false;
       if (_failedOnly &&
           batch.status != PhoneTransferStatus.failed &&
@@ -170,13 +191,8 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _sending ? null : _chooseFiles,
-        icon: _sending
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.add),
-        label: Text(_sending ? 'Sending…' : 'Send files'),
+        icon: const Icon(Icons.add),
+        label: const Text('Send files'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -227,11 +243,21 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                if (_liveProgress != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: _LiveTransferCard(progress: _liveProgress!),
+                  ),
                 Expanded(
                   child: visible.isEmpty
                       ? const _EmptyFiles()
                       : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            _liveProgress == null ? 8 : 12,
+                            16,
+                            100,
+                          ),
                           itemCount: visible.length,
                           separatorBuilder: (_, _) =>
                               const SizedBox(height: 10),
@@ -255,6 +281,191 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
             ),
     );
   }
+}
+
+class _LiveTransferCard extends StatelessWidget {
+  const _LiveTransferCard({required this.progress});
+
+  final PhoneTransferProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final isTransferring =
+        progress.stage == PhoneTransferProgressStage.transferring;
+    final isPreparing = progress.stage == PhoneTransferProgressStage.preparing;
+    final itemLabel = progress.currentFileIndex == null
+        ? '${progress.fileCount} files'
+        : '${progress.currentFileIndex! + 1} of ${progress.fileCount} files';
+    final title = switch (progress.stage) {
+      PhoneTransferProgressStage.preparing => 'Preparing files',
+      PhoneTransferProgressStage.connecting => 'Connecting to your laptop',
+      PhoneTransferProgressStage.waitingForLaptop => 'Waiting for your laptop',
+      PhoneTransferProgressStage.transferring => 'Sending to your laptop',
+      PhoneTransferProgressStage.completed => 'Transfer complete',
+      PhoneTransferProgressStage.failed => 'Transfer needs attention',
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Palette.mist,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.upload_file_outlined,
+                  color: Palette.raspberry,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                Text(itemLabel, style: Theme.of(context).textTheme.labelLarge),
+              ],
+            ),
+            const SizedBox(height: 18),
+            if (isTransferring) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${(progress.fraction * 100).round()}%',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: Palette.raspberry,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _TransferFileName(
+                      filename: progress.currentFilename,
+                      subtitle: progress.totalBytes == 0
+                          ? null
+                          : _bytes(progress.totalBytes),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              LinearProgressIndicator(value: progress.fraction),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ProgressDetail(
+                      '${_bytes(progress.transferredBytes)} of ${_bytes(progress.totalBytes)}',
+                      align: TextAlign.start,
+                    ),
+                  ),
+                  _ProgressDetail(_rate(progress.bytesPerSecond)),
+                  Expanded(
+                    child: _ProgressDetail(
+                      _remaining(progress.remaining),
+                      align: TextAlign.end,
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              if (progress.currentFilename != null) ...[
+                _TransferFileName(filename: progress.currentFilename),
+                const SizedBox(height: 12),
+              ],
+              LinearProgressIndicator(value: isPreparing ? null : 0),
+              const SizedBox(height: 12),
+              Text(
+                isPreparing
+                    ? 'Checking files so the transfer can resume safely.'
+                    : 'Keep Vidyut open while we start this transfer.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Divider(height: 1, color: Palette.hairline),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(
+                  Icons.info_outline,
+                  size: 18,
+                  color: Palette.raspberry,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isTransferring
+                        ? 'Keep Vidyut open while we finish this transfer.'
+                        : 'You can return to your files after it starts.',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TransferFileName extends StatelessWidget {
+  const _TransferFileName({required this.filename, this.subtitle});
+
+  final String? filename;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          filename ?? 'Getting the transfer ready',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            subtitle!,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ProgressDetail extends StatelessWidget {
+  const _ProgressDetail(this.text, {this.align = TextAlign.center});
+
+  final String text;
+  final TextAlign align;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    textAlign: align,
+    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: Palette.muted,
+      fontWeight: FontWeight.w600,
+    ),
+  );
 }
 
 class _BatchCard extends StatelessWidget {
@@ -377,4 +588,18 @@ String _bytes(int value) {
     return '${(value / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
   return '${(value / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+}
+
+String _rate(double? value) {
+  if (value == null || value <= 0) return 'Measuring speed';
+  return '${_bytes(value.round())}/s';
+}
+
+String _remaining(Duration? value) {
+  if (value == null) return 'Calculating time left';
+  if (value.inMinutes >= 1) {
+    final seconds = value.inSeconds.remainder(60);
+    return '~${value.inMinutes}m ${seconds}s left';
+  }
+  return '~${value.inSeconds.clamp(1, 59)} sec left';
 }

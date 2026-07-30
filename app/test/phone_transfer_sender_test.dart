@@ -71,6 +71,8 @@ void main() {
       history: history,
       chunkBytes: 4,
     );
+    final progress = <PhoneTransferProgress>[];
+    final progressSubscription = sender.progress.listen(progress.add);
 
     final result = await sender.enqueue([
       PhoneTransferSource(
@@ -95,6 +97,27 @@ void main() {
       ),
       isTrue,
     );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      progress.map((event) => event.stage),
+      containsAllInOrder([
+        PhoneTransferProgressStage.preparing,
+        PhoneTransferProgressStage.connecting,
+        PhoneTransferProgressStage.waitingForLaptop,
+        PhoneTransferProgressStage.transferring,
+        PhoneTransferProgressStage.completed,
+      ]),
+    );
+    expect(
+      progress
+          .where(
+            (event) => event.stage == PhoneTransferProgressStage.transferring,
+          )
+          .last
+          .transferredBytes,
+      3,
+    );
+    await progressSubscription.cancel();
     await server.close(force: true);
     await serving.cancel();
     await directory.delete(recursive: true);
