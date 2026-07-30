@@ -370,6 +370,69 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("waits for terminal verification before re-advertising an empty file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-empty-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const offer = {
+      transferId: "transfer_empty_1234",
+      batchId: "batch_empty_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_empty_123456",
+          filename: "empty.bin",
+          mime: "application/octet-stream",
+          size: 0,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(new Uint8Array()),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    expect(controls).toEqual([]);
+
+    await queue.complete(
+      offer.transferId,
+      offer.files[0]!.fileId,
+      offer.files[0]!.sha256,
+    );
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_file_complete",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        sha256: offer.files[0]!.sha256,
+      },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("re-advertises a persisted file failure when a phone retries", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-failed-"));
     const queue = await memoryQueue();

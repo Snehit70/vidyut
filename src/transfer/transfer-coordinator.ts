@@ -154,7 +154,7 @@ export class TransferCoordinator {
       } else if (
         includeActive &&
         file.status === "active" &&
-        (file.size === 0 || file.confirmedOffset < file.size)
+        file.confirmedOffset < file.size
       ) {
         this.publishPhoneAccept(batch.transferId, file);
       }
