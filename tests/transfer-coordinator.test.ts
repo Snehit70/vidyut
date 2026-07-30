@@ -18,6 +18,7 @@ describe("transfer coordinator", () => {
       queue,
       destinationDirectory: join(dir, "downloads"),
       maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
       publishControl: (message) => controls.push(message),
     });
 
@@ -26,6 +27,20 @@ describe("transfer coordinator", () => {
     expect(offer.direction).toBe("laptop_to_phone");
     expect(controls).toEqual([{ v: 1, kind: "transfer_offer", offer }]);
     expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: 0,
+        maxChunkBytes: 2 * 1024 * 1024,
+      },
+      "phone",
+    );
+    expect(queue.snapshot().batches[0]!.files[0]!.maxChunkBytes).toBe(
+      1024 * 1024,
+    );
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -37,6 +52,7 @@ describe("transfer coordinator", () => {
       queue,
       destinationDirectory: dir,
       maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
       availableBytes: async () => 2048,
       publishControl: (message) => controls.push(message),
     });
@@ -74,6 +90,7 @@ describe("transfer coordinator", () => {
         transferId: offer.transferId,
         fileId: offer.files[0]!.fileId,
         confirmedOffset: 0,
+        maxChunkBytes: 1024 * 1024,
       },
     ]);
     await rm(dir, { recursive: true, force: true });

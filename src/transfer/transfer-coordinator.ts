@@ -10,11 +10,16 @@ import {
   type EnqueueTransferFile,
   type TransferClaim,
 } from "./transfer-queue";
+import {
+  legacyTransferChunkBytes,
+  negotiateTransferChunkBytes,
+} from "./transfer-chunk-policy";
 
 export interface TransferCoordinatorOptions {
   queue: TransferQueue;
   destinationDirectory: string;
   maxFileBytes: number;
+  maxChunkBytes?: number;
   publishControl(message: TransferControlMessage): void;
   availableBytes?: (path: string) => Promise<number>;
 }
@@ -70,6 +75,7 @@ export class TransferCoordinator {
           message.transferId,
           message.fileId,
           message.confirmedOffset,
+          message.maxChunkBytes,
         );
         return;
       case "transfer_progress":
@@ -119,6 +125,9 @@ export class TransferCoordinator {
         transferId: claim.batch.transferId,
         fileId: claim.file.fileId,
         confirmedOffset: claim.file.confirmedOffset,
+        ...(this.options.maxChunkBytes === undefined
+          ? {}
+          : { maxChunkBytes: this.options.maxChunkBytes }),
       });
     } else {
       this.options.publishControl({
@@ -182,6 +191,7 @@ export class TransferCoordinator {
     transferId: string,
     fileId: string,
     confirmedOffset: number,
+    maxChunkBytes?: number,
   ): Promise<void> {
     const snapshot = this.options.queue.snapshot();
     const batch = snapshot.batches.find(
@@ -194,11 +204,21 @@ export class TransferCoordinator {
     if (confirmedOffset < file.confirmedOffset || confirmedOffset > file.size) {
       throw new RangeError("Receiver offset is outside known progress.");
     }
-    if (confirmedOffset > file.confirmedOffset) {
+    const negotiatedChunkBytes = maxChunkBytes === undefined
+      ? undefined
+      : negotiateTransferChunkBytes(
+          maxChunkBytes,
+          this.options.maxChunkBytes ?? legacyTransferChunkBytes,
+        );
+    if (
+      confirmedOffset > file.confirmedOffset ||
+      negotiatedChunkBytes !== undefined
+    ) {
       await this.options.queue.confirmProgress(
         transferId,
         fileId,
         confirmedOffset,
+        negotiatedChunkBytes,
       );
     }
   }

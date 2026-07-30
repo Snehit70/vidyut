@@ -18,14 +18,16 @@ import type { TransferControlMessage } from "../shared/wire";
 import type { TransferFileRecord } from "./transfer-queue";
 import { TransferQueue } from "./transfer-queue";
 import { TransferHttpDataPlane } from "./http-data-plane";
-
-export const defaultTransferChunkBytes = 256 * 1024;
+import {
+  legacyTransferChunkBytes,
+  preferredTransferChunkBytes,
+} from "./transfer-chunk-policy";
 
 export class LaptopTransferDataPlane extends TransferHttpDataPlane {
   constructor(
     private readonly chunkPairingSecret: string,
     private readonly queue: TransferQueue,
-    private readonly chunkBytes = defaultTransferChunkBytes,
+    private readonly chunkBytes = preferredTransferChunkBytes,
     private readonly publishControl: (
       message: TransferControlMessage,
     ) => void = () => undefined,
@@ -116,6 +118,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       source = await open(record.sourcePath, "r");
       const plaintextBytes = Math.min(
         this.chunkBytes,
+        record.maxChunkBytes ?? legacyTransferChunkBytes,
         Math.max(0, record.size - offset),
       );
       const plaintext = new Uint8Array(plaintextBytes);

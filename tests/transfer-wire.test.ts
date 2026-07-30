@@ -89,6 +89,35 @@ describe("transfer wire contract", () => {
     expect(
       isTransferControlMessage({
         v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: fileOffer.fileId,
+        confirmedOffset: 0,
+        maxChunkBytes: 1024 * 1024,
+      }),
+    ).toBe(true);
+    expect(
+      isTransferControlMessage({
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: fileOffer.fileId,
+        confirmedOffset: 0,
+        maxChunkBytes: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isTransferControlMessage({
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: fileOffer.fileId,
+        confirmedOffset: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isTransferControlMessage({
+        v: 1,
         kind: "transfer_progress",
         transferId: offer.transferId,
         fileId: fileOffer.fileId,

@@ -27,6 +27,7 @@ export type TransferBatchStatus =
 export interface TransferFileRecord extends TransferFileOffer {
   sourcePath?: string;
   destinationPath?: string;
+  maxChunkBytes?: number;
   status: TransferFileStatus;
   confirmedOffset: number;
   errorCode?: string;
@@ -228,6 +229,7 @@ export class TransferQueue {
     transferId: string,
     fileId: string,
     confirmedOffset: number,
+    maxChunkBytes?: number,
   ): Promise<void> {
     const { batch, file } = this.findFile(transferId, fileId);
     if (file.status !== "active") {
@@ -240,7 +242,14 @@ export class TransferQueue {
     ) {
       throw new RangeError("Confirmed offset must be monotonic and within the file.");
     }
+    if (
+      maxChunkBytes !== undefined &&
+      (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes <= 0)
+    ) {
+      throw new RangeError("Maximum chunk bytes must be a positive integer.");
+    }
     file.confirmedOffset = confirmedOffset;
+    if (maxChunkBytes !== undefined) file.maxChunkBytes = maxChunkBytes;
     this.touch(batch);
     await this.persist();
   }
@@ -530,6 +539,8 @@ function assertBatch(batch: TransferBatchRecord): void {
       !Number.isSafeInteger(file.confirmedOffset) ||
       file.confirmedOffset < 0 ||
       file.confirmedOffset > file.size
+      || (file.maxChunkBytes !== undefined &&
+        (!Number.isSafeInteger(file.maxChunkBytes) || file.maxChunkBytes <= 0))
     ) {
       throw new Error("Invalid transfer file progress.");
     }
