@@ -178,10 +178,22 @@ describe("durable transfer queue", () => {
     );
     await link(partial, finalized);
 
-    const restarted = await TransferQueue.open({ storage });
+    let persistedBeforePartialRemoval = false;
+    const restarted = await TransferQueue.open({
+      storage: {
+        load: () => storage.load(),
+        async save(snapshot) {
+          if (snapshot.batches[0]!.files[0]!.status === "completed") {
+            persistedBeforePartialRemoval = (await stat(partial)).isFile();
+          }
+          await storage.save(snapshot);
+        },
+      },
+    });
     const recovered = restarted.snapshot().batches[0]!.files[0]!;
     expect(recovered.status).toBe("completed");
     expect(recovered.destinationPath).toBe(finalized);
+    expect(persistedBeforePartialRemoval).toBe(true);
     await expect(stat(partial)).rejects.toThrow();
     expect((await stat(finalized)).size).toBe(10);
     await rm(dir, { recursive: true, force: true });

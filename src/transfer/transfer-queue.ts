@@ -466,6 +466,8 @@ export class TransferQueue {
             delete file.finalizingPath;
             delete file.errorCode;
             file.status = "completed";
+            this.deriveBatchStatus(batch);
+            await this.persist();
             await unlink(partialPath).catch(() => undefined);
           } else {
             if (partialPath) {
@@ -474,8 +476,8 @@ export class TransferQueue {
             delete file.finalizingPath;
             file.status = "failed";
             file.errorCode = "finalization_interrupted";
+            batchChanged = true;
           }
-          batchChanged = true;
         } else if (
           file.status === "verifying" ||
           (file.status === "active" &&
