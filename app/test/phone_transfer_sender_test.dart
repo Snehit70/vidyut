@@ -655,6 +655,85 @@ void main() {
     }
   });
 
+  test(
+    'resets the PUT retry budget after reconnect confirms progress',
+    () async {
+      var confirmedOffset = 0;
+      final requestOffsets = <int>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serving = server.listen((request) async {
+        final offset = int.parse(request.uri.queryParameters['offset']!);
+        final plaintextBytes = int.parse(
+          request.headers.value('x-vidyut-plaintext-bytes')!,
+        );
+        requestOffsets.add(offset);
+        await request.drain<void>();
+        confirmedOffset = offset + plaintextBytes;
+        if (confirmedOffset < 12) {
+          final socket = await request.response.detachSocket();
+          socket.destroy();
+          return;
+        }
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({'confirmedOffset': confirmedOffset, 'complete': true}),
+          );
+        await request.response.close();
+      });
+      final directory = await Directory.systemTemp.createTemp(
+        'vidyut-phone-progress-budget-',
+      );
+      try {
+        final source = File('${directory.path}/resume.bin');
+        await source.writeAsBytes(List<int>.filled(12, 7));
+        final pairingRepository = PairingRepository(MemoryPairingStorage());
+        await pairingRepository.save(
+          PairingCode(
+            host: '127.0.0.1',
+            port: server.port,
+            secret: 'pairing-secret',
+          ),
+        );
+        var connectionCount = 0;
+        final sender = PhoneTransferSender(
+          pairingRepository: pairingRepository,
+          connectionFactory: (pairing) {
+            connectionCount += 1;
+            return RelayConnection(
+              pairing: pairing,
+              deviceId: 'phone',
+              transport: _ScriptedTransferTransport(
+                confirmedOffset: () => confirmedOffset,
+              ),
+            );
+          },
+          history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+          chunkBytes: 3,
+          reconnectBackoff: const [Duration.zero],
+        );
+
+        final result = await sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'resume.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]);
+
+        expect(result.status, PhoneTransferStatus.completed);
+        expect(result.files.single.confirmedOffset, 12);
+        expect(connectionCount, 4);
+        expect(requestOffsets, [0, 3, 6, 9]);
+      } finally {
+        await server.close(force: true);
+        await serving.cancel();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
   test('reconnects when the relay drops before initial acceptance', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final serving = server.listen((request) async {

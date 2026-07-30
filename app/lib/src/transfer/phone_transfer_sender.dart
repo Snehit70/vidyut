@@ -425,6 +425,7 @@ class PhoneTransferSender {
                 session = acceptedSession.session;
                 activeSession = acceptedSession.session;
                 accepted = acceptedSession.accepted;
+                final previousOffset = offset;
                 applied = await _applyAcceptance(
                   batch: batch,
                   index: index,
@@ -437,6 +438,9 @@ class PhoneTransferSender {
                 offset = applied.offset;
                 effectiveChunkBytes = applied.effectiveChunkBytes;
                 lastPersistedOffset = offset;
+                if (offset > previousOffset) {
+                  remainingPutRetries = reconnectBackoff.length;
+                }
                 continue;
               }
               if (result.confirmedOffset > transferFile.size ||

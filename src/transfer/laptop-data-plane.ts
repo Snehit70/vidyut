@@ -351,28 +351,53 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     });
 
     if (confirmedOffset === record.size) {
-      const verifiedSha256 = await hashFile(partialPath);
-      if (verifiedSha256 !== record.sha256) {
-        await unlink(partialPath).catch(() => undefined);
-        await this.queue.fail(transferId, fileId, "hash_mismatch");
+      let verifiedSha256: string;
+      try {
+        verifiedSha256 = await hashFile(partialPath);
+        if (verifiedSha256 !== record.sha256) {
+          await unlink(partialPath).catch(() => undefined);
+          await this.queue.fail(transferId, fileId, "hash_mismatch");
+          this.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId,
+            fileId,
+            code: "hash_mismatch",
+          });
+          await this.onFileTerminal();
+          return Response.json({ code: "hash_mismatch" }, { status: 409 });
+        }
+        const finalizedPath = await finalizeWithoutOverwrite(
+          partialPath,
+          record.destinationPath,
+        );
+        await this.queue.setDestinationPath(
+          transferId,
+          fileId,
+          finalizedPath,
+        );
+        const modified = new Date(record.lastModifiedMs);
+        await utimes(finalizedPath, modified, modified).catch(() => undefined);
+        await this.queue.complete(transferId, fileId, verifiedSha256);
+      } catch {
+        await this.queue.fail(
+          transferId,
+          fileId,
+          "terminal_processing_failed",
+        );
         this.publishControl({
           v: 1,
           kind: "transfer_file_failed",
           transferId,
           fileId,
-          code: "hash_mismatch",
+          code: "terminal_processing_failed",
         });
         await this.onFileTerminal();
-        return Response.json({ code: "hash_mismatch" }, { status: 409 });
+        return Response.json(
+          { code: "terminal_processing_failed" },
+          { status: 500 },
+        );
       }
-      const finalizedPath = await finalizeWithoutOverwrite(
-        partialPath,
-        record.destinationPath,
-      );
-      await this.queue.setDestinationPath(transferId, fileId, finalizedPath);
-      const modified = new Date(record.lastModifiedMs);
-      await utimes(finalizedPath, modified, modified).catch(() => undefined);
-      await this.queue.complete(transferId, fileId, verifiedSha256);
       this.publishControl({
         v: 1,
         kind: "transfer_file_complete",
