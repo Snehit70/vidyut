@@ -102,6 +102,28 @@ describe("durable transfer queue", () => {
     expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
   });
 
+  test("recovers an untouched empty file without inventing verification", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-empty-recovery-"));
+    const path = join(dir, "queue.json");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("empty.bin", 0)],
+    });
+    await queue.claimNext();
+
+    const restarted = await TransferQueue.open({ storage });
+    const recovered = restarted.snapshot().batches[0]!.files[0]!;
+    expect(recovered.status).toBe("queued");
+    expect(recovered.errorCode).toBeUndefined();
+    expect((await restarted.claimNext())!.file.fileId).toBe(
+      batch.files[0]!.fileId,
+    );
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("continues a batch after one file fails and retries only failures", async () => {
     const queue = await memoryQueue();
     const batch = await queue.enqueue({

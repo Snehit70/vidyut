@@ -413,7 +413,9 @@ export class TransferQueue {
       for (const file of batch.files) {
         if (
           file.status === "verifying" ||
-          (file.status === "active" && file.confirmedOffset === file.size)
+          (file.status === "active" &&
+            file.size > 0 &&
+            file.confirmedOffset === file.size)
         ) {
           file.status = "failed";
           file.errorCode = "verification_interrupted";
