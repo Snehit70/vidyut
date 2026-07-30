@@ -140,14 +140,97 @@ void main() {
 
     expect(chunks, [300 * 1024]);
   });
+
+  test('reconnects and resumes after a transient HTTP interruption', () async {
+    var confirmedOffset = 0;
+    var requestCount = 0;
+    final requestOffsets = <int>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      final offset = int.parse(request.uri.queryParameters['offset']!);
+      final plaintextBytes = int.parse(
+        request.headers.value('x-vidyut-plaintext-bytes')!,
+      );
+      requestOffsets.add(offset);
+      await request.drain<void>();
+      if (requestCount == 2) {
+        final socket = await request.response.detachSocket();
+        socket.destroy();
+        return;
+      }
+      confirmedOffset = offset + plaintextBytes;
+      request.response
+        ..statusCode = 200
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode({
+            'confirmedOffset': confirmedOffset,
+            'complete': confirmedOffset == 9,
+          }),
+        );
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-resume-',
+    );
+    try {
+      final source = File('${directory.path}/resume.bin');
+      await source.writeAsBytes(List<int>.filled(9, 7));
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final transports = <_ScriptedTransferTransport>[];
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          final transport = _ScriptedTransferTransport(
+            confirmedOffset: () => confirmedOffset,
+          );
+          transports.add(transport);
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: transport,
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+        reconnectBackoff: const [Duration.zero],
+      );
+
+      final result = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'resume.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      expect(result.status, PhoneTransferStatus.completed);
+      expect(result.files.single.confirmedOffset, 9);
+      expect(transports, hasLength(2));
+      expect(requestOffsets, [0, 3, 3, 6]);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
 }
 
 class _ScriptedTransferTransport implements RelayTransport {
-  _ScriptedTransferTransport({this.maxChunkBytes}) {
+  _ScriptedTransferTransport({this.maxChunkBytes, this.confirmedOffset}) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
   final int? maxChunkBytes;
+  final int Function()? confirmedOffset;
   final _incoming = StreamController<Object?>();
   final sent = <Map<String, Object?>>[];
 
@@ -173,7 +256,7 @@ class _ScriptedTransferTransport implements RelayTransport {
         'kind': 'transfer_accept',
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
-        'confirmedOffset': 0,
+        'confirmedOffset': confirmedOffset?.call() ?? 0,
         if (maxChunkBytes != null) 'maxChunkBytes': maxChunkBytes,
       }),
     );
