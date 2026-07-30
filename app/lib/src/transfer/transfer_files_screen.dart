@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:vidyut_files/vidyut_files.dart';
 
 import '../design/palette.dart';
 import 'phone_transfer_sender.dart';
@@ -56,10 +56,19 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   }
 
   Future<void> _chooseFiles() async {
-    final selected = await openFiles(
-      acceptedTypeGroups: const [XTypeGroup(label: 'Files')],
-    );
-    if (selected.isEmpty || _sending) return;
+    if (_sending) return;
+    final List<VidyutPickedFile> selected;
+    try {
+      selected = await const VidyutFiles().pickFiles();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Selection failed: $error')));
+      }
+      return;
+    }
+    if (!mounted || selected.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
       await widget.sender.enqueue(
@@ -67,8 +76,8 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
             .map(
               (file) => PhoneTransferSource(
                 path: file.path,
-                filename: file.name,
-                mime: file.mimeType ?? 'application/octet-stream',
+                filename: file.filename,
+                mime: file.mime,
               ),
             )
             .toList(),

@@ -50,6 +50,7 @@ sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
 sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
   "$repo_root/packaging/kde/vidyut-send.desktop" \
   >"$kde_services_dir/vidyut-send.desktop"
+chmod 755 "$kde_services_dir/vidyut-send.desktop"
 install -m 755 "$repo_root/packaging/nautilus/Send with Vidyut" "$nautilus_scripts_dir/Send with Vidyut"
 if [[ "$install_tray" == true ]]; then
   install -m 755 "$repo_root/scripts/vidyut-tray" "$bin_dir/vidyut-tray"
