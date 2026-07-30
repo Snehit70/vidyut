@@ -305,7 +305,8 @@ class PhoneTransferSender {
         if (sourcePath == null) throw StateError('Source file is unavailable.');
         final source = await File(sourcePath).open();
         try {
-          while (offset < transferFile.size || transferFile.size == 0) {
+          while (!accepted.complete &&
+              (offset < transferFile.size || transferFile.size == 0)) {
             await source.setPosition(offset);
             final remaining = transferFile.size - offset;
             final count = transferFile.size == 0
@@ -343,6 +344,7 @@ class PhoneTransferSender {
                 accepted = _AcceptedTransfer(
                   confirmedOffset: confirmedOffset,
                   maxChunkBytes: effectiveChunkBytes,
+                  complete: false,
                 );
                 applied = await _applyAcceptance(
                   batch: batch,
@@ -597,11 +599,24 @@ class PhoneTransferSender {
   }) async {
     final accepted = await inbox.nextWhere(
       (message) =>
-          message['kind'] == 'transfer_accept' &&
+          (message['kind'] == 'transfer_accept' ||
+              message['kind'] == 'transfer_file_complete') &&
           message['transferId'] == batch.transferId &&
           message['fileId'] == transferFile.fileId,
       timeout: timeout,
     );
+    if (accepted['kind'] == 'transfer_file_complete') {
+      if (accepted['sha256'] != transferFile.sha256) {
+        throw const FormatException(
+          'Laptop returned an invalid completion digest.',
+        );
+      }
+      return _AcceptedTransfer(
+        confirmedOffset: transferFile.size,
+        maxChunkBytes: null,
+        complete: true,
+      );
+    }
     final rawOffset = accepted['confirmedOffset'];
     if (rawOffset is! int || rawOffset < 0 || rawOffset > transferFile.size) {
       throw const FormatException('Laptop returned an invalid resume offset.');
@@ -609,6 +624,7 @@ class PhoneTransferSender {
     return _AcceptedTransfer(
       confirmedOffset: rawOffset,
       maxChunkBytes: accepted['maxChunkBytes'],
+      complete: false,
     );
   }
 
@@ -751,10 +767,12 @@ class _AcceptedTransfer {
   const _AcceptedTransfer({
     required this.confirmedOffset,
     required this.maxChunkBytes,
+    required this.complete,
   });
 
   final int confirmedOffset;
   final Object? maxChunkBytes;
+  final bool complete;
 }
 
 class _AcceptedSession {

@@ -125,6 +125,60 @@ void main() {
   });
 
   test(
+    'accepts verified completion without re-uploading an empty file',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var requestCount = 0;
+      final serving = server.listen((request) async {
+        requestCount += 1;
+        await request.drain<void>();
+        request.response.statusCode = 500;
+        await request.response.close();
+      });
+      final directory = await Directory.systemTemp.createTemp(
+        'vidyut-phone-empty-resume-',
+      );
+      try {
+        final source = File('${directory.path}/empty.bin');
+        await source.writeAsBytes([]);
+        final pairingRepository = PairingRepository(MemoryPairingStorage());
+        await pairingRepository.save(
+          PairingCode(
+            host: '127.0.0.1',
+            port: server.port,
+            secret: 'pairing-secret',
+          ),
+        );
+        final sender = PhoneTransferSender(
+          pairingRepository: pairingRepository,
+          connectionFactory: (pairing) => RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: _CompletedTransferTransport(),
+          ),
+          history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        );
+
+        final result = await sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'empty.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]);
+
+        expect(result.status, PhoneTransferStatus.completed);
+        expect(result.files.single.confirmedOffset, 0);
+        expect(requestCount, 0);
+      } finally {
+        await server.close(force: true);
+        await serving.cancel();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
     'falls back to legacy chunks when the relay omits negotiation',
     () async {
       final chunks = await _sendChunkedFile(advertisedChunkBytes: null);
@@ -332,6 +386,43 @@ class _ScriptedTransferTransport implements RelayTransport {
         'fileId': file['fileId'],
         'confirmedOffset': confirmedOffset?.call() ?? 0,
         if (maxChunkBytes != null) 'maxChunkBytes': maxChunkBytes,
+      }),
+    );
+  }
+
+  @override
+  Future<void> close() => _incoming.close();
+}
+
+class _CompletedTransferTransport implements RelayTransport {
+  _CompletedTransferTransport() {
+    scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
+  }
+
+  final _incoming = StreamController<Object?>();
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
+
+  @override
+  Stream<Object?> get messages => _incoming.stream;
+
+  @override
+  void send(Map<String, Object?> message) {
+    if (message['kind'] != 'transfer_offer') return;
+    final offer = (message['offer']! as Map).cast<String, Object?>();
+    final file = ((offer['files']! as List).first as Map)
+        .cast<String, Object?>();
+    scheduleMicrotask(
+      () => _incoming.add({
+        'v': 1,
+        'kind': 'transfer_file_complete',
+        'transferId': offer['transferId'],
+        'fileId': file['fileId'],
+        'sha256': file['sha256'],
       }),
     );
   }

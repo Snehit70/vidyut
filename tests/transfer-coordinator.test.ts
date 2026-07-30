@@ -152,6 +152,64 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("checks only remaining bytes when a phone retries an offer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-storage-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    let availableBytes = 3;
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => availableBytes,
+      publishControl: (message) => controls.push(message),
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const offer = {
+      transferId: "transfer_storage_1234",
+      batchId: "batch_storage_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_storage_123456",
+          filename: "report.pdf",
+          mime: "application/pdf",
+          size: bytes.length,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(bytes),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await queue.confirmProgress(offer.transferId, offer.files[0]!.fileId, 2);
+    controls.length = 0;
+    availableBytes = 1;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: 2,
+        maxChunkBytes: 1024 * 1024,
+      },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("re-advertises a file completed before its response was interrupted", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-complete-"));
     const queue = await memoryQueue();
@@ -226,11 +284,10 @@ describe("transfer coordinator", () => {
     expect(controls).toEqual([
       {
         v: 1,
-        kind: "transfer_accept",
+        kind: "transfer_file_complete",
         transferId: offer.transferId,
         fileId: offer.files[0]!.fileId,
-        confirmedOffset: firstBytes.length,
-        maxChunkBytes: 1024 * 1024,
+        sha256: offer.files[0]!.sha256,
       },
       {
         v: 1,
@@ -239,6 +296,75 @@ describe("transfer coordinator", () => {
         fileId: offer.files[1]!.fileId,
         confirmedOffset: 0,
         maxChunkBytes: 1024 * 1024,
+      },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("waits for terminal verification before re-advertising full progress", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-verify-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const offer = {
+      transferId: "transfer_verifying_1234",
+      batchId: "batch_verifying_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_verifying_123456",
+          filename: "report.pdf",
+          mime: "application/pdf",
+          size: bytes.length,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(bytes),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await queue.confirmProgress(
+      offer.transferId,
+      offer.files[0]!.fileId,
+      bytes.length,
+    );
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    expect(controls).toEqual([]);
+
+    await queue.complete(
+      offer.transferId,
+      offer.files[0]!.fileId,
+      offer.files[0]!.sha256,
+    );
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_file_complete",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        sha256: offer.files[0]!.sha256,
       },
     ]);
     await rm(dir, { recursive: true, force: true });

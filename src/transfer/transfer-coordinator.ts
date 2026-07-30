@@ -147,9 +147,12 @@ export class TransferCoordinator {
     );
     if (!batch || batch.direction !== "phone_to_laptop") return;
     for (const file of batch.files) {
-      if (
-        file.status === "completed" ||
-        (includeActive && file.status === "active")
+      if (file.status === "completed") {
+        this.publishPhoneComplete(batch.transferId, file);
+      } else if (
+        includeActive &&
+        file.status === "active" &&
+        (file.size === 0 || file.confirmedOffset < file.size)
       ) {
         this.publishPhoneAccept(batch.transferId, file);
       }
@@ -169,6 +172,19 @@ export class TransferCoordinator {
       ...(this.options.maxChunkBytes === undefined
         ? {}
         : { maxChunkBytes: this.options.maxChunkBytes }),
+    });
+  }
+
+  private publishPhoneComplete(
+    transferId: string,
+    file: { fileId: string; sha256: string },
+  ): void {
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_file_complete",
+      transferId,
+      fileId: file.fileId,
+      sha256: file.sha256,
     });
   }
 
@@ -192,11 +208,24 @@ export class TransferCoordinator {
       });
       return false;
     }
-    const totalBytes = offer.files.reduce((total, file) => total + file.size, 0);
+    const existingBatch = this.options.queue
+      .snapshot()
+      .batches.find((batch) => batch.transferId === offer.transferId);
+    const requiredBytes = existingBatch
+      ? existingBatch.files.reduce(
+          (total, file) =>
+            file.status === "queued" ||
+            file.status === "active" ||
+            file.status === "paused"
+              ? total + Math.max(0, file.size - file.confirmedOffset)
+              : total,
+          0,
+        )
+      : offer.files.reduce((total, file) => total + file.size, 0);
     const availableBytes = await (
       this.options.availableBytes ?? defaultAvailableBytes
     )(this.options.destinationDirectory);
-    if (totalBytes > availableBytes) {
+    if (requiredBytes > availableBytes) {
       for (const file of offer.files) {
         this.options.publishControl({
           v: 1,
@@ -208,9 +237,6 @@ export class TransferCoordinator {
       }
       return false;
     }
-    const existing = this.options.queue.snapshot().batches.some(
-      (batch) => batch.transferId === offer.transferId,
-    );
     await mkdir(this.options.destinationDirectory, { recursive: true });
     await this.options.queue.acceptOffer(
       offer,
@@ -221,7 +247,7 @@ export class TransferCoordinator {
         ]),
       ),
     );
-    return existing;
+    return existingBatch !== undefined;
   }
 
   private async acceptReceiverOffset(
