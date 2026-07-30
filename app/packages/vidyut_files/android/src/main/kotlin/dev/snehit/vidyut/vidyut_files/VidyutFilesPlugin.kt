@@ -22,6 +22,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 import io.flutter.plugin.common.StandardMethodCodec
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.Executors
 import java.util.UUID
 
@@ -36,8 +37,10 @@ class VidyutFilesPlugin :
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingResult: MethodChannel.Result? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val engineAttached = AtomicBoolean(false)
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        engineAttached.set(true)
         context = binding.applicationContext
         channel = MethodChannel(
             binding.binaryMessenger,
@@ -49,6 +52,7 @@ class VidyutFilesPlugin :
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        engineAttached.set(false)
         channel.setMethodCallHandler(null)
         ioExecutor.shutdownNow()
     }
@@ -175,9 +179,12 @@ class VidyutFilesPlugin :
             }
             ioExecutor.execute {
                 try {
-                    result.success(uris.map(::copyPickedFile))
+                    val files = uris.map(::copyPickedFile)
+                    if (engineAttached.get()) result.success(files)
                 } catch (error: Exception) {
-                    result.error("pick-failed", error.message, null)
+                    if (engineAttached.get()) {
+                        result.error("pick-failed", error.message, null)
+                    }
                 }
             }
             return true
@@ -233,11 +240,15 @@ class VidyutFilesPlugin :
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
         }
-        return (displayName ?: "vidyut-file-${UUID.randomUUID()}")
+        val name = (displayName ?: "vidyut-file-${UUID.randomUUID()}")
             .substringAfterLast('/')
             .substringAfterLast('\\')
             .replace('\u0000', '_')
-            .ifBlank { "vidyut-file-${UUID.randomUUID()}" }
+        return if (name.isBlank() || name == "." || name == "..") {
+            "vidyut-file-${UUID.randomUUID()}"
+        } else {
+            name
+        }
     }
 
     private fun destinationLabel(): String {

@@ -56,8 +56,19 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   }
 
   Future<void> _chooseFiles() async {
-    final selected = await const VidyutFiles().pickFiles();
-    if (selected.isEmpty || _sending) return;
+    if (_sending) return;
+    final List<VidyutPickedFile> selected;
+    try {
+      selected = await const VidyutFiles().pickFiles();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Selection failed: $error')));
+      }
+      return;
+    }
+    if (!mounted || selected.isEmpty || _sending) return;
     setState(() => _sending = true);
     try {
       await widget.sender.enqueue(
