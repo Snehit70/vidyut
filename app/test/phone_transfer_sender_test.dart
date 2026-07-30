@@ -713,15 +713,67 @@ void main() {
       await directory.delete(recursive: true);
     }
   });
+
+  test('preserves the acceptance timeout after reconnecting', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-accept-timeout-',
+    );
+    try {
+      final source = File('${directory.path}/accept.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        const PairingCode(host: '127.0.0.1', port: 1, secret: 'pairing-secret'),
+      );
+      var connectionCount = 0;
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          connectionCount += 1;
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: connectionCount == 1
+                ? _DisconnectBeforeAcceptanceTransport()
+                : _ScriptedTransferTransport(
+                    acceptanceDelay: const Duration(milliseconds: 100),
+                  ),
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        acceptanceTimeout: const Duration(milliseconds: 20),
+        reconnectBackoff: const [Duration.zero],
+      );
+
+      await expectLater(
+        sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'accept.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(connectionCount, 2);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
 }
 
 class _ScriptedTransferTransport implements RelayTransport {
-  _ScriptedTransferTransport({this.maxChunkBytes, this.confirmedOffset}) {
+  _ScriptedTransferTransport({
+    this.maxChunkBytes,
+    this.confirmedOffset,
+    this.acceptanceDelay = Duration.zero,
+  }) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
   final int? maxChunkBytes;
   final int Function()? confirmedOffset;
+  final Duration acceptanceDelay;
   final _incoming = StreamController<Object?>();
   final sent = <Map<String, Object?>>[];
 
@@ -741,16 +793,17 @@ class _ScriptedTransferTransport implements RelayTransport {
     final offer = (message['offer']! as Map).cast<String, Object?>();
     final file = ((offer['files']! as List).first as Map)
         .cast<String, Object?>();
-    scheduleMicrotask(
-      () => _incoming.add({
+    Future<void>.delayed(acceptanceDelay, () {
+      if (_incoming.isClosed) return;
+      _incoming.add({
         'v': 1,
         'kind': 'transfer_accept',
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'confirmedOffset': confirmedOffset?.call() ?? 0,
         if (maxChunkBytes != null) 'maxChunkBytes': maxChunkBytes,
-      }),
-    );
+      });
+    });
   }
 
   @override

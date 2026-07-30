@@ -82,6 +82,7 @@ class PhoneTransferSender {
     this.chunkBytes = TransferChunkPolicy.preferredBytes,
     this.maximumFileBytes,
     this.networkAllowed,
+    this.acceptanceTimeout = const Duration(minutes: 5),
     this.reconnectBackoff = const [
       Duration(seconds: 1),
       Duration(seconds: 2),
@@ -98,6 +99,7 @@ class PhoneTransferSender {
   final int chunkBytes;
   final Future<int> Function()? maximumFileBytes;
   final Future<bool> Function()? networkAllowed;
+  final Duration acceptanceTimeout;
   final List<Duration> reconnectBackoff;
   final _progressController =
       StreamController<PhoneTransferProgress>.broadcast();
@@ -282,7 +284,7 @@ class PhoneTransferSender {
           batch: batch,
           transferFile: transferFile,
           currentSession: activeSession,
-          timeout: const Duration(minutes: 5),
+          timeout: acceptanceTimeout,
         );
         session = acceptedSession.session;
         activeSession = acceptedSession.session;
@@ -358,7 +360,7 @@ class PhoneTransferSender {
                       batch: batch,
                       transferFile: transferFile,
                       currentSession: activeSession,
-                      timeout: const Duration(minutes: 5),
+                      timeout: acceptanceTimeout,
                       terminalOnly: true,
                     );
                     session = acceptedSession.session;
@@ -592,7 +594,7 @@ class PhoneTransferSender {
               replacement.inbox,
               batch,
               transferFile,
-              timeout: const Duration(seconds: 15),
+              timeout: timeout,
               terminalOnly: terminalOnly,
             ),
           ),
