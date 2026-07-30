@@ -360,6 +360,68 @@ void main() {
     }
   });
 
+  test('stops retrying persistent HTTP 503 responses', () async {
+    var requestCount = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      requestCount += 1;
+      await request.drain<void>();
+      request.response
+        ..statusCode = 503
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'code': 'relay_unavailable'}));
+      await request.response.close();
+    });
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut-phone-http-budget-',
+    );
+    try {
+      final source = File('${directory.path}/retry.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      var connectionCount = 0;
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          connectionCount += 1;
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: _ScriptedTransferTransport(),
+          );
+        },
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        chunkBytes: 3,
+        reconnectBackoff: const [Duration.zero, Duration.zero],
+      );
+
+      await expectLater(
+        sender.enqueue([
+          PhoneTransferSource(
+            path: source.path,
+            filename: 'retry.bin',
+            mime: 'application/octet-stream',
+          ),
+        ]),
+        throwsA(isA<HttpException>()),
+      );
+
+      expect(requestCount, 3);
+      expect(connectionCount, 3);
+    } finally {
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('rejects a non-advancing offset conflict without looping', () async {
     var requestCount = 0;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

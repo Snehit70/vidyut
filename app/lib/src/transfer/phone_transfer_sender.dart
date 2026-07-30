@@ -300,6 +300,7 @@ class PhoneTransferSender {
         var offset = applied.offset;
         var effectiveChunkBytes = applied.effectiveChunkBytes;
         var lastPersistedOffset = offset;
+        var remainingPutRetries = reconnectBackoff.length;
 
         if (!accepted.complete) {
           final sourcePath = transferFile.sourcePath;
@@ -375,6 +376,7 @@ class PhoneTransferSender {
                     offset = applied.offset;
                     effectiveChunkBytes = applied.effectiveChunkBytes;
                     lastPersistedOffset = offset;
+                    remainingPutRetries = reconnectBackoff.length;
                     continue;
                   }
                   accepted = _AcceptedTransfer(
@@ -394,12 +396,15 @@ class PhoneTransferSender {
                   offset = applied.offset;
                   effectiveChunkBytes = applied.effectiveChunkBytes;
                   lastPersistedOffset = offset;
+                  remainingPutRetries = reconnectBackoff.length;
                   continue;
                 }
                 if (!_isTransientTransferError(error) ||
-                    reconnectBackoff.isEmpty) {
+                    reconnectBackoff.isEmpty ||
+                    remainingPutRetries <= 0) {
                   rethrow;
                 }
+                remainingPutRetries -= 1;
                 _publishBatch(
                   batch,
                   stage: PhoneTransferProgressStage.connecting,
@@ -442,6 +447,7 @@ class PhoneTransferSender {
                 throw StateError('Laptop did not advance transfer progress.');
               }
               offset = result.confirmedOffset;
+              remainingPutRetries = reconnectBackoff.length;
               transferFile = transferFile.copyWith(confirmedOffset: offset);
               final shouldPersist =
                   result.complete ||
