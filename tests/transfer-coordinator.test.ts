@@ -190,9 +190,64 @@ describe("transfer coordinator", () => {
     );
     await queue.confirmProgress(offer.transferId, offer.files[0]!.fileId, 2);
     controls.length = 0;
-    availableBytes = 1;
+    availableBytes = 0;
 
     await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_file_failed",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        code: "insufficient_storage",
+      },
+    ]);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("replays a persisted offer despite a lower current size limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-limit-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const offer = {
+      transferId: "transfer_limit_1234",
+      batchId: "batch_limit_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_limit_123456",
+          filename: "report.pdf",
+          mime: "application/pdf",
+          size: 3,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(new Uint8Array([1, 2, 3])),
+        },
+      ],
+    };
+    const createCoordinator = (maxFileBytes: number) =>
+      new TransferCoordinator({
+        queue,
+        destinationDirectory: dir,
+        maxFileBytes,
+        maxChunkBytes: 1024 * 1024,
+        availableBytes: async () => 2048,
+        publishControl: (message) => controls.push(message),
+      });
+
+    await createCoordinator(1024).handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    controls.length = 0;
+
+    await createCoordinator(1).handleControl(
       { v: 1, kind: "transfer_offer", offer },
       "phone",
     );
@@ -203,7 +258,7 @@ describe("transfer coordinator", () => {
         kind: "transfer_accept",
         transferId: offer.transferId,
         fileId: offer.files[0]!.fileId,
-        confirmedOffset: 2,
+        confirmedOffset: 0,
         maxChunkBytes: 1024 * 1024,
       },
     ]);

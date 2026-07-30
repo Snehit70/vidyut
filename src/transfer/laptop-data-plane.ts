@@ -22,6 +22,7 @@ import {
   legacyTransferChunkBytes,
   preferredTransferChunkBytes,
 } from "./transfer-chunk-policy";
+import { partialPathFor } from "./transfer-paths";
 
 export class LaptopTransferDataPlane extends TransferHttpDataPlane {
   constructor(
@@ -292,6 +293,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         "code" in error &&
         error.code === "ENOENT"
       ) {
+        await unlink(partialPath).catch(() => undefined);
         await this.queue.fail(
           transferId,
           fileId,
@@ -380,6 +382,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         await utimes(finalizedPath, modified, modified).catch(() => undefined);
         await this.queue.complete(transferId, fileId, verifiedSha256);
       } catch {
+        await unlink(partialPath).catch(() => undefined);
         await this.queue.fail(
           transferId,
           fileId,
@@ -437,13 +440,6 @@ function parseNonNegativeInteger(value: string | null): number | undefined {
   if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function partialPathFor(destinationPath: string, fileId: string): string {
-  return join(
-    dirname(destinationPath),
-    `.${basename(destinationPath)}.${fileId}.vidyut-part`,
-  );
 }
 
 async function hashFile(path: string): Promise<string> {

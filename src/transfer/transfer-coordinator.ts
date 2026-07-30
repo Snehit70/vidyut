@@ -68,9 +68,10 @@ export class TransferCoordinator {
     switch (message.kind) {
       case "transfer_offer":
         {
-          const existing = await this.acceptPhoneOffer(message.offer);
+          const result = await this.acceptPhoneOffer(message.offer);
+          if (result === "rejected") return;
           const activated = await this.activateNext();
-          if (existing) {
+          if (result === "existing") {
             this.republishPhoneProgress(
               message.offer.transferId,
               activated === undefined,
@@ -203,29 +204,41 @@ export class TransferCoordinator {
     });
   }
 
-  private async acceptPhoneOffer(offer: TransferOffer): Promise<boolean> {
+  private async acceptPhoneOffer(
+    offer: TransferOffer,
+  ): Promise<"new" | "existing" | "rejected"> {
     if (!isTransferOffer(offer)) {
       throw new Error("Invalid phone transfer offer.");
     }
     if (offer.direction !== "phone_to_laptop") {
       throw new Error("Phone may only offer phone-to-laptop transfers.");
     }
-    const tooLarge = offer.files.find(
-      (file) => file.size > this.options.maxFileBytes,
-    );
-    if (tooLarge) {
-      this.options.publishControl({
-        v: 1,
-        kind: "transfer_file_failed",
-        transferId: offer.transferId,
-        fileId: tooLarge.fileId,
-        code: "file_too_large",
-      });
-      return false;
-    }
     const existingBatch = this.options.queue
       .snapshot()
       .batches.find((batch) => batch.transferId === offer.transferId);
+    const destinationPaths = new Map(
+      offer.files.map((file) => [
+        file.fileId,
+        join(this.options.destinationDirectory, file.filename),
+      ]),
+    );
+    if (existingBatch) {
+      await this.options.queue.acceptOffer(offer, destinationPaths);
+    } else {
+      const tooLarge = offer.files.find(
+        (file) => file.size > this.options.maxFileBytes,
+      );
+      if (tooLarge) {
+        this.options.publishControl({
+          v: 1,
+          kind: "transfer_file_failed",
+          transferId: offer.transferId,
+          fileId: tooLarge.fileId,
+          code: "file_too_large",
+        });
+        return "rejected";
+      }
+    }
     const requiredBytes = existingBatch
       ? existingBatch.files.reduce(
           (total, file) =>
@@ -242,6 +255,13 @@ export class TransferCoordinator {
     )(this.options.destinationDirectory);
     if (requiredBytes > availableBytes) {
       for (const file of offer.files) {
+        if (existingBatch) {
+          await this.options.queue.fail(
+            offer.transferId,
+            file.fileId,
+            "insufficient_storage",
+          );
+        }
         this.options.publishControl({
           v: 1,
           kind: "transfer_file_failed",
@@ -250,19 +270,13 @@ export class TransferCoordinator {
           code: "insufficient_storage",
         });
       }
-      return false;
+      return "rejected";
     }
     await mkdir(this.options.destinationDirectory, { recursive: true });
-    await this.options.queue.acceptOffer(
-      offer,
-      new Map(
-        offer.files.map((file) => [
-          file.fileId,
-          join(this.options.destinationDirectory, file.filename),
-        ]),
-      ),
-    );
-    return existingBatch !== undefined;
+    if (!existingBatch) {
+      await this.options.queue.acceptOffer(offer, destinationPaths);
+    }
+    return existingBatch ? "existing" : "new";
   }
 
   private async acceptReceiverOffset(

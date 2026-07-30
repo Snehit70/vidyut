@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   TransferDirection,
@@ -6,6 +6,7 @@ import type {
   TransferOffer,
 } from "../shared/wire";
 import { isTransferOffer } from "../shared/wire";
+import { partialPathFor } from "./transfer-paths";
 
 export type TransferFileStatus =
   | "queued"
@@ -417,6 +418,11 @@ export class TransferQueue {
             file.size > 0 &&
             file.confirmedOffset === file.size)
         ) {
+          if (file.destinationPath) {
+            await unlink(
+              partialPathFor(file.destinationPath, file.fileId),
+            ).catch(() => undefined);
+          }
           file.status = "failed";
           file.errorCode = "verification_interrupted";
           batchChanged = true;

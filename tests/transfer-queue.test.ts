@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   type EnqueueTransferFile,
 } from "../src/transfer/transfer-queue";
 import type { TransferOffer } from "../src/shared/wire";
+import { partialPathFor } from "../src/transfer/transfer-paths";
 
 const file = (
   filename: string,
@@ -121,6 +122,32 @@ describe("durable transfer queue", () => {
     expect((await restarted.claimNext())!.file.fileId).toBe(
       batch.files[0]!.fileId,
     );
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("removes an abandoned partial after interrupted verification", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-verify-recovery-"));
+    const path = join(dir, "queue.json");
+    const destination = join(dir, "report.bin");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("report.bin"), destinationPath: destination }],
+    });
+    const claimed = (await queue.claimNext())!;
+    const partial = partialPathFor(destination, claimed.file.fileId);
+    await writeFile(partial, new Uint8Array(10));
+    await queue.beginVerification(
+      batch.transferId,
+      claimed.file.fileId,
+      claimed.file.size,
+    );
+
+    const restarted = await TransferQueue.open({ storage });
+    expect(restarted.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    await expect(stat(partial)).rejects.toThrow();
     await rm(dir, { recursive: true, force: true });
   });
 
