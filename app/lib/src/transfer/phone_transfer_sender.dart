@@ -168,7 +168,7 @@ class PhoneTransferSender {
           mime: source.mime,
           size: info.size,
           lastModifiedMs: info.modified.millisecondsSinceEpoch,
-          sha256: await _hashFile(file),
+          sha256: await _hashFile(File(source.path)),
           status: PhoneTransferStatus.queued,
           confirmedOffset: 0,
           sourcePath: source.path,
