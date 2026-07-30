@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/pairing/pairing_repository.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/transfer/transfer_chunk_policy.dart';
 import 'package:vidyut/src/transfer/phone_transfer_sender.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
 
@@ -122,13 +123,31 @@ void main() {
     await serving.cancel();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'falls back to legacy chunks when the relay omits negotiation',
+    () async {
+      final chunks = await _sendChunkedFile(advertisedChunkBytes: null);
+
+      expect(chunks, [TransferChunkPolicy.legacyBytes, 44 * 1024]);
+    },
+  );
+
+  test('uses the larger chunk advertised by an upgraded relay', () async {
+    final chunks = await _sendChunkedFile(
+      advertisedChunkBytes: TransferChunkPolicy.preferredBytes,
+    );
+
+    expect(chunks, [300 * 1024]);
+  });
 }
 
 class _ScriptedTransferTransport implements RelayTransport {
-  _ScriptedTransferTransport() {
+  _ScriptedTransferTransport({this.maxChunkBytes}) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
+  final int? maxChunkBytes;
   final _incoming = StreamController<Object?>();
   final sent = <Map<String, Object?>>[];
 
@@ -155,10 +174,75 @@ class _ScriptedTransferTransport implements RelayTransport {
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'confirmedOffset': 0,
+        if (maxChunkBytes != null) 'maxChunkBytes': maxChunkBytes,
       }),
     );
   }
 
   @override
   Future<void> close() => _incoming.close();
+}
+
+Future<List<int>> _sendChunkedFile({required int? advertisedChunkBytes}) async {
+  const fileBytes = 300 * 1024;
+  final chunks = <int>[];
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final serving = server.listen((request) async {
+    final offset = int.parse(request.uri.queryParameters['offset']!);
+    final plaintextBytes = int.parse(
+      request.headers.value('x-vidyut-plaintext-bytes')!,
+    );
+    chunks.add(plaintextBytes);
+    await request.drain<void>();
+    final confirmedOffset = offset + plaintextBytes;
+    request.response
+      ..statusCode = 200
+      ..headers.contentType = ContentType.json
+      ..write(
+        jsonEncode({
+          'confirmedOffset': confirmedOffset,
+          'complete': confirmedOffset == fileBytes,
+        }),
+      );
+    await request.response.close();
+  });
+  final directory = await Directory.systemTemp.createTemp(
+    'vidyut-phone-chunks-',
+  );
+  try {
+    final source = File('${directory.path}/large.bin');
+    await source.writeAsBytes(List<int>.filled(fileBytes, 7));
+    final pairingRepository = PairingRepository(MemoryPairingStorage());
+    await pairingRepository.save(
+      PairingCode(
+        host: '127.0.0.1',
+        port: server.port,
+        secret: 'pairing-secret',
+      ),
+    );
+    final sender = PhoneTransferSender(
+      pairingRepository: pairingRepository,
+      connectionFactory: (pairing) => RelayConnection(
+        pairing: pairing,
+        deviceId: 'phone',
+        transport: _ScriptedTransferTransport(
+          maxChunkBytes: advertisedChunkBytes,
+        ),
+      ),
+      history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+    );
+
+    await sender.enqueue([
+      PhoneTransferSource(
+        path: source.path,
+        filename: 'large.bin',
+        mime: 'application/octet-stream',
+      ),
+    ]);
+    return chunks;
+  } finally {
+    await server.close(force: true);
+    await serving.cancel();
+    await directory.delete(recursive: true);
+  }
 }

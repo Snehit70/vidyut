@@ -12,6 +12,7 @@ import '../shared/relay_connection.dart';
 import '../shared/transfer_crypto.dart';
 import '../shared/transfer_http_auth.dart';
 import '../shared/wire.dart';
+import 'transfer_chunk_policy.dart';
 import 'transfer_history.dart';
 
 class PhoneTransferReceiver {
@@ -19,7 +20,7 @@ class PhoneTransferReceiver {
     required this.history,
     TransferCrypto? crypto,
     this.maxFileBytes = 1024 * 1024 * 1024,
-    this.chunkBytes = 256 * 1024,
+    this.chunkBytes = TransferChunkPolicy.preferredBytes,
     this.rootDirectory,
     this.onEvent,
     this.receiveEnabled,
@@ -157,6 +158,7 @@ class PhoneTransferReceiver {
         'transferId': offer.transferId,
         'fileId': offeredFile.fileId,
         'confirmedOffset': offset,
+        'maxChunkBytes': chunkBytes,
       });
 
       try {

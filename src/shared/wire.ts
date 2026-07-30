@@ -56,6 +56,7 @@ export type TransferControlMessage =
       transferId: string;
       fileId: string;
       confirmedOffset: number;
+      maxChunkBytes?: number;
     }
   | {
       v: 1;
@@ -150,6 +151,14 @@ export function isTransferControlMessage(
     case "transfer_offer":
       return isTransferOffer(message.offer);
     case "transfer_accept":
+      return (
+        isId(message.transferId) &&
+        isId(message.fileId) &&
+        isNonNegativeSafeInteger(message.confirmedOffset) &&
+        (message.maxChunkBytes === undefined ||
+          (isNonNegativeSafeInteger(message.maxChunkBytes) &&
+            message.maxChunkBytes > 0))
+      );
     case "transfer_progress":
       return (
         isId(message.transferId) &&

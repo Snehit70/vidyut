@@ -19,9 +19,9 @@ import {
 } from "../transfer/transfer-queue";
 import { TransferCoordinator } from "../transfer/transfer-coordinator";
 import {
-  defaultTransferChunkBytes,
   LaptopTransferDataPlane,
 } from "../transfer/laptop-data-plane";
+import { preferredTransferChunkBytes } from "../transfer/transfer-chunk-policy";
 
 interface CliOptions {
   host: string;
@@ -74,12 +74,13 @@ const transferCoordinator = new TransferCoordinator({
   queue: transferQueue,
   destinationDirectory: config.transferDestination,
   maxFileBytes: config.maxTransferFileBytes,
+  maxChunkBytes: preferredTransferChunkBytes,
   publishControl: (message) => relay.publishTransferControl(message),
 });
 const transferDataPlane = new LaptopTransferDataPlane(
   config.pairingSecret,
   transferQueue,
-  defaultTransferChunkBytes,
+  preferredTransferChunkBytes,
   (message) => relay.publishTransferControl(message),
   async () => {
     await transferCoordinator.activateNext();

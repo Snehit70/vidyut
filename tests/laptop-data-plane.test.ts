@@ -70,6 +70,37 @@ describe("laptop transfer data plane", () => {
     await fixture.cleanup();
   });
 
+  test("serves the receiver-negotiated chunk size", async () => {
+    const fixture = await createFixture(
+      new Uint8Array([1, 2, 3, 4, 5, 6]),
+    );
+    const file = fixture.batch.files[0]!;
+    await fixture.queue.claimNext();
+    await fixture.queue.confirmProgress(
+      fixture.batch.transferId,
+      file.fileId,
+      0,
+      2,
+    );
+    const plane = new LaptopTransferDataPlane(secret, fixture.queue, 4);
+
+    const chunk = await getChunk(
+      plane,
+      fixture.batch.transferId,
+      file.fileId,
+      0,
+    );
+
+    expect(
+      await decryptResponse(
+        chunk.response,
+        fixture.batch.transferId,
+        file.fileId,
+      ),
+    ).toEqual(new Uint8Array([1, 2]));
+    await fixture.cleanup();
+  });
+
   test("rejects a source that changed after enqueue", async () => {
     const fixture = await createFixture(new Uint8Array([1, 2, 3]));
     const file = fixture.batch.files[0]!;

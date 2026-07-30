@@ -10,6 +10,7 @@ import '../pairing/pairing_repository.dart';
 import '../shared/relay_connection.dart';
 import '../shared/transfer_crypto.dart';
 import '../shared/transfer_http_auth.dart';
+import 'transfer_chunk_policy.dart';
 import 'transfer_history.dart';
 
 class PhoneTransferSource {
@@ -78,7 +79,7 @@ class PhoneTransferSender {
     required this.history,
     TransferCrypto? crypto,
     Random? random,
-    this.chunkBytes = 256 * 1024,
+    this.chunkBytes = TransferChunkPolicy.preferredBytes,
     this.maximumFileBytes,
     this.networkAllowed,
   }) : crypto = crypto ?? TransferCrypto(),
@@ -294,6 +295,11 @@ class PhoneTransferSender {
             'Laptop returned an invalid resume offset.',
           );
         }
+        final advertisedChunkBytes = accepted['maxChunkBytes'];
+        final effectiveChunkBytes = TransferChunkPolicy.negotiate(
+          advertisedChunkBytes,
+          localMaximum: chunkBytes,
+        );
         var offset = rawOffset;
         var lastPersistedOffset = offset;
         transferFile = transferFile.copyWith(
@@ -319,7 +325,7 @@ class PhoneTransferSender {
             final remaining = transferFile.size - offset;
             final count = transferFile.size == 0
                 ? 0
-                : min(chunkBytes, remaining);
+                : min(effectiveChunkBytes, remaining);
             final plaintext = count == 0 ? <int>[] : await source.read(count);
             if (plaintext.length != count) {
               throw StateError('Source file changed during transfer.');
