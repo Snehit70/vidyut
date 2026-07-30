@@ -516,11 +516,13 @@ class PhoneTransferSender {
       try {
         return _AcceptedSession(
           session: currentSession,
-          accepted: await _waitForAcceptance(
-            currentSession.inbox,
-            batch,
-            transferFile,
-            timeout: timeout,
+          accepted: await currentSession.untilDisconnected(
+            _waitForAcceptance(
+              currentSession.inbox,
+              batch,
+              transferFile,
+              timeout: timeout,
+            ),
           ),
         );
       } catch (error) {
@@ -538,11 +540,13 @@ class PhoneTransferSender {
         replacement = await _openSession(pairing, batch);
         return _AcceptedSession(
           session: replacement,
-          accepted: await _waitForAcceptance(
-            replacement.inbox,
-            batch,
-            transferFile,
-            timeout: const Duration(seconds: 15),
+          accepted: await replacement.untilDisconnected(
+            _waitForAcceptance(
+              replacement.inbox,
+              batch,
+              transferFile,
+              timeout: const Duration(seconds: 15),
+            ),
           ),
         );
       } catch (candidate) {
@@ -785,17 +789,36 @@ class _TransferSession {
     required this.connection,
     required this.inbox,
     required this.client,
-  });
+  }) {
+    _statusSubscription = connection.status.listen((status) {
+      if (status == ConnectionStatus.offline && !_disconnected.isCompleted) {
+        _disconnected.complete();
+      }
+    });
+  }
 
   final RelayConnection connection;
   final _TransferControlInbox inbox;
   final HttpClient client;
+  final _disconnected = Completer<void>();
+  late final StreamSubscription<ConnectionStatus> _statusSubscription;
   bool _closed = false;
+
+  Future<T> untilDisconnected<T>(Future<T> operation) {
+    return Future.any([
+      operation,
+      _disconnected.future.then<T>(
+        (_) =>
+            throw const SocketException('Relay transfer control disconnected.'),
+      ),
+    ]);
+  }
 
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
     client.close(force: true);
+    await _statusSubscription.cancel();
     await inbox.close();
     await connection.close();
   }
@@ -853,7 +876,10 @@ class _TransferControlInbox {
     }
   }
 
-  Future<void> close() => _subscription.cancel();
+  Future<void> close() async {
+    _failPending(const SocketException('Relay transfer control closed.'));
+    await _subscription.cancel();
+  }
 }
 
 class _ControlWaiter {
