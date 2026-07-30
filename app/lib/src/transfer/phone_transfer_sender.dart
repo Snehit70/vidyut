@@ -27,6 +27,50 @@ class PhoneTransferSource {
 typedef TransferRelayConnectionFactory =
     RelayConnection Function(PairingCode pairing);
 
+enum PhoneTransferProgressStage {
+  preparing,
+  connecting,
+  waitingForLaptop,
+  transferring,
+  completed,
+  failed,
+}
+
+class PhoneTransferProgress {
+  const PhoneTransferProgress({
+    required this.stage,
+    required this.fileCount,
+    required this.totalBytes,
+    required this.transferredBytes,
+    this.currentFileIndex,
+    this.currentFilename,
+    this.bytesPerSecond,
+    this.transferId,
+  });
+
+  final PhoneTransferProgressStage stage;
+  final int fileCount;
+  final int totalBytes;
+  final int transferredBytes;
+  final int? currentFileIndex;
+  final String? currentFilename;
+  final double? bytesPerSecond;
+  final String? transferId;
+
+  double get fraction =>
+      totalBytes == 0 ? 0 : (transferredBytes / totalBytes).clamp(0.0, 1.0);
+
+  Duration? get remaining {
+    final speed = bytesPerSecond;
+    if (speed == null || speed <= 0 || totalBytes <= transferredBytes) {
+      return null;
+    }
+    return Duration(
+      milliseconds: ((totalBytes - transferredBytes) / speed * 1000).round(),
+    );
+  }
+}
+
 class PhoneTransferSender {
   PhoneTransferSender({
     required this.pairingRepository,
@@ -48,11 +92,23 @@ class PhoneTransferSender {
   final int chunkBytes;
   final Future<int> Function()? maximumFileBytes;
   final Future<bool> Function()? networkAllowed;
+  final _progressController =
+      StreamController<PhoneTransferProgress>.broadcast();
+
+  Stream<PhoneTransferProgress> get progress => _progressController.stream;
 
   Future<PhoneTransferBatch> enqueue(List<PhoneTransferSource> sources) async {
     if (sources.isEmpty) {
       throw const FormatException('Select at least one file.');
     }
+    _publish(
+      PhoneTransferProgress(
+        stage: PhoneTransferProgressStage.preparing,
+        fileCount: sources.length,
+        totalBytes: 0,
+        transferredBytes: 0,
+      ),
+    );
     if (networkAllowed != null && !await networkAllowed!()) {
       throw StateError('File transfers are disabled on this metered network.');
     }
@@ -65,7 +121,9 @@ class PhoneTransferSender {
     final maxBytes = maximumFileBytes == null
         ? 1024 * 1024 * 1024
         : await maximumFileBytes!();
-    for (final source in sources) {
+    final prepared = <({PhoneTransferSource source, FileStat info})>[];
+    for (var index = 0; index < sources.length; index++) {
+      final source = sources[index];
       final file = File(source.path);
       final info = await file.stat();
       if (info.type != FileSystemEntityType.file) {
@@ -76,6 +134,33 @@ class PhoneTransferSender {
           '${source.filename} exceeds the configured maximum file size.',
         );
       }
+      prepared.add((source: source, info: info));
+      _publish(
+        PhoneTransferProgress(
+          stage: PhoneTransferProgressStage.preparing,
+          fileCount: sources.length,
+          totalBytes: prepared.fold(0, (sum, value) => sum + value.info.size),
+          transferredBytes: 0,
+          currentFileIndex: index,
+          currentFilename: source.filename,
+        ),
+      );
+    }
+    final totalBytes = prepared.fold(0, (sum, value) => sum + value.info.size);
+    for (var index = 0; index < prepared.length; index++) {
+      final entry = prepared[index];
+      final source = entry.source;
+      final info = entry.info;
+      _publish(
+        PhoneTransferProgress(
+          stage: PhoneTransferProgressStage.preparing,
+          fileCount: sources.length,
+          totalBytes: totalBytes,
+          transferredBytes: 0,
+          currentFileIndex: index,
+          currentFilename: source.filename,
+        ),
+      );
       files.add(
         PhoneTransferFile(
           fileId: _id('file'),
@@ -100,6 +185,15 @@ class PhoneTransferSender {
       files: files,
     );
     await history.upsert(batch);
+    _publish(
+      PhoneTransferProgress(
+        stage: PhoneTransferProgressStage.connecting,
+        fileCount: files.length,
+        totalBytes: totalBytes,
+        transferredBytes: 0,
+        transferId: batch.transferId,
+      ),
+    );
     return _send(pairing, batch);
   }
 
@@ -163,6 +257,7 @@ class PhoneTransferSender {
     final connection = connectionFactory(pairing);
     final inbox = _TransferControlInbox(connection.transferControls);
     final client = HttpClient();
+    final stopwatch = Stopwatch();
     try {
       final connected = connection.status.firstWhere(
         (status) => status == ConnectionStatus.connected,
@@ -178,6 +273,12 @@ class PhoneTransferSender {
       for (var index = 0; index < batch.files.length; index++) {
         var transferFile = batch.files[index];
         if (transferFile.status == PhoneTransferStatus.completed) continue;
+        _publishBatch(
+          batch,
+          stage: PhoneTransferProgressStage.waitingForLaptop,
+          currentFileIndex: index,
+          currentFilename: transferFile.filename,
+        );
         final accepted = await inbox.nextWhere(
           (message) =>
               message['kind'] == 'transfer_accept' &&
@@ -200,6 +301,14 @@ class PhoneTransferSender {
           confirmedOffset: offset,
         );
         batch = await _replaceFile(batch, index, transferFile);
+        if (!stopwatch.isRunning) stopwatch.start();
+        _publishBatch(
+          batch,
+          stage: PhoneTransferProgressStage.transferring,
+          currentFileIndex: index,
+          currentFilename: transferFile.filename,
+          bytesPerSecond: _bytesPerSecond(batch, stopwatch),
+        );
 
         final sourcePath = transferFile.sourcePath;
         if (sourcePath == null) throw StateError('Source file is unavailable.');
@@ -252,6 +361,13 @@ class PhoneTransferSender {
               persist: shouldPersist,
             );
             if (shouldPersist) lastPersistedOffset = offset;
+            _publishBatch(
+              batch,
+              stage: PhoneTransferProgressStage.transferring,
+              currentFileIndex: index,
+              currentFilename: transferFile.filename,
+              bytesPerSecond: _bytesPerSecond(batch, stopwatch),
+            );
             if (result.complete) break;
           }
         } finally {
@@ -262,12 +378,20 @@ class PhoneTransferSender {
           confirmedOffset: transferFile.size,
         );
         batch = await _replaceFile(batch, index, transferFile);
+        _publishBatch(
+          batch,
+          stage: PhoneTransferProgressStage.transferring,
+          currentFileIndex: index,
+          currentFilename: transferFile.filename,
+          bytesPerSecond: _bytesPerSecond(batch, stopwatch),
+        );
       }
       batch = batch.copyWith(
         status: PhoneTransferStatus.completed,
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
       );
       await history.upsert(batch);
+      _publishBatch(batch, stage: PhoneTransferProgressStage.completed);
       return batch;
     } catch (error) {
       batch = batch.copyWith(
@@ -287,6 +411,7 @@ class PhoneTransferSender {
             .toList(),
       );
       await history.upsert(batch);
+      _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
       rethrow;
     } finally {
       client.close(force: true);
@@ -347,6 +472,43 @@ class PhoneTransferSender {
     );
     if (persist) await history.upsert(updated);
     return updated;
+  }
+
+  void _publish(PhoneTransferProgress value) {
+    if (!_progressController.isClosed) _progressController.add(value);
+  }
+
+  void _publishBatch(
+    PhoneTransferBatch batch, {
+    required PhoneTransferProgressStage stage,
+    int? currentFileIndex,
+    String? currentFilename,
+    double? bytesPerSecond,
+  }) {
+    _publish(
+      PhoneTransferProgress(
+        stage: stage,
+        fileCount: batch.files.length,
+        totalBytes: batch.files.fold(0, (sum, file) => sum + file.size),
+        transferredBytes: batch.files.fold(
+          0,
+          (sum, file) => sum + file.confirmedOffset,
+        ),
+        currentFileIndex: currentFileIndex,
+        currentFilename: currentFilename,
+        bytesPerSecond: bytesPerSecond,
+        transferId: batch.transferId,
+      ),
+    );
+  }
+
+  double? _bytesPerSecond(PhoneTransferBatch batch, Stopwatch stopwatch) {
+    if (stopwatch.elapsedMilliseconds == 0) return null;
+    final transferred = batch.files.fold(
+      0,
+      (sum, file) => sum + file.confirmedOffset,
+    );
+    return transferred / (stopwatch.elapsedMilliseconds / 1000);
   }
 
   Map<String, Object?> _offerJson(PhoneTransferBatch batch) => {
