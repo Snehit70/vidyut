@@ -68,7 +68,9 @@ export class TransferCoordinator {
     switch (message.kind) {
       case "transfer_offer":
         await this.acceptPhoneOffer(message.offer);
-        await this.activateNext();
+        if (!await this.activateNext()) {
+          this.republishActivePhoneFile(message.offer.transferId);
+        }
         return;
       case "transfer_accept":
         await this.acceptReceiverOffset(
@@ -137,6 +139,25 @@ export class TransferCoordinator {
       });
     }
     return claim;
+  }
+
+  private republishActivePhoneFile(transferId: string): boolean {
+    const batch = this.options.queue.snapshot().batches.find(
+      (candidate) => candidate.transferId === transferId,
+    );
+    const file = batch?.files.find((candidate) => candidate.status === "active");
+    if (!batch || !file || batch.direction !== "phone_to_laptop") return false;
+    this.options.publishControl({
+      v: 1,
+      kind: "transfer_accept",
+      transferId: batch.transferId,
+      fileId: file.fileId,
+      confirmedOffset: file.confirmedOffset,
+      ...(this.options.maxChunkBytes === undefined
+        ? {}
+        : { maxChunkBytes: this.options.maxChunkBytes }),
+    });
+    return true;
   }
 
   private async acceptPhoneOffer(offer: TransferOffer): Promise<void> {

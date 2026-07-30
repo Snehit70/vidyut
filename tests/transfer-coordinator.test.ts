@@ -96,6 +96,62 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("re-advertises persisted progress when a phone retries an active offer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-resume-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const offer = {
+      transferId: "transfer_retry_1234",
+      batchId: "batch_retry_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_retry_123456",
+          filename: "report.pdf",
+          mime: "application/pdf",
+          size: bytes.length,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: await sha256Hex(bytes),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await queue.confirmProgress(offer.transferId, offer.files[0]!.fileId, 2);
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: 2,
+        maxChunkBytes: 1024 * 1024,
+      },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("rejects over-limit offers without persisting them", async () => {
     const queue = await memoryQueue();
     const controls: TransferControlMessage[] = [];
