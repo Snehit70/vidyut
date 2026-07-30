@@ -333,7 +333,15 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     }
 
     const confirmedOffset = offset + plaintext.byteLength;
-    await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
+    if (confirmedOffset === record.size) {
+      await this.queue.beginVerification(
+        transferId,
+        fileId,
+        confirmedOffset,
+      );
+    } else {
+      await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
+    }
     this.publishControl({
       v: 1,
       kind: "transfer_progress",

@@ -84,6 +84,24 @@ describe("durable transfer queue", () => {
     expect(queue.snapshot().batches[0]!.status).toBe("completed");
   });
 
+  test("persists verification separately from an untouched active file", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("empty.bin", 0)],
+    });
+    const fileId = batch.files[0]!.fileId;
+    await queue.claimNext();
+
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await queue.beginVerification(batch.transferId, fileId, 0);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("verifying");
+
+    await queue.complete(batch.transferId, fileId, batch.files[0]!.sha256);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
+  });
+
   test("continues a batch after one file fails and retries only failures", async () => {
     const queue = await memoryQueue();
     const batch = await queue.enqueue({

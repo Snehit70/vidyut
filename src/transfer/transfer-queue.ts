@@ -10,6 +10,7 @@ import { isTransferOffer } from "../shared/wire";
 export type TransferFileStatus =
   | "queued"
   | "active"
+  | "verifying"
   | "paused"
   | "completed"
   | "failed"
@@ -204,7 +205,9 @@ export class TransferQueue {
     await this.expire();
     if (
       this.state.batches.some((batch) =>
-        batch.files.some((file) => file.status === "active"),
+        batch.files.some(
+          (file) => file.status === "active" || file.status === "verifying",
+        ),
       )
     ) {
       return undefined;
@@ -260,8 +263,8 @@ export class TransferQueue {
     verifiedSha256: string,
   ): Promise<void> {
     const { batch, file } = this.findFile(transferId, fileId);
-    if (file.status !== "active") {
-      throw new Error("Only an active file can complete.");
+    if (file.status !== "active" && file.status !== "verifying") {
+      throw new Error("Only an active or verifying file can complete.");
     }
     if (file.confirmedOffset !== file.size) {
       throw new Error("A file cannot complete before every byte is confirmed.");
@@ -271,6 +274,26 @@ export class TransferQueue {
     }
     file.status = "completed";
     delete file.errorCode;
+    this.deriveBatchStatus(batch);
+    await this.persist();
+  }
+
+  async beginVerification(
+    transferId: string,
+    fileId: string,
+    confirmedOffset: number,
+  ): Promise<void> {
+    const { batch, file } = this.findFile(transferId, fileId);
+    if (file.status !== "active") {
+      throw new Error("Only an active file can begin verification.");
+    }
+    if (confirmedOffset !== file.size || confirmedOffset < file.confirmedOffset) {
+      throw new RangeError(
+        "Verification can begin only after every byte is confirmed.",
+      );
+    }
+    file.confirmedOffset = confirmedOffset;
+    file.status = "verifying";
     this.deriveBatchStatus(batch);
     await this.persist();
   }
@@ -386,14 +409,22 @@ export class TransferQueue {
     let changed = false;
     for (const batch of this.state.batches) {
       if (isTerminalBatch(batch.status)) continue;
+      let batchChanged = false;
       for (const file of batch.files) {
-        if (file.status === "active") {
+        if (
+          file.status === "verifying" ||
+          (file.status === "active" && file.confirmedOffset === file.size)
+        ) {
+          file.status = "failed";
+          file.errorCode = "verification_interrupted";
+          batchChanged = true;
+        } else if (file.status === "active") {
           file.status = "queued";
-          changed = true;
+          batchChanged = true;
         }
       }
-      if (batch.status === "active") {
-        batch.status = "queued";
+      if (batchChanged) {
+        this.deriveBatchStatus(batch);
         changed = true;
       }
     }
@@ -407,7 +438,11 @@ export class TransferQueue {
       batch.status = "cancelled";
     } else if (batch.files.every((file) => isTerminalFile(file.status))) {
       batch.status = "completed_with_issues";
-    } else if (batch.files.some((file) => file.status === "active")) {
+    } else if (
+      batch.files.some(
+        (file) => file.status === "active" || file.status === "verifying",
+      )
+    ) {
       batch.status = "active";
     } else if (
       batch.files.some((file) => file.status === "queued")

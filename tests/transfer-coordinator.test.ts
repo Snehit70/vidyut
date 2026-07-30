@@ -336,7 +336,7 @@ describe("transfer coordinator", () => {
       { v: 1, kind: "transfer_offer", offer },
       "phone",
     );
-    await queue.confirmProgress(
+    await queue.beginVerification(
       offer.transferId,
       offer.files[0]!.fileId,
       bytes.length,
@@ -406,6 +406,27 @@ describe("transfer coordinator", () => {
     );
     controls.length = 0;
 
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    expect(controls).toEqual([
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: 0,
+        maxChunkBytes: 1024 * 1024,
+      },
+    ]);
+
+    await queue.beginVerification(
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+    );
+    controls.length = 0;
     await coordinator.handleControl(
       { v: 1, kind: "transfer_offer", offer },
       "phone",
