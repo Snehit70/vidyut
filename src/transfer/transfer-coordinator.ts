@@ -239,36 +239,61 @@ export class TransferCoordinator {
         return "rejected";
       }
     }
-    const requiredBytes = existingBatch
-      ? existingBatch.files.reduce(
+    const availableBytes = await (
+      this.options.availableBytes ?? defaultAvailableBytes
+    )(this.options.destinationDirectory);
+    const currentBatch = existingBatch
+      ? this.options.queue
+          .snapshot()
+          .batches.find((batch) => batch.transferId === offer.transferId)
+      : undefined;
+    const requiredBytes = currentBatch
+      ? currentBatch.files.reduce(
           (total, file) =>
             file.status === "queued" ||
             file.status === "active" ||
+            file.status === "verifying" ||
+            file.status === "finalizing" ||
             file.status === "paused"
               ? total + Math.max(0, file.size - file.confirmedOffset)
               : total,
           0,
         )
       : offer.files.reduce((total, file) => total + file.size, 0);
-    const availableBytes = await (
-      this.options.availableBytes ?? defaultAvailableBytes
-    )(this.options.destinationDirectory);
     if (requiredBytes > availableBytes) {
-      for (const file of offer.files) {
-        if (existingBatch) {
+      if (currentBatch) {
+        for (const file of currentBatch.files) {
+          if (file.status === "completed") {
+            this.publishPhoneComplete(offer.transferId, file);
+            continue;
+          }
+          if (file.status === "failed") {
+            this.publishPhoneFailure(offer.transferId, file);
+            continue;
+          }
           await this.options.queue.fail(
             offer.transferId,
             file.fileId,
             "insufficient_storage",
           );
+          this.options.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId: offer.transferId,
+            fileId: file.fileId,
+            code: "insufficient_storage",
+          });
         }
-        this.options.publishControl({
-          v: 1,
-          kind: "transfer_file_failed",
-          transferId: offer.transferId,
-          fileId: file.fileId,
-          code: "insufficient_storage",
-        });
+      } else {
+        for (const file of offer.files) {
+          this.options.publishControl({
+            v: 1,
+            kind: "transfer_file_failed",
+            transferId: offer.transferId,
+            fileId: file.fileId,
+            code: "insufficient_storage",
+          });
+        }
       }
       return "rejected";
     }

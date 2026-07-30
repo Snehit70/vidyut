@@ -372,16 +372,32 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         const finalizedPath = await finalizeWithoutOverwrite(
           partialPath,
           record.destinationPath,
+          (candidate) =>
+            this.queue.beginFinalization(transferId, fileId, candidate),
         );
-        await this.queue.setDestinationPath(
-          transferId,
-          fileId,
-          finalizedPath,
-        );
+        await this.queue.complete(transferId, fileId, verifiedSha256);
+        await unlink(partialPath).catch(() => undefined);
         const modified = new Date(record.lastModifiedMs);
         await utimes(finalizedPath, modified, modified).catch(() => undefined);
-        await this.queue.complete(transferId, fileId, verifiedSha256);
       } catch {
+        const current = this.lookup(transferId, fileId, "phone_to_laptop");
+        if (current?.status === "completed") {
+          this.publishControl({
+            v: 1,
+            kind: "transfer_file_complete",
+            transferId,
+            fileId,
+            sha256: record.sha256,
+          });
+          await this.onFileTerminal();
+          return Response.json({ confirmedOffset, complete: true });
+        }
+        if (current?.finalizingPath) {
+          await unlinkFinalizedLink(
+            partialPath,
+            current.finalizingPath,
+          );
+        }
         await unlink(partialPath).catch(() => undefined);
         await this.queue.fail(
           transferId,
@@ -453,6 +469,7 @@ async function hashFile(path: string): Promise<string> {
 async function finalizeWithoutOverwrite(
   partialPath: string,
   requestedPath: string,
+  beforeLink: (candidate: string) => Promise<void>,
 ): Promise<string> {
   const extension = extname(requestedPath);
   const stem = basename(requestedPath, extension);
@@ -462,9 +479,9 @@ async function finalizeWithoutOverwrite(
       suffix === 0
         ? requestedPath
         : join(parent, `${stem} (${suffix})${extension}`);
+    await beforeLink(candidate);
     try {
       await link(partialPath, candidate);
-      await unlink(partialPath);
       return candidate;
     } catch (error) {
       if (
@@ -479,6 +496,23 @@ async function finalizeWithoutOverwrite(
     }
   }
   throw new Error("Could not resolve a collision-free destination.");
+}
+
+async function unlinkFinalizedLink(
+  partialPath: string,
+  finalizedPath: string,
+): Promise<void> {
+  try {
+    const [partial, finalized] = await Promise.all([
+      stat(partialPath),
+      stat(finalizedPath),
+    ]);
+    if (partial.dev === finalized.dev && partial.ino === finalized.ino) {
+      await unlink(finalizedPath);
+    }
+  } catch {
+    // A missing or unrelated destination must never be removed.
+  }
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

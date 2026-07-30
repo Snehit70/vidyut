@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -148,6 +148,42 @@ describe("durable transfer queue", () => {
     const restarted = await TransferQueue.open({ storage });
     expect(restarted.snapshot().batches[0]!.files[0]!.status).toBe("failed");
     await expect(stat(partial)).rejects.toThrow();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("recovers a verified file linked before queue completion", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-finalize-recovery-"));
+    const path = join(dir, "queue.json");
+    const destination = join(dir, "report.bin");
+    const finalized = join(dir, "report (1).bin");
+    const storage = new JsonTransferQueueStorage(path);
+    const queue = await TransferQueue.open({ storage });
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("report.bin"), destinationPath: destination }],
+    });
+    const claimed = (await queue.claimNext())!;
+    const partial = partialPathFor(destination, claimed.file.fileId);
+    await writeFile(partial, new Uint8Array(10));
+    await queue.beginVerification(
+      batch.transferId,
+      claimed.file.fileId,
+      claimed.file.size,
+    );
+    await queue.beginFinalization(
+      batch.transferId,
+      claimed.file.fileId,
+      finalized,
+    );
+    await link(partial, finalized);
+
+    const restarted = await TransferQueue.open({ storage });
+    const recovered = restarted.snapshot().batches[0]!.files[0]!;
+    expect(recovered.status).toBe("completed");
+    expect(recovered.destinationPath).toBe(finalized);
+    await expect(stat(partial)).rejects.toThrow();
+    expect((await stat(finalized)).size).toBe(10);
     await rm(dir, { recursive: true, force: true });
   });
 

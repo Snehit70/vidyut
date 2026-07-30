@@ -1,4 +1,11 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   TransferDirection,
@@ -12,6 +19,7 @@ export type TransferFileStatus =
   | "queued"
   | "active"
   | "verifying"
+  | "finalizing"
   | "paused"
   | "completed"
   | "failed"
@@ -29,6 +37,7 @@ export type TransferBatchStatus =
 export interface TransferFileRecord extends TransferFileOffer {
   sourcePath?: string;
   destinationPath?: string;
+  finalizingPath?: string;
   maxChunkBytes?: number;
   status: TransferFileStatus;
   confirmedOffset: number;
@@ -207,7 +216,10 @@ export class TransferQueue {
     if (
       this.state.batches.some((batch) =>
         batch.files.some(
-          (file) => file.status === "active" || file.status === "verifying",
+          (file) =>
+            file.status === "active" ||
+            file.status === "verifying" ||
+            file.status === "finalizing",
         ),
       )
     ) {
@@ -264,14 +276,24 @@ export class TransferQueue {
     verifiedSha256: string,
   ): Promise<void> {
     const { batch, file } = this.findFile(transferId, fileId);
-    if (file.status !== "active" && file.status !== "verifying") {
-      throw new Error("Only an active or verifying file can complete.");
+    if (
+      file.status !== "active" &&
+      file.status !== "verifying" &&
+      file.status !== "finalizing"
+    ) {
+      throw new Error(
+        "Only an active, verifying, or finalizing file can complete.",
+      );
     }
     if (file.confirmedOffset !== file.size) {
       throw new Error("A file cannot complete before every byte is confirmed.");
     }
     if (verifiedSha256 !== file.sha256) {
       throw new Error("Whole-file hash does not match the offer.");
+    }
+    if (file.finalizingPath) {
+      file.destinationPath = file.finalizingPath;
+      delete file.finalizingPath;
     }
     file.status = "completed";
     delete file.errorCode;
@@ -299,6 +321,22 @@ export class TransferQueue {
     await this.persist();
   }
 
+  async beginFinalization(
+    transferId: string,
+    fileId: string,
+    destinationPath: string,
+  ): Promise<void> {
+    if (!destinationPath) throw new Error("Final destination cannot be empty.");
+    const { batch, file } = this.findFile(transferId, fileId);
+    if (file.status !== "verifying" && file.status !== "finalizing") {
+      throw new Error("Only a verifying file can begin finalization.");
+    }
+    file.status = "finalizing";
+    file.finalizingPath = destinationPath;
+    this.deriveBatchStatus(batch);
+    await this.persist();
+  }
+
   async fail(
     transferId: string,
     fileId: string,
@@ -308,6 +346,7 @@ export class TransferQueue {
     if (isTerminalFile(file.status)) return;
     file.status = "failed";
     file.errorCode = errorCode;
+    delete file.finalizingPath;
     this.deriveBatchStatus(batch);
     await this.persist();
   }
@@ -369,6 +408,7 @@ export class TransferQueue {
         file.status = "queued";
         file.confirmedOffset = 0;
         delete file.errorCode;
+        delete file.finalizingPath;
       }
     }
     this.deriveBatchStatus(batch);
@@ -412,7 +452,31 @@ export class TransferQueue {
       if (isTerminalBatch(batch.status)) continue;
       let batchChanged = false;
       for (const file of batch.files) {
-        if (
+        if (file.status === "finalizing") {
+          const partialPath = file.destinationPath
+            ? partialPathFor(file.destinationPath, file.fileId)
+            : undefined;
+          if (
+            partialPath &&
+            file.finalizingPath &&
+            await pathsShareInode(partialPath, file.finalizingPath)
+          ) {
+            const finalizedPath = file.finalizingPath;
+            file.destinationPath = finalizedPath;
+            delete file.finalizingPath;
+            delete file.errorCode;
+            file.status = "completed";
+            await unlink(partialPath).catch(() => undefined);
+          } else {
+            if (partialPath) {
+              await unlink(partialPath).catch(() => undefined);
+            }
+            delete file.finalizingPath;
+            file.status = "failed";
+            file.errorCode = "finalization_interrupted";
+          }
+          batchChanged = true;
+        } else if (
           file.status === "verifying" ||
           (file.status === "active" &&
             file.size > 0 &&
@@ -448,7 +512,10 @@ export class TransferQueue {
       batch.status = "completed_with_issues";
     } else if (
       batch.files.some(
-        (file) => file.status === "active" || file.status === "verifying",
+        (file) =>
+          file.status === "active" ||
+          file.status === "verifying" ||
+          file.status === "finalizing",
       )
     ) {
       batch.status = "active";
@@ -555,6 +622,15 @@ function isTerminalBatch(status: TransferBatchStatus): boolean {
     status === "cancelled" ||
     status === "expired"
   );
+}
+
+async function pathsShareInode(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
 }
 
 function assertSnapshot(snapshot: TransferQueueSnapshot): void {

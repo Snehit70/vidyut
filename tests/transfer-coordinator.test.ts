@@ -210,6 +210,69 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("recomputes remaining bytes after an asynchronous storage check", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-storage-race-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const bytes = new Uint8Array([1, 2, 3]);
+    const offer = {
+      transferId: "transfer_storage_race_1234",
+      batchId: "batch_storage_race_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_storage_race_123456",
+        filename: "report.pdf",
+        mime: "application/pdf",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    let storageChecks = 0;
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => {
+        storageChecks += 1;
+        if (storageChecks === 2) {
+          await queue.confirmProgress(
+            offer.transferId,
+            offer.files[0]!.fileId,
+            2,
+          );
+        }
+        return storageChecks === 1 ? 3 : 1;
+      },
+      publishControl: (message) => controls.push(message),
+    });
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([{
+      v: 1,
+      kind: "transfer_accept",
+      transferId: offer.transferId,
+      fileId: offer.files[0]!.fileId,
+      confirmedOffset: 2,
+      maxChunkBytes: 1024 * 1024,
+    }]);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("replays a persisted offer despite a lower current size limit", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-limit-"));
     const queue = await memoryQueue();
