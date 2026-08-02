@@ -79,7 +79,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
       screenOnEvents: ScreenOnEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
       autoSendPublish: sharePublisher.publish,
-      transferReceiver: PhoneTransferReceiver(
+      transferReceiverFactory: (_) => PhoneTransferReceiver(
         history: TransferHistoryRepository(
           SharedPreferencesTransferHistoryStorage(),
         ),
