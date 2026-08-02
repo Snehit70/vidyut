@@ -11,6 +11,54 @@ import 'package:vidyut/src/transfer/phone_transfer_receiver.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
 
 void main() {
+  test(
+    'dispose aborts an in-flight chunk receive',
+    () async {
+      final requestSeen = Completer<void>();
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serving = server.listen((request) {
+        if (!requestSeen.isCompleted) requestSeen.complete();
+        // Keep the response open until the receiver closes its HttpClient.
+        request.listen((_) {});
+      });
+      final root = await Directory.systemTemp.createTemp(
+        'vidyut-phone-receive-cancel-',
+      );
+      final transport = _ReceiverTransport();
+      final pairing = PairingCode(
+        host: '127.0.0.1',
+        port: server.port,
+        secret: 'pairing-secret',
+      );
+      final connection = RelayConnection(
+        pairing: pairing,
+        deviceId: 'phone',
+        transport: transport,
+      );
+      final receiver = PhoneTransferReceiver(
+        history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        rootDirectory: () async => root,
+      );
+
+      receiver.start(connection, pairing);
+      await connection.start();
+      transport.receive(_offer(size: 1));
+      await requestSeen.future;
+
+      final stopwatch = Stopwatch()..start();
+      await receiver.dispose();
+      stopwatch.stop();
+
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+
+      await connection.close();
+      await server.close(force: true);
+      await serving.cancel();
+      await root.delete(recursive: true);
+    },
+    timeout: const Timeout(Duration(seconds: 3)),
+  );
+
   test('downloads, verifies and records a laptop file', () async {
     final bytes = [1, 2, 3];
     final crypto = TransferCrypto(random: Random(7));
@@ -122,6 +170,30 @@ void main() {
     await serving.cancel();
     await root.delete(recursive: true);
   });
+}
+
+Map<String, Object?> _offer({required int size}) {
+  return {
+    'v': 1,
+    'kind': 'transfer_offer',
+    'offer': {
+      'transferId': 'transfer_1234567890',
+      'batchId': 'batch_123456789012',
+      'origin': 'laptop',
+      'direction': 'laptop_to_phone',
+      'createdAtMs': 1753689600000,
+      'files': [
+        {
+          'fileId': 'file_1234567890123',
+          'filename': 'report.bin',
+          'mime': 'application/octet-stream',
+          'size': size,
+          'lastModifiedMs': 1753689500000,
+          'sha256': List.filled(64, '0').join(),
+        },
+      ],
+    },
+  };
 }
 
 class _ReceiverTransport implements RelayTransport {
