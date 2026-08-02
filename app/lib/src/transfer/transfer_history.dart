@@ -495,8 +495,10 @@ class TransferHistoryRepository {
   TransferHistoryRepository(this._storage);
 
   final TransferHistoryStorage _storage;
+  Future<void> _writeTail = Future<void>.value();
 
   Future<List<PhoneTransferBatch>> load() async {
+    await _writeTail;
     final batches = <PhoneTransferBatch>[];
     for (final raw in (await _storage.readAll()).values) {
       try {
@@ -515,10 +517,23 @@ class TransferHistoryRepository {
     return batches;
   }
 
-  Future<void> upsert(PhoneTransferBatch batch) =>
-      _storage.writeBatch(batch.transferId, jsonEncode(batch.toJson()));
+  Future<void> upsert(PhoneTransferBatch batch) {
+    final next = _writeTail.then(
+      (_) => _storage.writeBatch(batch.transferId, jsonEncode(batch.toJson())),
+    );
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
 
-  Future<void> remove(String transferId) => _storage.removeBatch(transferId);
+  Future<void> remove(String transferId) {
+    final next = _writeTail.then((_) => _storage.removeBatch(transferId));
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
 
-  Future<void> clear() => _storage.clear();
+  Future<void> clear() {
+    final next = _writeTail.then((_) => _storage.clear());
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
 }
