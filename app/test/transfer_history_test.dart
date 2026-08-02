@@ -68,6 +68,37 @@ void main() {
     expect(await repository.load(), isEmpty);
   });
 
+  test('round-trips compact timing without changing transfer metadata', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_timing_123456',
+      filename: 'timed.bin',
+      mime: 'application/octet-stream',
+      size: 4,
+      lastModifiedMs: 9,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 4,
+      timing: const TransferTimingSummary(
+        wallAnchorMs: 1_800_000_000_000,
+        attempts: [
+          TransferAttemptTiming(
+            attempt: 0,
+            stages: {
+              TransferTimingStage.sourceHash: (startMs: 3, endMs: 18),
+              TransferTimingStage.durableCompletion: (startMs: 22, endMs: 24),
+            },
+          ),
+        ],
+      ),
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.toJson(), file.toJson());
+    expect(decoded.status, PhoneTransferStatus.completed);
+    expect(decoded.confirmedOffset, 4);
+  });
+
   test('round-trips structured failure context', () {
     final file = PhoneTransferFile(
       fileId: 'file_1234567890123',

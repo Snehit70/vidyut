@@ -152,16 +152,21 @@ class VidyutFiles {
   Future<VidyutStagedSource> stageSource(
     String uri, {
     int? maximumBytes,
+    String? operationId,
   }) async {
     final raw = await _channel.invokeMethod<Object?>('stageSource', {
       'uri': uri,
       ...?maximumBytes == null ? null : {'maximumBytes': maximumBytes},
+      ...?operationId == null ? null : {'operationId': operationId},
     });
     if (raw is! Map) {
       throw const FormatException('Android returned an invalid staged source.');
     }
     return VidyutStagedSource.fromMap(Map<Object?, Object?>.from(raw));
   }
+
+  Future<void> cancelStage(String operationId) =>
+      _channel.invokeMethod<void>('cancelStage', {'operationId': operationId});
 
   Future<Uint8List> readSourceAt(
     String uri, {

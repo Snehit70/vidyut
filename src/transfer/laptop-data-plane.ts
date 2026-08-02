@@ -16,7 +16,7 @@ import {
 } from "../shared/transfer-crypto";
 import type { TransferControlMessage } from "../shared/wire";
 import type { TransferFileRecord } from "./transfer-queue";
-import { TransferQueue } from "./transfer-queue";
+import { TransferQueue, transferTimingStage } from "./transfer-queue";
 import { TransferHttpDataPlane } from "./http-data-plane";
 import {
   legacyTransferChunkBytes,
@@ -314,7 +314,29 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       }
       throw error;
     }
+    const hasTimingStage = (stage: string): boolean =>
+      record.timing?.attempts.at(-1)?.stages[stage] !== undefined;
+    const firstPayloadStarted = !hasTimingStage(
+        transferTimingStage.firstPayloadByte,
+      );
+    const lastPayloadStarted =
+      offset + plaintextBytes === record.size &&
+      !hasTimingStage(transferTimingStage.lastPayloadByte);
     try {
+      if (firstPayloadStarted) {
+        await this.queue.markStage(
+          transferId,
+          fileId,
+          transferTimingStage.firstPayloadByte,
+        );
+      }
+      if (lastPayloadStarted) {
+        await this.queue.markStage(
+          transferId,
+          fileId,
+          transferTimingStage.lastPayloadByte,
+        );
+      }
       if (plaintext.byteLength > 0) {
         const result = await destination.write(
           plaintext,
@@ -332,6 +354,23 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       await destination.sync();
     } finally {
       await destination.close();
+    }
+
+    if (firstPayloadStarted) {
+      await this.queue.markStage(
+        transferId,
+        fileId,
+        transferTimingStage.firstPayloadByte,
+        true,
+      );
+    }
+    if (lastPayloadStarted) {
+      await this.queue.markStage(
+        transferId,
+        fileId,
+        transferTimingStage.lastPayloadByte,
+        true,
+      );
     }
 
     const confirmedOffset = offset + plaintext.byteLength;

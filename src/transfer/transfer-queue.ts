@@ -42,7 +42,27 @@ export interface TransferFileRecord extends TransferFileOffer {
   status: TransferFileStatus;
   confirmedOffset: number;
   errorCode?: string;
+  timing?: TransferTimingSummary;
 }
+
+export interface TransferTimingSummary {
+  v: 1;
+  wallAnchorMs: number;
+  offerWallMs?: number;
+  acceptWallMs?: number;
+  attempts: Array<{
+    attempt: number;
+    stages: Record<string, { startMs: number; endMs?: number }>;
+  }>;
+}
+
+export const transferTimingStage = {
+  firstPayloadByte: "first_payload_byte",
+  lastPayloadByte: "last_payload_byte",
+  receiverVerification: "receiver_verification",
+  publishFinalization: "publish_finalization",
+  durableCompletion: "durable_completion",
+} as const;
 
 export interface TransferBatchRecord {
   transferId: string;
@@ -84,25 +104,29 @@ export interface TransferClaim {
 const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
 export class TransferQueue {
+  private readonly monotonicAnchors = new Map<string, number>();
   private constructor(
     private readonly storage: TransferQueueStorage,
     private state: TransferQueueSnapshot,
     private readonly now: () => number,
     private readonly id: (prefix: string) => string,
+    private readonly monotonicNow: () => number,
   ) {}
 
   static async open({
     storage,
     now = Date.now,
     id = defaultId,
+    monotonicNow = () => performance.now(),
   }: {
     storage: TransferQueueStorage;
     now?: () => number;
     id?: (prefix: string) => string;
+    monotonicNow?: () => number;
   }): Promise<TransferQueue> {
     const state = (await storage.load()) ?? { v: 1, batches: [] };
     assertSnapshot(state);
-    const queue = new TransferQueue(storage, state, now, id);
+    const queue = new TransferQueue(storage, state, now, id, monotonicNow);
     await queue.recoverInterrupted();
     await queue.expire();
     return queue;
@@ -139,6 +163,7 @@ export class TransferQueue {
         fileId: this.id("file"),
         status: "queued",
         confirmedOffset: 0,
+        timing: this.newTiming(),
       })),
     };
     assertBatch(batch);
@@ -175,6 +200,7 @@ export class TransferQueue {
         destinationPath: destinationPaths.get(file.fileId)!,
         status: "queued",
         confirmedOffset: 0,
+        timing: this.newTiming(),
       })),
     };
     assertBatch(batch);
@@ -296,6 +322,20 @@ export class TransferQueue {
       delete file.finalizingPath;
     }
     file.status = "completed";
+    this.markTiming(
+      transferId,
+      fileId,
+      file,
+      transferTimingStage.publishFinalization,
+      true,
+    );
+    this.markTiming(
+      transferId,
+      fileId,
+      file,
+      transferTimingStage.durableCompletion,
+      true,
+    );
     delete file.errorCode;
     this.deriveBatchStatus(batch);
     await this.persist();
@@ -317,6 +357,13 @@ export class TransferQueue {
     }
     file.confirmedOffset = confirmedOffset;
     file.status = "verifying";
+    this.markTiming(
+      transferId,
+      fileId,
+      file,
+      transferTimingStage.receiverVerification,
+      false,
+    );
     this.deriveBatchStatus(batch);
     await this.persist();
   }
@@ -332,8 +379,34 @@ export class TransferQueue {
       throw new Error("Only a verifying file can begin finalization.");
     }
     file.status = "finalizing";
+    this.markTiming(
+      transferId,
+      fileId,
+      file,
+      transferTimingStage.receiverVerification,
+      true,
+    );
+    this.markTiming(
+      transferId,
+      fileId,
+      file,
+      transferTimingStage.publishFinalization,
+      false,
+    );
     file.finalizingPath = destinationPath;
     this.deriveBatchStatus(batch);
+    await this.persist();
+  }
+
+  async markStage(
+    transferId: string,
+    fileId: string,
+    stage: string,
+    end = false,
+  ): Promise<void> {
+    const { batch, file } = this.findFile(transferId, fileId);
+    this.markTiming(transferId, fileId, file, stage, end);
+    this.touch(batch);
     await this.persist();
   }
 
@@ -558,6 +631,42 @@ export class TransferQueue {
   private async persist(): Promise<void> {
     await this.storage.save(this.snapshot());
   }
+
+  private newTiming(): TransferTimingSummary {
+    return { v: 1, wallAnchorMs: this.now(), attempts: [] };
+  }
+
+  private markTiming(
+    transferId: string,
+    fileId: string,
+    file: TransferFileRecord,
+    stage: string,
+    end: boolean,
+  ): void {
+    const timing = file.timing ?? this.newTiming();
+    let attempt = timing.attempts.at(-1);
+    if (!attempt) {
+      attempt = { attempt: 0, stages: {} };
+      timing.attempts.push(attempt);
+    }
+    const now = this.monotonicNow();
+    const key = `${transferId}:${fileId}`;
+    const anchor = this.monotonicAnchors.get(key) ?? now;
+    this.monotonicAnchors.set(key, anchor);
+    const elapsed = Math.max(0, Math.round(now - anchor));
+    const current = attempt.stages[stage];
+    const startMs = current?.startMs ?? elapsed;
+    attempt.stages[stage] = {
+      startMs,
+      ...(end
+        ? { endMs: Math.max(startMs, elapsed) }
+        : current?.endMs === undefined
+        ? {}
+        : { endMs: current.endMs }),
+    };
+    timing.attempts = timing.attempts.slice(-4);
+    file.timing = timing;
+  }
 }
 
 function offersMatch(left: TransferOffer, right: TransferOffer): boolean {
@@ -665,5 +774,17 @@ function assertBatch(batch: TransferBatchRecord): void {
     ) {
       throw new Error("Invalid transfer file progress.");
     }
+    if (file.timing !== undefined && !isTiming(file.timing)) {
+      throw new Error("Invalid transfer timing summary.");
+    }
   }
+}
+
+function isTiming(value: TransferTimingSummary): boolean {
+  return value.v === 1 && Number.isSafeInteger(value.wallAnchorMs) &&
+    Array.isArray(value.attempts) && value.attempts.length <= 4 &&
+    value.attempts.every((attempt) => Number.isSafeInteger(attempt.attempt) &&
+      Object.values(attempt.stages).every((span) =>
+        Number.isFinite(span.startMs) &&
+        (span.endMs === undefined || span.endMs >= span.startMs)));
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "benchmark:capture": "bun scripts/capture-transfer-benchmark.ts",
     "build:relay": "bun build ./src/relay/cli.ts --compile --outfile dist/vidyut-relay",
     "install:relay": "bash scripts/install-relay.sh"
   },

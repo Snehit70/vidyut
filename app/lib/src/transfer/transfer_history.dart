@@ -29,6 +29,155 @@ enum PhoneTransferSourceKind { externalPath, androidDocumentUri, managedStage }
 
 enum PhoneTransferSourceOwnership { external, managed }
 
+typedef MonotonicClock = int Function();
+
+abstract final class TransferTimingStage {
+  static const pickerCallback = 'picker_callback';
+  static const durableQueueCard = 'durable_queue_card';
+  static const firstVisiblePublication = 'first_visible_publication';
+  static const sourceOpenProbe = 'source_open_probe';
+  static const fallbackStage = 'fallback_stage';
+  static const sourceHash = 'source_hash';
+  static const offerSent = 'offer_sent';
+  static const acceptReceived = 'accept_received';
+  static const firstPayloadByte = 'first_payload_byte';
+  static const lastPayloadByte = 'last_payload_byte';
+  static const receiverVerification = 'receiver_verification';
+  static const publishFinalization = 'publish_finalization';
+  static const durableCompletion = 'durable_completion';
+}
+
+/// Privacy-safe timing for one file attempt. Values are elapsed milliseconds
+/// from [wallAnchorMs]; the process-local monotonic origin is never persisted.
+class TransferAttemptTiming {
+  const TransferAttemptTiming({required this.attempt, required this.stages});
+
+  final int attempt;
+  final Map<String, ({int startMs, int? endMs})> stages;
+
+  TransferAttemptTiming mark(String stage, int elapsedMs, {bool end = false}) {
+    final current = stages[stage];
+    final startMs = current?.startMs ?? elapsedMs;
+    return TransferAttemptTiming(
+      attempt: attempt,
+      stages: {
+        ...stages,
+        stage: (
+          startMs: startMs,
+          endMs: end
+              ? (elapsedMs < startMs ? startMs : elapsedMs)
+              : current?.endMs,
+        ),
+      },
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'attempt': attempt,
+    'stages': stages.map(
+      (name, span) => MapEntry(name, {
+        'startMs': span.startMs,
+        if (span.endMs != null) 'endMs': span.endMs,
+      }),
+    ),
+  };
+
+  static TransferAttemptTiming? fromJson(Object? value) {
+    if (value is! Map || value['attempt'] is! int || value['stages'] is! Map) {
+      return null;
+    }
+    final stages = <String, ({int startMs, int? endMs})>{};
+    for (final entry in (value['stages'] as Map).entries) {
+      final span = entry.value;
+      if (entry.key is String && span is Map && span['startMs'] is int) {
+        stages[entry.key as String] = (
+          startMs: span['startMs'] as int,
+          endMs: span['endMs'] as int?,
+        );
+      }
+    }
+    return TransferAttemptTiming(
+      attempt: value['attempt'] as int,
+      stages: stages,
+    );
+  }
+}
+
+class TransferTimingSummary {
+  const TransferTimingSummary({
+    required this.wallAnchorMs,
+    required this.attempts,
+    this.offerWallMs,
+    this.acceptWallMs,
+  });
+
+  final int wallAnchorMs;
+  final int? offerWallMs;
+  final int? acceptWallMs;
+  final List<TransferAttemptTiming> attempts;
+
+  TransferTimingSummary mark(
+    int attempt,
+    String stage,
+    int elapsedMs, {
+    bool end = false,
+  }) {
+    final items = [...attempts];
+    final index = items.indexWhere((item) => item.attempt == attempt);
+    final item =
+        (index < 0
+                ? TransferAttemptTiming(attempt: attempt, stages: const {})
+                : items[index])
+            .mark(stage, elapsedMs, end: end);
+    if (index < 0) {
+      items.add(item);
+    } else {
+      items[index] = item;
+    }
+    return TransferTimingSummary(
+      wallAnchorMs: wallAnchorMs,
+      offerWallMs: offerWallMs,
+      acceptWallMs: acceptWallMs,
+      attempts: items.length <= 4 ? items : items.sublist(items.length - 4),
+    );
+  }
+
+  TransferTimingSummary withWallEvents({int? offerWallMs, int? acceptWallMs}) =>
+      TransferTimingSummary(
+        wallAnchorMs: wallAnchorMs,
+        offerWallMs: offerWallMs ?? this.offerWallMs,
+        acceptWallMs: acceptWallMs ?? this.acceptWallMs,
+        attempts: attempts,
+      );
+
+  Map<String, Object?> toJson() => {
+    'v': 1,
+    'wallAnchorMs': wallAnchorMs,
+    if (offerWallMs != null) 'offerWallMs': offerWallMs,
+    if (acceptWallMs != null) 'acceptWallMs': acceptWallMs,
+    'attempts': attempts.map((item) => item.toJson()).toList(),
+  };
+
+  static TransferTimingSummary? fromJson(Object? value) {
+    if (value is! Map || value['v'] != 1 || value['wallAnchorMs'] is! int) {
+      return null;
+    }
+    final attempts =
+        (value['attempts'] is List ? value['attempts'] as List : const [])
+            .map(TransferAttemptTiming.fromJson)
+            .whereType<TransferAttemptTiming>()
+            .toList();
+    return TransferTimingSummary(
+      wallAnchorMs: value['wallAnchorMs'] as int,
+      offerWallMs: value['offerWallMs'] as int?,
+      acceptWallMs: value['acceptWallMs'] as int?,
+      attempts: attempts.length <= 4
+          ? attempts
+          : attempts.sublist(attempts.length - 4),
+    );
+  }
+}
+
 /// Durable locator for the bytes behind a logical transfer file.
 ///
 /// Native handles are deliberately absent: a URI or managed-stage key can be
@@ -95,6 +244,7 @@ class PhoneTransferFile {
     this.preparationStartedAt,
     this.preparationAttempt = 0,
     this.cancellationRequestedAt,
+    this.timing,
   });
 
   final String fileId;
@@ -121,6 +271,7 @@ class PhoneTransferFile {
   final int? preparationStartedAt;
   final int preparationAttempt;
   final int? cancellationRequestedAt;
+  final TransferTimingSummary? timing;
 
   Duration? get preparationElapsed {
     final started = preparationStartedAt;
@@ -156,6 +307,7 @@ class PhoneTransferFile {
     int? preparationAttempt,
     int? cancellationRequestedAt,
     bool clearCancellationRequestedAt = false,
+    TransferTimingSummary? timing,
   }) {
     return PhoneTransferFile(
       fileId: fileId,
@@ -191,6 +343,7 @@ class PhoneTransferFile {
       cancellationRequestedAt: clearCancellationRequestedAt
           ? null
           : cancellationRequestedAt ?? this.cancellationRequestedAt,
+      timing: timing ?? this.timing,
     );
   }
 
@@ -230,6 +383,7 @@ class PhoneTransferFile {
       'preparationAttempt': preparationAttempt,
     if (cancellationRequestedAt != null)
       'cancellationRequestedAt': cancellationRequestedAt,
+    if (timing != null) 'timing': timing!.toJson(),
   };
 
   bool get _implicitLegacyPreparation =>
@@ -286,6 +440,7 @@ class PhoneTransferFile {
       cancellationRequestedAt: json['cancellationRequestedAt'] is int
           ? json['cancellationRequestedAt']! as int
           : null,
+      timing: TransferTimingSummary.fromJson(json['timing']),
     );
   }
 }

@@ -48,7 +48,13 @@ abstract interface class PhoneTransferSourceReader {
 
   Future<String> hashSha256(String uri);
 
-  Future<VidyutStagedSource> stage(String uri, {required int maximumBytes});
+  Future<VidyutStagedSource> stage(
+    String uri, {
+    required int maximumBytes,
+    String? operationId,
+  });
+
+  Future<void> cancelStage(String operationId) async {}
 
   Future<List<int>> readAt(
     String uri, {
@@ -75,8 +81,19 @@ class VidyutFilesSourceReader implements PhoneTransferSourceReader {
   Future<String> hashSha256(String uri) => files.hashSource(uri);
 
   @override
-  Future<VidyutStagedSource> stage(String uri, {required int maximumBytes}) =>
-      files.stageSource(uri, maximumBytes: maximumBytes);
+  Future<VidyutStagedSource> stage(
+    String uri, {
+    required int maximumBytes,
+    String? operationId,
+  }) => files.stageSource(
+    uri,
+    maximumBytes: maximumBytes,
+    operationId: operationId,
+  );
+
+  @override
+  Future<void> cancelStage(String operationId) =>
+      files.cancelStage(operationId);
 
   @override
   Future<List<int>> readAt(
@@ -104,7 +121,27 @@ class PreparationCancelled implements Exception {
 
 class _PreparationToken {
   bool cancelled = false;
-  void cancel() => cancelled = true;
+  Future<void> Function(String operationId)? _cancelStage;
+  String? _operationId;
+
+  void registerStageCancellation(
+    String operationId,
+    Future<void> Function(String operationId) cancelStage,
+  ) {
+    _cancelStage = (id) => cancelStage(id);
+    _operationId = operationId;
+    if (cancelled) unawaited(_cancelStage!(operationId));
+  }
+
+  void cancel() {
+    cancelled = true;
+    final cancelStage = _cancelStage;
+    final operationId = _operationId;
+    if (cancelStage != null && operationId != null) {
+      unawaited(cancelStage(operationId));
+    }
+  }
+
   void check() {
     if (cancelled) throw const PreparationCancelled();
   }
@@ -191,6 +228,8 @@ class PhoneTransferSender {
     this.networkAllowed,
     this.acceptanceTimeout = const Duration(minutes: 5),
     PhoneTransferSourceReader? sourceReader,
+    this.monotonicClock,
+    this.wallClock,
     this.onBatchCreated,
     this.reconnectBackoff = const [
       Duration(seconds: 1),
@@ -211,6 +250,8 @@ class PhoneTransferSender {
   final Future<bool> Function()? networkAllowed;
   final Duration acceptanceTimeout;
   final PhoneTransferSourceReader sourceReader;
+  final MonotonicClock? monotonicClock;
+  final MonotonicClock? wallClock;
   final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchCreated;
   final List<Duration> reconnectBackoff;
   final _progressController =
@@ -226,12 +267,24 @@ class PhoneTransferSender {
   final _cancelledFiles = <String>{};
   final _lastPreparationPersist = <String, int>{};
   final _lastPreparationPublish = <String, int>{};
+  final _timingAnchors = <String, int>{};
+  final _defaultMonotonicClock = Stopwatch()..start();
   Future<void>? _resumeRun;
 
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
   Stream<PhoneTransferBatch> get batchesCreated =>
       _batchCreatedController.stream;
   Stream<PhoneTransferBatch> get snapshots => _snapshotController.stream;
+
+  int _monotonicNow() =>
+      monotonicClock?.call() ?? _defaultMonotonicClock.elapsedMilliseconds;
+
+  int _wallNow() => wallClock?.call() ?? DateTime.now().millisecondsSinceEpoch;
+
+  TransferTimingSummary _newTiming(int wallAnchorMs) => TransferTimingSummary(
+    wallAnchorMs: wallAnchorMs,
+    attempts: [const TransferAttemptTiming(attempt: 0, stages: {})],
+  );
 
   Future<void> _emitSnapshots() async {
     for (final batch in await history.load()) {
@@ -398,7 +451,7 @@ class PhoneTransferSender {
     if (sources.isEmpty) {
       throw const FormatException('Select at least one file.');
     }
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _wallNow();
     var batch = PhoneTransferBatch(
       transferId: _id('transfer'),
       batchId: _id('batch'),
@@ -423,14 +476,50 @@ class PhoneTransferSender {
               preparationPhase: PhoneTransferPreparationPhase.readingSelection,
               preparationStartedAt: now,
               preparationAttempt: 0,
+              timing: _newTiming(now),
             ),
           )
           .toList(growable: false),
     );
+    for (var index = 0; index < batch.files.length; index++) {
+      batch = _markTimingValue(
+        batch,
+        index,
+        TransferTimingStage.pickerCallback,
+        end: true,
+      );
+      batch = _markTimingValue(
+        batch,
+        index,
+        TransferTimingStage.durableQueueCard,
+      );
+    }
     // Persist before provider metadata, probing, hashing, policy, pairing, or
     // relay work. This is the durable boundary used by restart recovery.
     await history.upsert(batch);
+    for (var index = 0; index < batch.files.length; index++) {
+      batch = _markTimingValue(
+        batch,
+        index,
+        TransferTimingStage.durableQueueCard,
+        end: true,
+      );
+      batch = _markTimingValue(
+        batch,
+        index,
+        TransferTimingStage.firstVisiblePublication,
+      );
+    }
     _snapshotController.add(batch);
+    for (var index = 0; index < batch.files.length; index++) {
+      batch = _markTimingValue(
+        batch,
+        index,
+        TransferTimingStage.firstVisiblePublication,
+        end: true,
+      );
+    }
+    await history.upsert(batch);
     _batchCreatedController.add(batch);
     await onBatchCreated?.call(batch);
     unawaited(_schedulePreparation(batch, sources));
@@ -454,6 +543,10 @@ class PhoneTransferSender {
   ) async {
     var batch = initial;
     final retainedUris = <String>[];
+    final pairingFuture = pairingRepository.load();
+    Future<_TransferSession?>? setupFuture;
+    AsyncError? setupError;
+    _TransferSession? handedOffSession;
     try {
       for (final source in sources) {
         if (source.uri != null && source.persisted) {
@@ -468,6 +561,14 @@ class PhoneTransferSender {
       if (networkAllowed != null && !await networkAllowed!()) {
         throw StateError(
           'File transfers are disabled on this metered network.',
+        );
+      }
+      if (sources.any((source) => source.uri != null && source.persisted)) {
+        // Authentication and relay setup do not depend on the source digest.
+        // Keep the offer itself behind the preparation barrier.
+        setupFuture = _prepareRelaySession(
+          pairingFuture,
+          onError: (error) => setupError = error,
         );
       }
       final fileIndexes = batch.files
@@ -506,6 +607,9 @@ class PhoneTransferSender {
                 preparationTotalBytes: total,
                 token: token,
               );
+            },
+            onTiming: (stage, end) async {
+              batch = await _markTiming(batch, index, stage, end: end);
             },
           );
           token.check();
@@ -554,6 +658,7 @@ class PhoneTransferSender {
         }
       }
       if (sourceBlocked) {
+        await pairingFuture;
         batch = batch.copyWith(
           status: PhoneTransferStatus.waitingForSource,
           updatedAtMs: DateTime.now().millisecondsSinceEpoch,
@@ -570,11 +675,16 @@ class PhoneTransferSender {
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
       );
       await history.upsert(batch);
-      final pairing = await pairingRepository.load();
+      final pairing = await pairingFuture;
       if (pairing == null) {
         throw StateError('Pair with a laptop before sending files.');
       }
-      await _send(pairing, batch);
+      final preparedSession = setupFuture == null ? null : await setupFuture;
+      if (setupError case final error?) {
+        Error.throwWithStackTrace(error.error, error.stackTrace);
+      }
+      handedOffSession = preparedSession;
+      await _send(pairing, batch, preparedSession: preparedSession);
     } on PreparationCancelled {
       final latest = (await history.load())
           .where((item) => item.transferId == batch.transferId)
@@ -609,9 +719,43 @@ class PhoneTransferSender {
       await history.upsert(batch);
       _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
     } finally {
+      final pendingSetup = setupFuture;
+      if (pendingSetup != null) {
+        try {
+          final prepared = await pendingSetup;
+          if (prepared != null && !identical(prepared, handedOffSession)) {
+            await prepared.close();
+          }
+        } catch (_) {
+          // The preparation error already owns the durable failure state.
+        }
+      }
+      if (setupFuture == null) {
+        try {
+          await pairingFuture;
+        } catch (_) {
+          // The preparation error already owns the durable failure state.
+        }
+      }
       for (final uri in retainedUris) {
         await sourceReader.release(uri);
       }
+    }
+  }
+
+  Future<_TransferSession?> _prepareRelaySession(
+    Future<PairingCode?> pairingFuture, {
+    required void Function(AsyncError error) onError,
+  }) async {
+    try {
+      final pairing = await pairingFuture;
+      if (pairing == null) {
+        throw StateError('Pair with a laptop before sending files.');
+      }
+      return await _connectSession(pairing);
+    } on Object catch (error, stackTrace) {
+      onError(AsyncError(error, stackTrace));
+      return null;
     }
   }
 
@@ -634,10 +778,17 @@ class PhoneTransferSender {
       int? total,
     )
     onPhase,
+    required Future<void> Function(String stage, bool end) onTiming,
   }) async {
     if (source.path case final path?) {
       final file = File(path);
-      final info = await file.stat();
+      await onTiming(TransferTimingStage.sourceOpenProbe, false);
+      late final FileStat info;
+      try {
+        info = await file.stat();
+      } finally {
+        await onTiming(TransferTimingStage.sourceOpenProbe, true);
+      }
       token.check();
       if (info.type != FileSystemEntityType.file) {
         throw FormatException('Only regular files can be sent: $path');
@@ -648,12 +799,18 @@ class PhoneTransferSender {
         );
       }
       await onPhase(PhoneTransferPreparationPhase.hashing, 0, info.size);
-      final digest = await _hashFile(
-        file,
-        token: token,
-        onBytes: (bytes) =>
-            onPhase(PhoneTransferPreparationPhase.hashing, bytes, info.size),
-      );
+      await onTiming(TransferTimingStage.sourceHash, false);
+      late final String digest;
+      try {
+        digest = await _hashFile(
+          file,
+          token: token,
+          onBytes: (bytes) =>
+              onPhase(PhoneTransferPreparationPhase.hashing, bytes, info.size),
+        );
+      } finally {
+        await onTiming(TransferTimingStage.sourceHash, true);
+      }
       return (
         size: info.size,
         lastModifiedMs: info.modified.millisecondsSinceEpoch,
@@ -664,14 +821,35 @@ class PhoneTransferSender {
     }
     final uri = source.uri!;
     token.check();
-    final probe = await sourceReader.probe(uri);
+    await onTiming(TransferTimingStage.sourceOpenProbe, false);
+    late final VidyutSourceProbe probe;
+    try {
+      probe = await sourceReader.probe(uri);
+    } finally {
+      await onTiming(TransferTimingStage.sourceOpenProbe, true);
+    }
     token.check();
     if (!source.persisted ||
         !probe.seekable ||
         !probe.sizeKnown ||
         probe.size < 0) {
       await onPhase(PhoneTransferPreparationPhase.staging, 0, null);
-      final staged = await sourceReader.stage(uri, maximumBytes: maxBytes);
+      await onTiming(TransferTimingStage.fallbackStage, false);
+      final operationId = _id('stage');
+      token.registerStageCancellation(operationId, sourceReader.cancelStage);
+      late final VidyutStagedSource staged;
+      try {
+        staged = await sourceReader.stage(
+          uri,
+          maximumBytes: maxBytes,
+          operationId: operationId,
+        );
+      } catch (_) {
+        token.check();
+        rethrow;
+      } finally {
+        await onTiming(TransferTimingStage.fallbackStage, true);
+      }
       token.check();
       await onPhase(
         PhoneTransferPreparationPhase.staging,
@@ -698,7 +876,13 @@ class PhoneTransferSender {
     }
     await onPhase(PhoneTransferPreparationPhase.hashing, 0, probe.size);
     token.check();
-    final digest = await sourceReader.hashSha256(uri);
+    await onTiming(TransferTimingStage.sourceHash, false);
+    late final String digest;
+    try {
+      digest = await sourceReader.hashSha256(uri);
+    } finally {
+      await onTiming(TransferTimingStage.sourceHash, true);
+    }
     token.check();
     await onPhase(
       PhoneTransferPreparationPhase.hashing,
@@ -915,8 +1099,9 @@ class PhoneTransferSender {
 
   Future<PhoneTransferBatch> _send(
     PairingCode pairing,
-    PhoneTransferBatch initial,
-  ) async {
+    PhoneTransferBatch initial, {
+    _TransferSession? preparedSession,
+  }) async {
     var batch = initial.copyWith(
       status: PhoneTransferStatus.active,
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
@@ -938,9 +1123,25 @@ class PhoneTransferSender {
     _TransferSession? session;
     final stopwatch = Stopwatch();
     try {
-      final openedSession = await _openSession(pairing, batch);
+      for (var index = 0; index < batch.files.length; index++) {
+        batch = await _markTiming(batch, index, TransferTimingStage.offerSent);
+      }
+      final openedSession =
+          preparedSession ?? await _openSession(pairing, batch);
       session = openedSession;
       var activeSession = openedSession;
+      if (preparedSession != null) {
+        _sendOffer(openedSession, batch);
+      }
+      for (var index = 0; index < batch.files.length; index++) {
+        batch = await _markTiming(
+          batch,
+          index,
+          TransferTimingStage.offerSent,
+          end: true,
+          wallEventMs: _wallNow(),
+        );
+      }
 
       for (var index = 0; index < batch.files.length; index++) {
         var transferFile = batch.files[index];
@@ -970,13 +1171,30 @@ class PhoneTransferSender {
           transferFile = transferFile.copyWith(clearPreparationPhase: true);
           batch = await _replaceFile(batch, index, transferFile);
         }
-        var acceptedSession = await _acceptWithReconnect(
-          pairing: pairing,
-          batch: batch,
-          transferFile: transferFile,
-          currentSession: activeSession,
-          timeout: acceptanceTimeout,
+        batch = await _markTiming(
+          batch,
+          index,
+          TransferTimingStage.acceptReceived,
         );
+        late _AcceptedSession acceptedSession;
+        try {
+          acceptedSession = await _acceptWithReconnect(
+            pairing: pairing,
+            batch: batch,
+            transferFile: transferFile,
+            currentSession: activeSession,
+            timeout: acceptanceTimeout,
+          );
+        } finally {
+          batch = await _markTiming(
+            batch,
+            index,
+            TransferTimingStage.acceptReceived,
+            end: true,
+            wallEventMs: _wallNow(),
+          );
+        }
+        transferFile = batch.files[index];
         if (_cancelledFiles.contains(
           '${batch.transferId}:${transferFile.fileId}',
         )) {
@@ -999,6 +1217,8 @@ class PhoneTransferSender {
         var effectiveChunkBytes = applied.effectiveChunkBytes;
         var lastPersistedOffset = offset;
         var remainingPutRetries = reconnectBackoff.length;
+        var firstPayloadMarked = false;
+        var lastPayloadMarked = false;
 
         if (!accepted.complete) {
           final sourcePath =
@@ -1050,6 +1270,23 @@ class PhoneTransferSender {
                 plaintext: plaintext,
                 pairingSecret: pairing.secret,
               );
+              if (!firstPayloadMarked) {
+                batch = await _markTiming(
+                  batch,
+                  index,
+                  TransferTimingStage.firstPayloadByte,
+                );
+                firstPayloadMarked = true;
+              }
+              if (offset + plaintext.length == transferFile.size &&
+                  !lastPayloadMarked) {
+                batch = await _markTiming(
+                  batch,
+                  index,
+                  TransferTimingStage.lastPayloadByte,
+                );
+                lastPayloadMarked = true;
+              }
               _ChunkResult result;
               try {
                 result = await _putChunk(
@@ -1161,6 +1398,22 @@ class PhoneTransferSender {
                 }
                 continue;
               }
+              if (firstPayloadMarked) {
+                batch = await _markTiming(
+                  batch,
+                  index,
+                  TransferTimingStage.firstPayloadByte,
+                  end: true,
+                );
+              }
+              if (result.complete && lastPayloadMarked) {
+                batch = await _markTiming(
+                  batch,
+                  index,
+                  TransferTimingStage.lastPayloadByte,
+                  end: true,
+                );
+              }
               if (result.confirmedOffset > transferFile.size ||
                   result.confirmedOffset > offset + plaintext.length ||
                   (result.complete &&
@@ -1196,12 +1449,38 @@ class PhoneTransferSender {
           } finally {
             await source?.close();
           }
+        } else {
+          batch = await _markTiming(
+            batch,
+            index,
+            TransferTimingStage.firstPayloadByte,
+            end: true,
+          );
+          batch = await _markTiming(
+            batch,
+            index,
+            TransferTimingStage.lastPayloadByte,
+            end: true,
+          );
         }
+        batch = await _markTiming(
+          batch,
+          index,
+          TransferTimingStage.durableCompletion,
+        );
+        transferFile = batch.files[index];
         transferFile = transferFile.copyWith(
           status: PhoneTransferStatus.completed,
           confirmedOffset: transferFile.size,
         );
         batch = await _replaceFile(batch, index, transferFile);
+        batch = await _markTiming(
+          batch,
+          index,
+          TransferTimingStage.durableCompletion,
+          end: true,
+        );
+        transferFile = batch.files[index];
         final reference = transferFile.sourceReference;
         if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
           await sourceReader.release(reference!.reference);
@@ -1260,6 +1539,17 @@ class PhoneTransferSender {
     PairingCode pairing,
     PhoneTransferBatch batch,
   ) async {
+    final session = await _connectSession(pairing);
+    try {
+      _sendOffer(session, batch);
+      return session;
+    } catch (_) {
+      await session.close();
+      rethrow;
+    }
+  }
+
+  Future<_TransferSession> _connectSession(PairingCode pairing) async {
     final connection = connectionFactory(pairing);
     final inbox = _TransferControlInbox(connection.transferControls);
     final session = _TransferSession(
@@ -1273,16 +1563,19 @@ class PhoneTransferSender {
       );
       await connection.start();
       await connected.timeout(const Duration(seconds: 10));
-      connection.sendTransferControl({
-        'v': 1,
-        'kind': 'transfer_offer',
-        'offer': _offerJson(batch),
-      });
       return session;
     } catch (_) {
       await session.close();
       rethrow;
     }
+  }
+
+  void _sendOffer(_TransferSession session, PhoneTransferBatch batch) {
+    session.connection.sendTransferControl({
+      'v': 1,
+      'kind': 'transfer_offer',
+      'offer': _offerJson(batch),
+    });
   }
 
   Future<_AcceptedSession> _acceptWithReconnect({
@@ -1496,6 +1789,50 @@ class PhoneTransferSender {
       _snapshotController.add(updated);
     }
     return updated;
+  }
+
+  PhoneTransferBatch _markTimingValue(
+    PhoneTransferBatch batch,
+    int index,
+    String stage, {
+    bool end = false,
+    int? wallEventMs,
+  }) {
+    final file = batch.files[index];
+    final key = '${batch.transferId}:${file.fileId}';
+    final anchor = _timingAnchors.putIfAbsent(key, _monotonicNow);
+    final elapsed = max(0, _monotonicNow() - anchor);
+    var timing = file.timing ?? _newTiming(_wallNow());
+    timing = timing.mark(file.preparationAttempt, stage, elapsed, end: end);
+    if (wallEventMs != null) {
+      timing = stage == TransferTimingStage.offerSent
+          ? timing.withWallEvents(offerWallMs: wallEventMs)
+          : stage == TransferTimingStage.acceptReceived
+          ? timing.withWallEvents(acceptWallMs: wallEventMs)
+          : timing;
+    }
+    final files = [...batch.files]..[index] = file.copyWith(timing: timing);
+    return batch.copyWith(files: files, updatedAtMs: _wallNow());
+  }
+
+  Future<PhoneTransferBatch> _markTiming(
+    PhoneTransferBatch batch,
+    int index,
+    String stage, {
+    bool end = false,
+    int? wallEventMs,
+  }) async {
+    return _replaceFile(
+      batch,
+      index,
+      _markTimingValue(
+        batch,
+        index,
+        stage,
+        end: end,
+        wallEventMs: wallEventMs,
+      ).files[index],
+    );
   }
 
   void _publish(PhoneTransferProgress value) {

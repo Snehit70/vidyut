@@ -54,6 +54,7 @@ class VidyutFilesPlugin :
     private var pendingResult: MethodChannel.Result? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val engineAttached = AtomicBoolean(false)
+    private val stageCancellations = java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean>()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         engineAttached.set(true)
@@ -152,6 +153,7 @@ class VidyutFilesPlugin :
             }
             "stageSource" -> {
                 val uri = call.argument<String>("uri")
+                val operationId = call.argument<String>("operationId") ?: UUID.randomUUID().toString()
                 val maximumBytes = call.argument<Number>("maximumBytes")?.toLong()
                     ?: DEFAULT_MAX_STAGE_BYTES
                 if (uri == null || maximumBytes < 0) {
@@ -159,13 +161,25 @@ class VidyutFilesPlugin :
                     return
                 }
                 ioExecutor.execute {
+                    val cancelled = AtomicBoolean(false)
+                    stageCancellations[operationId] = cancelled
                     try {
-                        if (engineAttached.get()) result.success(stageSource(Uri.parse(uri), maximumBytes))
+                        if (engineAttached.get()) result.success(stageSource(Uri.parse(uri), maximumBytes, cancelled))
                     } catch (error: Exception) {
                         if (engineAttached.get()) {
                             result.error("source-stage-failed", error.message, null)
                         }
+                    } finally {
+                        stageCancellations.remove(operationId)
                     }
+                }
+            }
+            "cancelStage" -> {
+                val operationId = call.argument<String>("operationId")
+                if (operationId == null) result.error("bad-args", "Missing operation ID.", null)
+                else {
+                    stageCancellations[operationId]?.set(true)
+                    result.success(null)
                 }
             }
             "readSourceAt" -> {
@@ -444,7 +458,7 @@ class VidyutFilesPlugin :
         }
     }
 
-    private fun stageSource(uri: Uri, maximumBytes: Long): Map<String, Any?> {
+    private fun stageSource(uri: Uri, maximumBytes: Long, cancelled: AtomicBoolean): Map<String, Any?> {
         val directory = File(context.filesDir, "vidyut-stages")
         check(directory.mkdirs() || directory.isDirectory) { "Could not create stage storage." }
         val id = UUID.randomUUID().toString()
@@ -458,6 +472,7 @@ class VidyutFilesPlugin :
                 DataOutputStream(BufferedOutputStream(partial.outputStream())).use { output ->
                     val buffer = ByteArray(STAGE_BLOCK_BYTES)
                     while (true) {
+                        check(!cancelled.get()) { "Source staging cancelled." }
                         val count = input.read(buffer)
                         if (count < 0) break
                         total += count
@@ -474,6 +489,7 @@ class VidyutFilesPlugin :
                     }
                 }
             }
+            check(!cancelled.get()) { "Source staging cancelled." }
             check(partial.renameTo(published)) { "Could not publish staged source." }
             return mapOf(
                 "reference" to "$STAGE_PREFIX$id",
@@ -482,7 +498,6 @@ class VidyutFilesPlugin :
             )
         } catch (error: Exception) {
             partial.delete()
-            published.delete()
             throw error
         }
     }
