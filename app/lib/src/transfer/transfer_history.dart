@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 enum PhoneTransferDirection { sent, received }
 
 enum PhoneTransferStatus {
+  preparing,
+  waitingForSource,
   queued,
   active,
   paused,
@@ -15,6 +17,51 @@ enum PhoneTransferStatus {
   expired,
 }
 
+enum PhoneTransferSourceKind { externalPath, androidDocumentUri, managedStage }
+
+enum PhoneTransferSourceOwnership { external, managed }
+
+/// Durable locator for the bytes behind a logical transfer file.
+///
+/// Native handles are deliberately absent: a URI or managed-stage key can be
+/// reopened after process death and reboot, while a descriptor cannot.
+class PhoneTransferSourceReference {
+  const PhoneTransferSourceReference({
+    required this.kind,
+    required this.reference,
+    required this.ownership,
+  });
+
+  final PhoneTransferSourceKind kind;
+  final String reference;
+  final PhoneTransferSourceOwnership ownership;
+
+  Map<String, Object?> toJson() => {
+    'kind': kind.name,
+    'reference': reference,
+    'ownership': ownership.name,
+  };
+
+  static PhoneTransferSourceReference? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final kind = value['kind'];
+    final reference = value['reference'];
+    final ownership = value['ownership'];
+    if (kind is! String || reference is! String || ownership is! String) {
+      return null;
+    }
+    try {
+      return PhoneTransferSourceReference(
+        kind: PhoneTransferSourceKind.values.byName(kind),
+        reference: reference,
+        ownership: PhoneTransferSourceOwnership.values.byName(ownership),
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+}
+
 class PhoneTransferFile {
   const PhoneTransferFile({
     required this.fileId,
@@ -22,9 +69,11 @@ class PhoneTransferFile {
     required this.mime,
     required this.size,
     required this.lastModifiedMs,
+    this.lastModifiedKnown = true,
     required this.sha256,
     required this.status,
     required this.confirmedOffset,
+    this.sourceReference,
     this.sourcePath,
     this.destinationPath,
     this.errorCode,
@@ -39,9 +88,12 @@ class PhoneTransferFile {
   final String mime;
   final int size;
   final int lastModifiedMs;
+  final bool lastModifiedKnown;
   final String sha256;
   final PhoneTransferStatus status;
   final int confirmedOffset;
+  final PhoneTransferSourceReference? sourceReference;
+  @Deprecated('Use sourceReference for new records.')
   final String? sourcePath;
   final String? destinationPath;
   final String? errorCode;
@@ -51,6 +103,10 @@ class PhoneTransferFile {
   final Map<String, Object?>? errorContext;
 
   PhoneTransferFile copyWith({
+    int? size,
+    int? lastModifiedMs,
+    bool? lastModifiedKnown,
+    String? sha256,
     PhoneTransferStatus? status,
     int? confirmedOffset,
     String? destinationPath,
@@ -59,17 +115,23 @@ class PhoneTransferFile {
     String? errorCategory,
     String? errorDetail,
     Map<String, Object?>? errorContext,
+    PhoneTransferSourceReference? sourceReference,
+    bool clearSourceReference = false,
     bool clearError = false,
   }) {
     return PhoneTransferFile(
       fileId: fileId,
       filename: filename,
       mime: mime,
-      size: size,
-      lastModifiedMs: lastModifiedMs,
-      sha256: sha256,
+      size: size ?? this.size,
+      lastModifiedMs: lastModifiedMs ?? this.lastModifiedMs,
+      lastModifiedKnown: lastModifiedKnown ?? this.lastModifiedKnown,
+      sha256: sha256 ?? this.sha256,
       status: status ?? this.status,
       confirmedOffset: confirmedOffset ?? this.confirmedOffset,
+      sourceReference: clearSourceReference
+          ? null
+          : sourceReference ?? this.sourceReference,
       sourcePath: sourcePath,
       destinationPath: destinationPath ?? this.destinationPath,
       errorCode: clearError ? null : errorCode ?? this.errorCode,
@@ -86,10 +148,16 @@ class PhoneTransferFile {
     'mime': mime,
     'size': size,
     'lastModifiedMs': lastModifiedMs,
+    if (!lastModifiedKnown) 'lastModifiedKnown': false,
     'sha256': sha256,
     'status': status.name,
     'confirmedOffset': confirmedOffset,
     if (sourcePath != null) 'sourcePath': sourcePath,
+    if (sourceReference != null &&
+        (sourcePath == null ||
+            sourceReference!.reference != sourcePath ||
+            sourceReference!.kind != PhoneTransferSourceKind.externalPath))
+      'source': sourceReference!.toJson(),
     if (destinationPath != null) 'destinationPath': destinationPath,
     if (errorCode != null) 'errorCode': errorCode,
     if (errorOrigin != null) 'errorOrigin': errorOrigin,
@@ -105,9 +173,13 @@ class PhoneTransferFile {
       mime: json['mime']! as String,
       size: json['size']! as int,
       lastModifiedMs: json['lastModifiedMs']! as int,
+      lastModifiedKnown: json['lastModifiedKnown'] != false,
       sha256: json['sha256']! as String,
       status: PhoneTransferStatus.values.byName(json['status']! as String),
       confirmedOffset: json['confirmedOffset']! as int,
+      sourceReference:
+          PhoneTransferSourceReference.fromJson(json['source']) ??
+          _legacySourceReference(json['sourcePath'] as String?),
       sourcePath: json['sourcePath'] as String?,
       destinationPath: json['destinationPath'] as String?,
       errorCode: json['errorCode'] as String?,
@@ -117,6 +189,23 @@ class PhoneTransferFile {
       errorContext: _errorContext(json['errorContext']),
     );
   }
+}
+
+PhoneTransferSourceReference? _legacySourceReference(String? path) {
+  if (path == null) return null;
+  final normalized = path.replaceAll('\\', '/');
+  final managed =
+      normalized.contains('/cache/vidyut-picker/') ||
+      normalized.contains('/cache/vidyut-stage/');
+  return PhoneTransferSourceReference(
+    kind: managed
+        ? PhoneTransferSourceKind.managedStage
+        : PhoneTransferSourceKind.externalPath,
+    reference: path,
+    ownership: managed
+        ? PhoneTransferSourceOwnership.managed
+        : PhoneTransferSourceOwnership.external,
+  );
 }
 
 Map<String, Object?>? _errorContext(Object? value) {

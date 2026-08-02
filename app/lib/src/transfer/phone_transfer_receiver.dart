@@ -253,9 +253,11 @@ class PhoneTransferReceiver {
           root,
           offeredFile.filename,
         );
-        await privateDestination.setLastModified(
-          DateTime.fromMillisecondsSinceEpoch(offeredFile.lastModifiedMs),
-        );
+        if (offeredFile.lastModifiedKnown) {
+          await privateDestination.setLastModified(
+            DateTime.fromMillisecondsSinceEpoch(offeredFile.lastModifiedMs),
+          );
+        }
         final destination = publisher == null
             ? privateDestination.path
             : await publisher!.publish(
@@ -405,6 +407,7 @@ class PhoneTransferReceiver {
               mime: file.mime,
               size: file.size,
               lastModifiedMs: file.lastModifiedMs,
+              lastModifiedKnown: file.lastModifiedKnown,
               sha256: file.sha256,
               status: PhoneTransferStatus.queued,
               confirmedOffset: 0,

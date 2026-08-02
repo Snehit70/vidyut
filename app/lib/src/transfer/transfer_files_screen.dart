@@ -32,6 +32,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   bool _sending = false;
   PhoneTransferProgress? _liveProgress;
   StreamSubscription<PhoneTransferProgress>? _progressSubscription;
+  StreamSubscription<PhoneTransferBatch>? _batchSubscription;
 
   @override
   void initState() {
@@ -39,6 +40,15 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     _search.addListener(_refreshView);
     _progressSubscription = widget.sender.progress.listen((progress) {
       if (mounted) setState(() => _liveProgress = progress);
+    });
+    _batchSubscription = widget.sender.batchesCreated.listen((batch) {
+      if (!mounted) return;
+      setState(() {
+        _batches = [
+          batch,
+          ..._batches.where((item) => item.transferId != batch.transferId),
+        ];
+      });
     });
     unawaited(_load());
   }
@@ -49,6 +59,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ..removeListener(_refreshView)
       ..dispose();
     unawaited(_progressSubscription?.cancel());
+    unawaited(_batchSubscription?.cancel());
     super.dispose();
   }
 
@@ -84,8 +95,12 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
             .map(
               (file) => PhoneTransferSource(
                 path: file.path,
+                uri: file.uri,
                 filename: file.filename,
                 mime: file.mime,
+                size: file.size,
+                lastModifiedMs: file.lastModifiedMs,
+                persisted: file.persisted,
               ),
             )
             .toList(),
@@ -630,6 +645,8 @@ class _EmptyFiles extends StatelessWidget {
 
 String _statusLabel(PhoneTransferStatus status) {
   return switch (status) {
+    PhoneTransferStatus.preparing => 'Preparing',
+    PhoneTransferStatus.waitingForSource => 'Waiting for source',
     PhoneTransferStatus.queued => 'Queued',
     PhoneTransferStatus.active => 'Transferring',
     PhoneTransferStatus.paused => 'Paused',

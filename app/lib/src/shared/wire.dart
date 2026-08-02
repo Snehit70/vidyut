@@ -145,6 +145,7 @@ class TransferFileOffer {
     required this.mime,
     required this.size,
     required this.lastModifiedMs,
+    this.lastModifiedKnown = true,
     required this.sha256,
   });
 
@@ -153,6 +154,7 @@ class TransferFileOffer {
   final String mime;
   final int size;
   final int lastModifiedMs;
+  final bool lastModifiedKnown;
   final String sha256;
 
   Map<String, Object?> toJson() => {
@@ -161,6 +163,7 @@ class TransferFileOffer {
     'mime': mime,
     'size': size,
     'lastModifiedMs': lastModifiedMs,
+    if (!lastModifiedKnown) 'lastModifiedKnown': false,
     'sha256': sha256,
   };
 
@@ -191,6 +194,7 @@ class TransferFileOffer {
       mime: _stringField(json, 'mime'),
       size: size,
       lastModifiedMs: lastModifiedMs,
+      lastModifiedKnown: json['lastModifiedKnown'] != false,
       sha256: sha256,
     );
   }

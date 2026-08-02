@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' as hashes;
+import 'package:vidyut_files/vidyut_files.dart';
 
 import '../pairing/pairing_code.dart';
 import '../pairing/pairing_repository.dart';
@@ -15,14 +16,77 @@ import 'transfer_history.dart';
 
 class PhoneTransferSource {
   const PhoneTransferSource({
-    required this.path,
+    this.path,
+    this.uri,
     required this.filename,
     required this.mime,
-  });
+    this.size,
+    this.lastModifiedMs,
+    this.persisted = false,
+  }) : assert(path != null || uri != null);
 
-  final String path;
+  final String? path;
+  final String? uri;
   final String filename;
   final String mime;
+  final int? size;
+  final int? lastModifiedMs;
+  final bool persisted;
+
+  PhoneTransferSourceReference get reference => PhoneTransferSourceReference(
+    kind: uri == null
+        ? PhoneTransferSourceKind.externalPath
+        : PhoneTransferSourceKind.androidDocumentUri,
+    reference: uri ?? path!,
+    ownership: PhoneTransferSourceOwnership.external,
+  );
+}
+
+abstract interface class PhoneTransferSourceReader {
+  Future<VidyutSourceProbe> probe(String uri);
+
+  Future<String> hashSha256(String uri);
+
+  Future<VidyutStagedSource> stage(String uri, {required int maximumBytes});
+
+  Future<List<int>> readAt(
+    String uri, {
+    required int offset,
+    required int length,
+  });
+
+  Future<void> release(String reference) async {}
+
+  Future<void> retain(String reference) async {}
+}
+
+class VidyutFilesSourceReader implements PhoneTransferSourceReader {
+  const VidyutFilesSourceReader([this.files = const VidyutFiles()]);
+
+  final VidyutFiles files;
+
+  @override
+  Future<VidyutSourceProbe> probe(String uri) => files.probeSource(uri);
+
+  @override
+  Future<String> hashSha256(String uri) => files.hashSource(uri);
+
+  @override
+  Future<VidyutStagedSource> stage(String uri, {required int maximumBytes}) =>
+      files.stageSource(uri, maximumBytes: maximumBytes);
+
+  @override
+  Future<List<int>> readAt(
+    String uri, {
+    required int offset,
+    required int length,
+  }) async => (await files.readSourceAt(uri, offset: offset, length: length));
+
+  @override
+  Future<void> release(String reference) => files.releaseSource(reference);
+
+  @override
+  Future<void> retain(String reference) => files.retainSource(reference);
 }
 
 typedef TransferRelayConnectionFactory =
@@ -83,13 +147,16 @@ class PhoneTransferSender {
     this.maximumFileBytes,
     this.networkAllowed,
     this.acceptanceTimeout = const Duration(minutes: 5),
+    PhoneTransferSourceReader? sourceReader,
+    this.onBatchCreated,
     this.reconnectBackoff = const [
       Duration(seconds: 1),
       Duration(seconds: 2),
       Duration(seconds: 4),
     ],
   }) : crypto = crypto ?? TransferCrypto(),
-       _random = random ?? Random.secure();
+       _random = random ?? Random.secure(),
+       sourceReader = sourceReader ?? const VidyutFilesSourceReader();
 
   final PairingRepository pairingRepository;
   final TransferRelayConnectionFactory connectionFactory;
@@ -100,15 +167,123 @@ class PhoneTransferSender {
   final Future<int> Function()? maximumFileBytes;
   final Future<bool> Function()? networkAllowed;
   final Duration acceptanceTimeout;
+  final PhoneTransferSourceReader sourceReader;
+  final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchCreated;
   final List<Duration> reconnectBackoff;
   final _progressController =
       StreamController<PhoneTransferProgress>.broadcast();
+  final _batchCreatedController =
+      StreamController<PhoneTransferBatch>.broadcast();
 
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
+  Stream<PhoneTransferBatch> get batchesCreated =>
+      _batchCreatedController.stream;
+
+  /// Reopens durable sources after an isolate/process restart. Native source
+  /// sessions are intentionally not reused; each URI or managed stage is
+  /// probed again before an unfinished offer resumes.
+  Future<void> resumePending() async {
+    final pairing = await pairingRepository.load();
+    if (pairing == null) return;
+    final maximum = maximumFileBytes == null
+        ? 1024 * 1024 * 1024
+        : await maximumFileBytes!();
+    for (var batch in await history.load()) {
+      if (batch.direction != PhoneTransferDirection.sent ||
+          (batch.status != PhoneTransferStatus.preparing &&
+              batch.status != PhoneTransferStatus.queued &&
+              batch.status != PhoneTransferStatus.active)) {
+        continue;
+      }
+      try {
+        for (var index = 0; index < batch.files.length; index++) {
+          final file = batch.files[index];
+          if (file.status != PhoneTransferStatus.preparing &&
+              file.sha256 != _unknownSha256) {
+            continue;
+          }
+          final source = _sourceForFile(file);
+          final prepared = await _prepareSource(source, maximum);
+          batch = await _replaceFile(
+            batch,
+            index,
+            file.copyWith(
+              size: prepared.size,
+              lastModifiedMs: prepared.lastModifiedMs,
+              lastModifiedKnown: prepared.lastModifiedKnown,
+              sha256: prepared.sha256,
+              status: PhoneTransferStatus.queued,
+              sourceReference: prepared.reference,
+            ),
+          );
+        }
+        batch = batch.copyWith(status: PhoneTransferStatus.queued);
+        await history.upsert(batch);
+        await _send(pairing, batch);
+      } on Object catch (error) {
+        batch = batch.copyWith(
+          status: PhoneTransferStatus.failed,
+          files: batch.files
+              .map(
+                (file) => file.status == PhoneTransferStatus.completed
+                    ? file
+                    : file.copyWith(
+                        status: PhoneTransferStatus.failed,
+                        errorCode: _errorCode(error),
+                        errorOrigin: _errorOrigin(error),
+                        errorCategory: _errorCategory(error),
+                        errorDetail: _errorDetail(error),
+                        errorContext: _errorContext(error),
+                      ),
+              )
+              .toList(growable: false),
+        );
+        await history.upsert(batch);
+      }
+    }
+  }
 
   Future<PhoneTransferBatch> enqueue(List<PhoneTransferSource> sources) async {
     if (sources.isEmpty) {
       throw const FormatException('Select at least one file.');
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var batch = PhoneTransferBatch(
+      transferId: _id('transfer'),
+      batchId: _id('batch'),
+      direction: PhoneTransferDirection.sent,
+      createdAtMs: now,
+      updatedAtMs: now,
+      status: PhoneTransferStatus.preparing,
+      files: sources
+          .map(
+            (source) => PhoneTransferFile(
+              fileId: _id('file'),
+              filename: _safeBasename(source.filename),
+              mime: source.mime,
+              size: source.size ?? 0,
+              lastModifiedMs: source.lastModifiedMs ?? 0,
+              lastModifiedKnown: source.lastModifiedMs != null,
+              sha256: _unknownSha256,
+              status: PhoneTransferStatus.preparing,
+              confirmedOffset: 0,
+              sourceReference: source.reference,
+              sourcePath: source.path,
+            ),
+          )
+          .toList(growable: false),
+    );
+    // Persist before provider metadata, probing, hashing, policy, pairing, or
+    // relay work. This is the durable boundary used by restart recovery.
+    await history.upsert(batch);
+    _batchCreatedController.add(batch);
+    await onBatchCreated?.call(batch);
+    final retainedUris = <String>[];
+    for (final source in sources) {
+      if (source.uri != null && source.persisted) {
+        await sourceReader.retain(source.uri!);
+        retainedUris.add(source.uri!);
+      }
     }
     _publish(
       PhoneTransferProgress(
@@ -118,92 +293,178 @@ class PhoneTransferSender {
         transferredBytes: 0,
       ),
     );
-    if (networkAllowed != null && !await networkAllowed!()) {
-      throw StateError('File transfers are disabled on this metered network.');
-    }
-    final pairing = await pairingRepository.load();
-    if (pairing == null) {
-      throw StateError('Pair with a laptop before sending files.');
-    }
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final files = <PhoneTransferFile>[];
-    final maxBytes = maximumFileBytes == null
-        ? 1024 * 1024 * 1024
-        : await maximumFileBytes!();
-    final prepared = <({PhoneTransferSource source, FileStat info})>[];
-    for (var index = 0; index < sources.length; index++) {
-      final source = sources[index];
-      final file = File(source.path);
-      final info = await file.stat();
-      if (info.type != FileSystemEntityType.file) {
-        throw FormatException('Only regular files can be sent: ${source.path}');
-      }
-      if (info.size > maxBytes) {
-        throw FormatException(
-          '${source.filename} exceeds the configured maximum file size.',
+    late PairingCode pairing;
+    try {
+      if (networkAllowed != null && !await networkAllowed!()) {
+        throw StateError(
+          'File transfers are disabled on this metered network.',
         );
       }
-      prepared.add((source: source, info: info));
-      _publish(
-        PhoneTransferProgress(
-          stage: PhoneTransferProgressStage.preparing,
-          fileCount: sources.length,
-          totalBytes: prepared.fold(0, (sum, value) => sum + value.info.size),
-          transferredBytes: 0,
-          currentFileIndex: index,
-          currentFilename: source.filename,
-        ),
-      );
-    }
-    final totalBytes = prepared.fold(0, (sum, value) => sum + value.info.size);
-    for (var index = 0; index < prepared.length; index++) {
-      final entry = prepared[index];
-      final source = entry.source;
-      final info = entry.info;
-      _publish(
-        PhoneTransferProgress(
-          stage: PhoneTransferProgressStage.preparing,
-          fileCount: sources.length,
-          totalBytes: totalBytes,
-          transferredBytes: 0,
-          currentFileIndex: index,
-          currentFilename: source.filename,
-        ),
-      );
-      files.add(
-        PhoneTransferFile(
-          fileId: _id('file'),
-          filename: _safeBasename(source.filename),
-          mime: source.mime,
-          size: info.size,
-          lastModifiedMs: info.modified.millisecondsSinceEpoch,
-          sha256: await _hashFile(File(source.path)),
+      final maxBytes = maximumFileBytes == null
+          ? 1024 * 1024 * 1024
+          : await maximumFileBytes!();
+      for (var index = 0; index < sources.length; index++) {
+        final source = sources[index];
+        final prepared = await _prepareSource(source, maxBytes);
+        _publish(
+          PhoneTransferProgress(
+            stage: PhoneTransferProgressStage.preparing,
+            fileCount: sources.length,
+            totalBytes: batch.files.fold(
+              prepared.size,
+              (sum, value) => sum + value.size,
+            ),
+            transferredBytes: 0,
+            currentFileIndex: index,
+            currentFilename: source.filename,
+          ),
+        );
+        final preparedFile = batch.files[index].copyWith(
+          size: prepared.size,
+          lastModifiedMs: prepared.lastModifiedMs,
+          lastModifiedKnown: prepared.lastModifiedKnown,
+          sha256: prepared.sha256,
           status: PhoneTransferStatus.queued,
-          confirmedOffset: 0,
-          sourcePath: source.path,
-        ),
+          sourceReference: prepared.reference,
+        );
+        batch = await _replaceFile(batch, index, preparedFile);
+      }
+      batch = batch.copyWith(
+        status: PhoneTransferStatus.queued,
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
       );
+      await history.upsert(batch);
+      final loadedPairing = await pairingRepository.load();
+      if (loadedPairing == null) {
+        throw StateError('Pair with a laptop before sending files.');
+      }
+      pairing = loadedPairing;
+    } catch (error) {
+      for (final uri in retainedUris) {
+        await sourceReader.release(uri);
+      }
+      batch = batch.copyWith(
+        status: PhoneTransferStatus.failed,
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        files: batch.files
+            .map(
+              (file) => file.status == PhoneTransferStatus.completed
+                  ? file
+                  : file.copyWith(
+                      status: PhoneTransferStatus.failed,
+                      errorCode: _errorCode(error),
+                      errorOrigin: _errorOrigin(error),
+                      errorCategory: _errorCategory(error),
+                      errorDetail: _errorDetail(error),
+                      errorContext: _errorContext(error),
+                    ),
+            )
+            .toList(growable: false),
+      );
+      await history.upsert(batch);
+      _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
+      rethrow;
     }
-    final batch = PhoneTransferBatch(
-      transferId: _id('transfer'),
-      batchId: _id('batch'),
-      direction: PhoneTransferDirection.sent,
-      createdAtMs: now,
-      updatedAtMs: now,
-      status: PhoneTransferStatus.queued,
-      files: files,
-    );
-    await history.upsert(batch);
+    final totalBytes = batch.files.fold(0, (sum, file) => sum + file.size);
     _publish(
       PhoneTransferProgress(
         stage: PhoneTransferProgressStage.connecting,
-        fileCount: files.length,
+        fileCount: batch.files.length,
         totalBytes: totalBytes,
         transferredBytes: 0,
         transferId: batch.transferId,
       ),
     );
     return _send(pairing, batch);
+  }
+
+  Future<
+    ({
+      int size,
+      int lastModifiedMs,
+      bool lastModifiedKnown,
+      String sha256,
+      PhoneTransferSourceReference? reference,
+    })
+  >
+  _prepareSource(PhoneTransferSource source, int maxBytes) async {
+    if (source.path case final path?) {
+      final file = File(path);
+      final info = await file.stat();
+      if (info.type != FileSystemEntityType.file) {
+        throw FormatException('Only regular files can be sent: $path');
+      }
+      if (info.size > maxBytes) {
+        throw FormatException(
+          '${source.filename} exceeds the configured maximum file size.',
+        );
+      }
+      return (
+        size: info.size,
+        lastModifiedMs: info.modified.millisecondsSinceEpoch,
+        lastModifiedKnown: true,
+        sha256: await _hashFile(file),
+        reference: null,
+      );
+    }
+    final uri = source.uri!;
+    final probe = await sourceReader.probe(uri);
+    if (!source.persisted ||
+        !probe.seekable ||
+        !probe.sizeKnown ||
+        probe.size < 0) {
+      final staged = await sourceReader.stage(uri, maximumBytes: maxBytes);
+      return (
+        size: staged.size,
+        lastModifiedMs: staged.lastModifiedMs ?? source.lastModifiedMs ?? 0,
+        lastModifiedKnown:
+            staged.lastModifiedMs != null || source.lastModifiedMs != null,
+        sha256: staged.sha256,
+        reference: PhoneTransferSourceReference(
+          kind: PhoneTransferSourceKind.managedStage,
+          reference: staged.reference,
+          ownership: PhoneTransferSourceOwnership.managed,
+        ),
+      );
+    }
+    if (probe.size > maxBytes) {
+      throw FormatException(
+        '${source.filename} exceeds the configured maximum file size.',
+      );
+    }
+    return (
+      size: probe.size,
+      lastModifiedMs: source.lastModifiedMs ?? 0,
+      lastModifiedKnown: source.lastModifiedMs != null,
+      sha256: await sourceReader.hashSha256(uri),
+      reference: null,
+    );
+  }
+
+  PhoneTransferSource _sourceForFile(PhoneTransferFile file) {
+    final reference = file.sourceReference;
+    final path =
+        file.sourcePath ??
+        (reference?.kind == PhoneTransferSourceKind.externalPath
+            ? reference?.reference
+            : null);
+    final uri =
+        reference?.kind == PhoneTransferSourceKind.androidDocumentUri ||
+            reference?.kind == PhoneTransferSourceKind.managedStage
+        ? reference?.reference
+        : null;
+    if (path == null && uri == null) {
+      throw StateError('${file.filename} is no longer available.');
+    }
+    return PhoneTransferSource(
+      path: path,
+      uri: uri,
+      filename: file.filename,
+      mime: file.mime,
+      size: file.size,
+      lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
+      persisted: uri != null,
+    );
   }
 
   Future<PhoneTransferBatch> retry(PhoneTransferBatch batch) async {
@@ -220,15 +481,41 @@ class PhoneTransferSender {
       (file) => file.status != PhoneTransferStatus.completed,
     )) {
       final sourcePath = transferFile.sourcePath;
-      if (sourcePath == null) {
-        throw StateError('${transferFile.filename} is no longer available.');
-      }
-      final source = await File(sourcePath).stat();
-      if (source.type != FileSystemEntityType.file ||
-          source.size != transferFile.size ||
-          source.modified.millisecondsSinceEpoch !=
-              transferFile.lastModifiedMs) {
-        throw StateError('${transferFile.filename} changed after selection.');
+      final sourceUri =
+          transferFile.sourceReference?.kind ==
+                  PhoneTransferSourceKind.androidDocumentUri ||
+              transferFile.sourceReference?.kind ==
+                  PhoneTransferSourceKind.managedStage
+          ? transferFile.sourceReference?.reference
+          : null;
+      if (sourceUri != null) {
+        final probe = await sourceReader.probe(sourceUri);
+        if (!probe.seekable ||
+            !probe.sizeKnown ||
+            probe.size != transferFile.size) {
+          throw StateError('${transferFile.filename} is no longer available.');
+        }
+        if (await sourceReader.hashSha256(sourceUri) != transferFile.sha256) {
+          throw StateError('${transferFile.filename} changed after selection.');
+        }
+      } else {
+        final path =
+            sourcePath ??
+            (transferFile.sourceReference?.kind ==
+                    PhoneTransferSourceKind.externalPath
+                ? transferFile.sourceReference?.reference
+                : null);
+        if (path == null) {
+          throw StateError('${transferFile.filename} is no longer available.');
+        }
+        final source = await File(path).stat();
+        if (source.type != FileSystemEntityType.file ||
+            source.size != transferFile.size ||
+            source.modified.millisecondsSinceEpoch !=
+                transferFile.lastModifiedMs ||
+            await _hashFile(File(path)) != transferFile.sha256) {
+          throw StateError('${transferFile.filename} changed after selection.');
+        }
       }
     }
     final pairing = await pairingRepository.load();
@@ -305,20 +592,42 @@ class PhoneTransferSender {
         var remainingPutRetries = reconnectBackoff.length;
 
         if (!accepted.complete) {
-          final sourcePath = transferFile.sourcePath;
-          if (sourcePath == null) {
+          final sourcePath =
+              transferFile.sourcePath ??
+              (transferFile.sourceReference?.kind ==
+                      PhoneTransferSourceKind.externalPath
+                  ? transferFile.sourceReference?.reference
+                  : null);
+          final sourceUri =
+              transferFile.sourceReference?.kind ==
+                      PhoneTransferSourceKind.androidDocumentUri ||
+                  transferFile.sourceReference?.kind ==
+                      PhoneTransferSourceKind.managedStage
+              ? transferFile.sourceReference?.reference
+              : null;
+          if (sourcePath == null && sourceUri == null) {
             throw StateError('Source file is unavailable.');
           }
-          final source = await File(sourcePath).open();
+          final source = sourcePath == null
+              ? null
+              : await File(sourcePath).open();
           try {
             while (!accepted.complete &&
                 (offset < transferFile.size || transferFile.size == 0)) {
-              await source.setPosition(offset);
+              if (source != null) await source.setPosition(offset);
               final remaining = transferFile.size - offset;
               final count = transferFile.size == 0
                   ? 0
                   : min(effectiveChunkBytes, remaining);
-              final plaintext = count == 0 ? <int>[] : await source.read(count);
+              final plaintext = count == 0
+                  ? <int>[]
+                  : sourceUri != null
+                  ? await sourceReader.readAt(
+                      sourceUri,
+                      offset: offset,
+                      length: count,
+                    )
+                  : await source!.read(count);
               if (plaintext.length != count) {
                 throw StateError('Source file changed during transfer.');
               }
@@ -476,7 +785,7 @@ class PhoneTransferSender {
               if (result.complete) break;
             }
           } finally {
-            await source.close();
+            await source?.close();
           }
         }
         transferFile = transferFile.copyWith(
@@ -484,6 +793,15 @@ class PhoneTransferSender {
           confirmedOffset: transferFile.size,
         );
         batch = await _replaceFile(batch, index, transferFile);
+        final reference = transferFile.sourceReference;
+        if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
+          await sourceReader.release(reference!.reference);
+          transferFile = transferFile.copyWith(clearSourceReference: true);
+          batch = await _replaceFile(batch, index, transferFile);
+        } else if (reference?.kind ==
+            PhoneTransferSourceKind.androidDocumentUri) {
+          await sourceReader.release(reference!.reference);
+        }
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.transferring,
@@ -817,6 +1135,7 @@ class PhoneTransferSender {
             'mime': file.mime,
             'size': file.size,
             'lastModifiedMs': file.lastModifiedMs,
+            if (!file.lastModifiedKnown) 'lastModifiedKnown': false,
             'sha256': file.sha256,
           },
         )
@@ -835,6 +1154,9 @@ class PhoneTransferSender {
     return '${prefix}_$hex';
   }
 }
+
+const _unknownSha256 =
+    '0000000000000000000000000000000000000000000000000000000000000000';
 
 class _ChunkResult {
   const _ChunkResult({required this.confirmedOffset, required this.complete});

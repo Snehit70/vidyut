@@ -99,4 +99,37 @@ void main() {
       'limitBytes': 1024 * 1024 * 1024,
     });
   });
+
+  test('round-trips durable URI sources without native handles', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_uri_123456',
+      filename: 'cloud.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 0,
+      lastModifiedKnown: false,
+      sha256: List.filled(64, 'b').join(),
+      status: PhoneTransferStatus.preparing,
+      confirmedOffset: 0,
+      sourceReference: const PhoneTransferSourceReference(
+        kind: PhoneTransferSourceKind.androidDocumentUri,
+        reference: 'content://provider/document/42',
+        ownership: PhoneTransferSourceOwnership.external,
+      ),
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.sourcePath, isNull);
+    expect(
+      decoded.sourceReference?.kind,
+      PhoneTransferSourceKind.androidDocumentUri,
+    );
+    expect(
+      decoded.sourceReference?.reference,
+      'content://provider/document/42',
+    );
+    expect(decoded.lastModifiedKnown, isFalse);
+    expect(decoded.toJson(), file.toJson());
+  });
 }

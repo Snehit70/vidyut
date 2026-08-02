@@ -36,6 +36,7 @@ export interface TransferFileOffer {
   mime: string;
   size: number;
   lastModifiedMs: number;
+  lastModifiedKnown?: boolean;
   sha256: string;
 }
 
@@ -208,6 +209,8 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
     file.mime.length > 0 &&
     isNonNegativeSafeInteger(file.size) &&
     isNonNegativeSafeInteger(file.lastModifiedMs) &&
+    (file.lastModifiedKnown === undefined ||
+      typeof file.lastModifiedKnown === "boolean") &&
     typeof file.sha256 === "string" &&
     sha256Pattern.test(file.sha256)
   );
