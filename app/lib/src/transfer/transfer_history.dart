@@ -28,6 +28,10 @@ class PhoneTransferFile {
     this.sourcePath,
     this.destinationPath,
     this.errorCode,
+    this.errorOrigin,
+    this.errorCategory,
+    this.errorDetail,
+    this.errorContext,
   });
 
   final String fileId;
@@ -41,12 +45,20 @@ class PhoneTransferFile {
   final String? sourcePath;
   final String? destinationPath;
   final String? errorCode;
+  final String? errorOrigin;
+  final String? errorCategory;
+  final String? errorDetail;
+  final Map<String, Object?>? errorContext;
 
   PhoneTransferFile copyWith({
     PhoneTransferStatus? status,
     int? confirmedOffset,
     String? destinationPath,
     String? errorCode,
+    String? errorOrigin,
+    String? errorCategory,
+    String? errorDetail,
+    Map<String, Object?>? errorContext,
     bool clearError = false,
   }) {
     return PhoneTransferFile(
@@ -61,6 +73,10 @@ class PhoneTransferFile {
       sourcePath: sourcePath,
       destinationPath: destinationPath ?? this.destinationPath,
       errorCode: clearError ? null : errorCode ?? this.errorCode,
+      errorOrigin: clearError ? null : errorOrigin ?? this.errorOrigin,
+      errorCategory: clearError ? null : errorCategory ?? this.errorCategory,
+      errorDetail: clearError ? null : errorDetail ?? this.errorDetail,
+      errorContext: clearError ? null : errorContext ?? this.errorContext,
     );
   }
 
@@ -76,6 +92,10 @@ class PhoneTransferFile {
     if (sourcePath != null) 'sourcePath': sourcePath,
     if (destinationPath != null) 'destinationPath': destinationPath,
     if (errorCode != null) 'errorCode': errorCode,
+    if (errorOrigin != null) 'errorOrigin': errorOrigin,
+    if (errorCategory != null) 'errorCategory': errorCategory,
+    if (errorDetail != null) 'errorDetail': errorDetail,
+    if (errorContext != null) 'errorContext': errorContext,
   };
 
   static PhoneTransferFile fromJson(Map<Object?, Object?> json) {
@@ -91,8 +111,17 @@ class PhoneTransferFile {
       sourcePath: json['sourcePath'] as String?,
       destinationPath: json['destinationPath'] as String?,
       errorCode: json['errorCode'] as String?,
+      errorOrigin: json['errorOrigin'] as String?,
+      errorCategory: json['errorCategory'] as String?,
+      errorDetail: json['errorDetail'] as String?,
+      errorContext: _errorContext(json['errorContext']),
     );
   }
+}
+
+Map<String, Object?>? _errorContext(Object? value) {
+  if (value is! Map) return null;
+  return value.map<String, Object?>((key, value) => MapEntry('$key', value));
 }
 
 class PhoneTransferBatch {

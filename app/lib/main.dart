@@ -658,6 +658,7 @@ class _PairingScreenState extends State<PairingScreen>
         builder: (_) => TransferFilesScreen(
           history: _transferHistory,
           sender: _transferSender,
+          onOpenSettings: _openSettings,
         ),
       ),
     );

@@ -12,10 +12,12 @@ class TransferFilesScreen extends StatefulWidget {
     super.key,
     required this.history,
     required this.sender,
+    this.onOpenSettings,
   });
 
   final TransferHistoryRepository history;
   final PhoneTransferSender sender;
+  final VoidCallback? onOpenSettings;
 
   @override
   State<TransferFilesScreen> createState() => _TransferFilesScreenState();
@@ -272,6 +274,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                                               .completedWithIssues
                                   ? () => _retry(batch)
                                   : null,
+                              onOpenSettings: widget.onOpenSettings,
                               onRemove: () => _remove(batch),
                             );
                           },
@@ -469,11 +472,17 @@ class _ProgressDetail extends StatelessWidget {
 }
 
 class _BatchCard extends StatelessWidget {
-  const _BatchCard({required this.batch, required this.onRemove, this.onRetry});
+  const _BatchCard({
+    required this.batch,
+    required this.onRemove,
+    this.onRetry,
+    this.onOpenSettings,
+  });
 
   final PhoneTransferBatch batch;
   final VoidCallback onRemove;
   final VoidCallback? onRetry;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -541,8 +550,59 @@ class _BatchCard extends StatelessWidget {
               const SizedBox(height: 5),
               Text('${_bytes(confirmed)} of ${_bytes(total)}'),
             ],
+            if (batch.status == PhoneTransferStatus.failed ||
+                batch.status == PhoneTransferStatus.completedWithIssues)
+              ...batch.files
+                  .where((file) => file.status == PhoneTransferStatus.failed)
+                  .map(
+                    (file) => _FailureDetail(
+                      file: file,
+                      onOpenSettings: onOpenSettings,
+                    ),
+                  ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _FailureDetail extends StatelessWidget {
+  const _FailureDetail({required this.file, this.onOpenSettings});
+
+  final PhoneTransferFile file;
+  final VoidCallback? onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final code = file.errorCode ?? 'transfer_failed';
+    final limit = file.errorContext?['limitBytes'];
+    final reason = code == 'file_too_large' && limit is int
+        ? '${_bytes(file.size)} exceeds the receiver limit of ${_bytes(limit)}.'
+        : _failureReason(file);
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Error: $code',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Palette.raspberry,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(reason),
+          if (code == 'file_too_large' && onOpenSettings != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: onOpenSettings,
+                child: const Text('Open file transfer settings'),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -578,6 +638,19 @@ String _statusLabel(PhoneTransferStatus status) {
     PhoneTransferStatus.failed => 'Failed',
     PhoneTransferStatus.cancelled => 'Cancelled',
     PhoneTransferStatus.expired => 'Expired',
+  };
+}
+
+String _failureReason(PhoneTransferFile file) {
+  return switch (file.errorCode) {
+    'insufficient_storage' => 'The receiver does not have enough storage.',
+    'source_unavailable' => 'The selected source is no longer available.',
+    'source_permission_denied' =>
+      'Permission to read the selected source was denied.',
+    'timeout' => 'The transfer timed out. Try again.',
+    'hash_mismatch' => 'Integrity verification failed. Try again.',
+    'transfer_failed' => file.errorDetail ?? 'The transfer failed.',
+    _ => file.errorDetail ?? 'The transfer failed.',
   };
 }
 

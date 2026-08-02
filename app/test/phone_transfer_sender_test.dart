@@ -262,7 +262,10 @@ void main() {
         connectionFactory: (pairing) => RelayConnection(
           pairing: pairing,
           deviceId: 'phone',
-          transport: _RejectedTransferTransport('insufficient_storage'),
+          transport: _RejectedTransferTransport(
+            'insufficient_storage',
+            context: const {'retryable': true, 'phase': 'acceptance'},
+          ),
         ),
         history: history,
       );
@@ -287,6 +290,13 @@ void main() {
         (await history.load()).single.files.single.errorCode,
         'insufficient_storage',
       );
+      final failedFile = (await history.load()).single.files.single;
+      expect(failedFile.errorOrigin, 'remote');
+      expect(failedFile.errorCategory, 'remote_rejection');
+      expect(failedFile.errorContext, {
+        'retryable': true,
+        'phase': 'acceptance',
+      });
     } finally {
       await server.close(force: true);
       await serving.cancel();
@@ -980,11 +990,12 @@ class _FinalizingTransferTransport implements RelayTransport {
 }
 
 class _RejectedTransferTransport implements RelayTransport {
-  _RejectedTransferTransport(this.code) {
+  _RejectedTransferTransport(this.code, {this.context}) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
   final String code;
+  final Map<String, Object?>? context;
   final _incoming = StreamController<Object?>();
 
   @override
@@ -1009,6 +1020,7 @@ class _RejectedTransferTransport implements RelayTransport {
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'code': code,
+        ...?context,
       }),
     );
   }

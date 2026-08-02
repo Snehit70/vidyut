@@ -160,8 +160,21 @@ class PhoneTransferReceiver {
           'transferId': offer.transferId,
           'fileId': offeredFile.fileId,
           'code': 'file_too_large',
+          'actualBytes': offeredFile.size,
+          'limitBytes': effectiveMax,
         });
-        batch = await _failFile(batch, index, 'file_too_large');
+        batch = await _failFile(
+          batch,
+          index,
+          'file_too_large',
+          errorOrigin: 'local',
+          errorCategory: 'local_preparation',
+          errorDetail: 'The file exceeds the phone receive limit.',
+          errorContext: {
+            'actualBytes': offeredFile.size,
+            'limitBytes': effectiveMax,
+          },
+        );
         continue;
       }
       var record = batch.files[index];
@@ -274,7 +287,14 @@ class PhoneTransferReceiver {
         final code = error.toString().contains('hash_mismatch')
             ? 'hash_mismatch'
             : 'receive_failed';
-        batch = await _failFile(batch, index, code);
+        batch = await _failFile(
+          batch,
+          index,
+          code,
+          errorOrigin: 'local',
+          errorCategory: code == 'hash_mismatch' ? 'integrity' : 'internal',
+          errorDetail: 'Phone could not receive ${offeredFile.filename}.',
+        );
         connection.sendTransferControl({
           'v': 1,
           'kind': 'transfer_file_failed',
@@ -414,14 +434,22 @@ class PhoneTransferReceiver {
   Future<PhoneTransferBatch> _failFile(
     PhoneTransferBatch batch,
     int index,
-    String code,
-  ) {
+    String code, {
+    String? errorOrigin,
+    String? errorCategory,
+    String? errorDetail,
+    Map<String, Object?>? errorContext,
+  }) {
     return _replaceFile(
       batch,
       index,
       batch.files[index].copyWith(
         status: PhoneTransferStatus.failed,
         errorCode: code,
+        errorOrigin: errorOrigin,
+        errorCategory: errorCategory,
+        errorDetail: errorDetail,
+        errorContext: errorContext,
       ),
     );
   }

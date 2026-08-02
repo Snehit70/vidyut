@@ -511,6 +511,10 @@ class PhoneTransferSender {
                   ? file.copyWith(
                       status: PhoneTransferStatus.failed,
                       errorCode: _errorCode(error),
+                      errorOrigin: _errorOrigin(error),
+                      errorCategory: _errorCategory(error),
+                      errorDetail: _errorDetail(error),
+                      errorContext: _errorContext(error),
                     )
                   : file,
             )
@@ -664,6 +668,7 @@ class PhoneTransferSender {
         accepted['code'] is String
             ? accepted['code']! as String
             : 'transfer_rejected',
+        context: _messageErrorContext(accepted),
       );
     }
     if (accepted['kind'] == 'transfer_file_complete') {
@@ -878,9 +883,10 @@ class _TransferOffsetConflict implements Exception {
 }
 
 class _TransferRejected implements Exception {
-  const _TransferRejected(this.code);
+  const _TransferRejected(this.code, {this.context});
 
   final String code;
+  final Map<String, Object?>? context;
 
   @override
   String toString() => 'Transfer rejected: $code';
@@ -1009,6 +1015,47 @@ String _errorCode(Object error) {
     return 'file_too_large';
   }
   return 'transfer_failed';
+}
+
+String _errorOrigin(Object error) {
+  return error is _TransferRejected ? 'remote' : 'local';
+}
+
+String _errorCategory(Object error) {
+  final code = _errorCode(error);
+  if (error is _TransferRejected) return 'remote_rejection';
+  if (code == 'file_too_large') return 'local_preparation';
+  if (code == 'timeout' || _isTransientTransferError(error)) {
+    return 'network_policy';
+  }
+  if (code == 'source_unavailable') return 'source_access';
+  if (code == 'hash_mismatch') return 'integrity';
+  return 'internal';
+}
+
+String _errorDetail(Object error) {
+  if (error is _TransferRejected) {
+    return 'Receiver rejected the file with code ${error.code}.';
+  }
+  final message = error.toString();
+  final sanitized = message.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return sanitized.length > 240 ? sanitized.substring(0, 240) : sanitized;
+}
+
+Map<String, Object?>? _errorContext(Object error) {
+  if (error case _TransferRejected(:final context)) return context;
+  return null;
+}
+
+Map<String, Object?>? _messageErrorContext(Map<String, Object?> message) {
+  final context = <String, Object?>{};
+  for (final key in ['actualBytes', 'limitBytes', 'phase', 'retryable']) {
+    final value = message[key];
+    if (value is int || value is String || value is bool) {
+      context[key] = value;
+    }
+  }
+  return context.isEmpty ? null : context;
 }
 
 bool _isTransientTransferError(Object error) =>

@@ -67,4 +67,36 @@ void main() {
     await repository.clear();
     expect(await repository.load(), isEmpty);
   });
+
+  test('round-trips structured failure context', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_1234567890123',
+      filename: 'large.mp4',
+      mime: 'video/mp4',
+      size: 4 * 1024 * 1024 * 1024,
+      lastModifiedMs: 9,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.failed,
+      confirmedOffset: 0,
+      errorCode: 'file_too_large',
+      errorOrigin: 'remote',
+      errorCategory: 'remote_rejection',
+      errorDetail: 'Receiver rejected the file.',
+      errorContext: const {
+        'actualBytes': 4 * 1024 * 1024 * 1024,
+        'limitBytes': 1024 * 1024 * 1024,
+      },
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.errorCode, 'file_too_large');
+    expect(decoded.errorOrigin, 'remote');
+    expect(decoded.errorCategory, 'remote_rejection');
+    expect(decoded.errorDetail, 'Receiver rejected the file.');
+    expect(decoded.errorContext, {
+      'actualBytes': 4 * 1024 * 1024 * 1024,
+      'limitBytes': 1024 * 1024 * 1024,
+    });
+  });
 }
