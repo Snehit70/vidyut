@@ -33,6 +33,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   PhoneTransferProgress? _liveProgress;
   StreamSubscription<PhoneTransferProgress>? _progressSubscription;
   StreamSubscription<PhoneTransferBatch>? _batchSubscription;
+  StreamSubscription<PhoneTransferBatch>? _snapshotSubscription;
 
   @override
   void initState() {
@@ -42,6 +43,15 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       if (mounted) setState(() => _liveProgress = progress);
     });
     _batchSubscription = widget.sender.batchesCreated.listen((batch) {
+      if (!mounted) return;
+      setState(() {
+        _batches = [
+          batch,
+          ..._batches.where((item) => item.transferId != batch.transferId),
+        ];
+      });
+    });
+    _snapshotSubscription = widget.sender.snapshots.listen((batch) {
       if (!mounted) return;
       setState(() {
         _batches = [
@@ -60,6 +70,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ..dispose();
     unawaited(_progressSubscription?.cancel());
     unawaited(_batchSubscription?.cancel());
+    unawaited(_snapshotSubscription?.cancel());
     super.dispose();
   }
 
@@ -145,7 +156,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   }
 
   Future<void> _remove(PhoneTransferBatch batch) async {
-    await widget.history.remove(batch.transferId);
+    await widget.sender.removeHistory(batch);
     await _load();
   }
 
@@ -170,14 +181,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ),
     );
     if (confirmed != true) return;
-    await widget.history.clear();
+    await widget.sender.clearHistory();
     await _load();
   }
 
   Iterable<PhoneTransferBatch> get _visible {
     final query = _search.text.trim().toLowerCase();
     return _batches.where((batch) {
-      if (_liveProgress?.transferId == batch.transferId) return false;
       if (_direction != null && batch.direction != _direction) return false;
       if (_failedOnly &&
           batch.status != PhoneTransferStatus.failed &&
@@ -282,11 +292,23 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                             final batch = visible[index];
                             return _BatchCard(
                               batch: batch,
+                              onCancel:
+                                  batch.files.any(
+                                    (file) => !_isTerminalStatus(file.status),
+                                  )
+                                  ? () => widget.sender.cancelBatch(
+                                      batch.transferId,
+                                    )
+                                  : null,
                               onRetry:
                                   batch.status == PhoneTransferStatus.failed ||
                                       batch.status ==
                                           PhoneTransferStatus
-                                              .completedWithIssues
+                                              .completedWithIssues ||
+                                      batch.status ==
+                                          PhoneTransferStatus.cancelled ||
+                                      batch.status ==
+                                          PhoneTransferStatus.waitingForSource
                                   ? () => _retry(batch)
                                   : null,
                               onOpenSettings: widget.onOpenSettings,
@@ -310,15 +332,27 @@ class _LiveTransferCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTransferring =
         progress.stage == PhoneTransferProgressStage.transferring;
-    final isPreparing = progress.stage == PhoneTransferProgressStage.preparing;
+    final isPreparing = {
+      PhoneTransferProgressStage.preparing,
+      PhoneTransferProgressStage.readingSelection,
+      PhoneTransferProgressStage.staging,
+      PhoneTransferProgressStage.hashing,
+      PhoneTransferProgressStage.policyCheck,
+    }.contains(progress.stage);
     final itemLabel = progress.currentFileIndex == null
         ? '${progress.fileCount} files'
         : '${progress.currentFileIndex! + 1} of ${progress.fileCount} files';
     final title = switch (progress.stage) {
       PhoneTransferProgressStage.preparing => 'Preparing files',
+      PhoneTransferProgressStage.readingSelection => 'Reading selection',
+      PhoneTransferProgressStage.staging => 'Staging fallback',
+      PhoneTransferProgressStage.hashing => 'Verifying',
+      PhoneTransferProgressStage.policyCheck => 'Checking requirements',
       PhoneTransferProgressStage.connecting => 'Connecting to your laptop',
       PhoneTransferProgressStage.waitingForLaptop => 'Waiting for your laptop',
       PhoneTransferProgressStage.transferring => 'Sending to your laptop',
+      PhoneTransferProgressStage.cancelling => 'Cancelling',
+      PhoneTransferProgressStage.waitingForSource => 'Source unavailable',
       PhoneTransferProgressStage.completed => 'Transfer complete',
       PhoneTransferProgressStage.failed => 'Transfer needs attention',
     };
@@ -393,14 +427,27 @@ class _LiveTransferCard extends StatelessWidget {
               ),
             ] else ...[
               if (progress.currentFilename != null) ...[
-                _TransferFileName(filename: progress.currentFilename),
+                _TransferFileName(
+                  filename: progress.currentFilename,
+                  subtitle: isPreparing
+                      ? '${_bytes(progress.preparedBytes)}${progress.preparationTotalBytes == null ? '' : ' of ${_bytes(progress.preparationTotalBytes!)}'} · ${_elapsed(progress.preparationElapsed)}'
+                      : null,
+                ),
                 const SizedBox(height: 12),
               ],
-              LinearProgressIndicator(value: isPreparing ? null : 0),
+              LinearProgressIndicator(
+                value:
+                    isPreparing &&
+                        progress.preparationTotalBytes != null &&
+                        progress.preparationTotalBytes! > 0
+                    ? (progress.preparedBytes / progress.preparationTotalBytes!)
+                          .clamp(0.0, 1.0)
+                    : null,
+              ),
               const SizedBox(height: 12),
               Text(
                 isPreparing
-                    ? 'Checking files so the transfer can resume safely.'
+                    ? 'Preparation continues if you leave this screen.'
                     : 'Keep Vidyut open while we start this transfer.',
                 style: Theme.of(
                   context,
@@ -490,12 +537,14 @@ class _BatchCard extends StatelessWidget {
   const _BatchCard({
     required this.batch,
     required this.onRemove,
+    this.onCancel,
     this.onRetry,
     this.onOpenSettings,
   });
 
   final PhoneTransferBatch batch;
   final VoidCallback onRemove;
+  final VoidCallback? onCancel;
   final VoidCallback? onRetry;
   final VoidCallback? onOpenSettings;
 
@@ -540,6 +589,7 @@ class _BatchCard extends StatelessWidget {
                 PopupMenuButton<String>(
                   onSelected: (value) {
                     if (value == 'retry') onRetry?.call();
+                    if (value == 'cancel') onCancel?.call();
                     if (value == 'remove') onRemove();
                   },
                   itemBuilder: (_) => [
@@ -547,6 +597,11 @@ class _BatchCard extends StatelessWidget {
                       const PopupMenuItem(
                         value: 'retry',
                         child: Text('Retry failed'),
+                      ),
+                    if (onCancel != null)
+                      const PopupMenuItem(
+                        value: 'cancel',
+                        child: Text('Cancel preparation'),
                       ),
                     const PopupMenuItem(
                       value: 'remove',
@@ -558,6 +613,9 @@ class _BatchCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(_statusLabel(batch.status)),
+            ...batch.files
+                .where((file) => file.status == PhoneTransferStatus.preparing)
+                .map((file) => _PreparationDetail(file: file)),
             if (batch.status == PhoneTransferStatus.active ||
                 batch.status == PhoneTransferStatus.queued) ...[
               const SizedBox(height: 10),
@@ -623,6 +681,38 @@ class _FailureDetail extends StatelessWidget {
   }
 }
 
+class _PreparationDetail extends StatelessWidget {
+  const _PreparationDetail({required this.file});
+
+  final PhoneTransferFile file;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = file.preparationTotalBytes;
+    final fraction = total == null || total == 0
+        ? null
+        : (file.preparedBytes / total).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(file.filename, maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 3),
+          Text(
+            '${_preparationLabel(file.preparationPhase)} · ${_bytes(file.preparedBytes)}${total == null ? '' : ' of ${_bytes(total)}'} · ${_elapsed(file.preparationElapsed)}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+          ),
+          const SizedBox(height: 5),
+          LinearProgressIndicator(value: fraction),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyFiles extends StatelessWidget {
   const _EmptyFiles();
 
@@ -656,6 +746,29 @@ String _statusLabel(PhoneTransferStatus status) {
     PhoneTransferStatus.cancelled => 'Cancelled',
     PhoneTransferStatus.expired => 'Expired',
   };
+}
+
+bool _isTerminalStatus(PhoneTransferStatus status) =>
+    status == PhoneTransferStatus.completed ||
+    status == PhoneTransferStatus.failed ||
+    status == PhoneTransferStatus.cancelled ||
+    status == PhoneTransferStatus.expired;
+
+String _preparationLabel(PhoneTransferPreparationPhase? phase) =>
+    switch (phase) {
+      PhoneTransferPreparationPhase.readingSelection => 'Reading selection',
+      PhoneTransferPreparationPhase.staging => 'Staging fallback',
+      PhoneTransferPreparationPhase.hashing => 'Verifying',
+      PhoneTransferPreparationPhase.policyCheck => 'Checking requirements',
+      PhoneTransferPreparationPhase.connecting => 'Connecting',
+      null => 'Preparing',
+    };
+
+String _elapsed(Duration? value) {
+  if (value == null) return 'starting';
+  final seconds = value.inSeconds;
+  if (seconds < 60) return '${seconds}s elapsed';
+  return '${seconds ~/ 60}m ${seconds % 60}s elapsed';
 }
 
 String _failureReason(PhoneTransferFile file) {

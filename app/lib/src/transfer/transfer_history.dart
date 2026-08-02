@@ -17,6 +17,14 @@ enum PhoneTransferStatus {
   expired,
 }
 
+enum PhoneTransferPreparationPhase {
+  readingSelection,
+  staging,
+  hashing,
+  policyCheck,
+  connecting,
+}
+
 enum PhoneTransferSourceKind { externalPath, androidDocumentUri, managedStage }
 
 enum PhoneTransferSourceOwnership { external, managed }
@@ -81,6 +89,12 @@ class PhoneTransferFile {
     this.errorCategory,
     this.errorDetail,
     this.errorContext,
+    this.preparationPhase,
+    this.preparedBytes = 0,
+    this.preparationTotalBytes,
+    this.preparationStartedAt,
+    this.preparationAttempt = 0,
+    this.cancellationRequestedAt,
   });
 
   final String fileId;
@@ -101,6 +115,20 @@ class PhoneTransferFile {
   final String? errorCategory;
   final String? errorDetail;
   final Map<String, Object?>? errorContext;
+  final PhoneTransferPreparationPhase? preparationPhase;
+  final int preparedBytes;
+  final int? preparationTotalBytes;
+  final int? preparationStartedAt;
+  final int preparationAttempt;
+  final int? cancellationRequestedAt;
+
+  Duration? get preparationElapsed {
+    final started = preparationStartedAt;
+    if (started == null) return null;
+    return Duration(
+      milliseconds: DateTime.now().millisecondsSinceEpoch - started,
+    );
+  }
 
   PhoneTransferFile copyWith({
     int? size,
@@ -118,6 +146,16 @@ class PhoneTransferFile {
     PhoneTransferSourceReference? sourceReference,
     bool clearSourceReference = false,
     bool clearError = false,
+    PhoneTransferPreparationPhase? preparationPhase,
+    bool clearPreparationPhase = false,
+    int? preparedBytes,
+    int? preparationTotalBytes,
+    bool clearPreparationTotalBytes = false,
+    int? preparationStartedAt,
+    bool clearPreparationStartedAt = false,
+    int? preparationAttempt,
+    int? cancellationRequestedAt,
+    bool clearCancellationRequestedAt = false,
   }) {
     return PhoneTransferFile(
       fileId: fileId,
@@ -139,6 +177,20 @@ class PhoneTransferFile {
       errorCategory: clearError ? null : errorCategory ?? this.errorCategory,
       errorDetail: clearError ? null : errorDetail ?? this.errorDetail,
       errorContext: clearError ? null : errorContext ?? this.errorContext,
+      preparationPhase: clearPreparationPhase
+          ? null
+          : preparationPhase ?? this.preparationPhase,
+      preparedBytes: preparedBytes ?? this.preparedBytes,
+      preparationTotalBytes: clearPreparationTotalBytes
+          ? null
+          : preparationTotalBytes ?? this.preparationTotalBytes,
+      preparationStartedAt: clearPreparationStartedAt
+          ? null
+          : preparationStartedAt ?? this.preparationStartedAt,
+      preparationAttempt: preparationAttempt ?? this.preparationAttempt,
+      cancellationRequestedAt: clearCancellationRequestedAt
+          ? null
+          : cancellationRequestedAt ?? this.cancellationRequestedAt,
     );
   }
 
@@ -164,9 +216,34 @@ class PhoneTransferFile {
     if (errorCategory != null) 'errorCategory': errorCategory,
     if (errorDetail != null) 'errorDetail': errorDetail,
     if (errorContext != null) 'errorContext': errorContext,
+    if (preparationPhase != null && !_implicitLegacyPreparation)
+      'preparationPhase': preparationPhase!.name,
+    if ((preparationPhase != null && !_implicitLegacyPreparation) ||
+        preparedBytes != 0)
+      'preparedBytes': preparedBytes,
+    if (preparationTotalBytes != null)
+      'preparationTotalBytes': preparationTotalBytes,
+    if (preparationStartedAt != null)
+      'preparationStartedAt': preparationStartedAt,
+    if ((preparationPhase != null && !_implicitLegacyPreparation) ||
+        preparationAttempt != 0)
+      'preparationAttempt': preparationAttempt,
+    if (cancellationRequestedAt != null)
+      'cancellationRequestedAt': cancellationRequestedAt,
   };
 
+  bool get _implicitLegacyPreparation =>
+      status == PhoneTransferStatus.preparing &&
+      preparationPhase == PhoneTransferPreparationPhase.readingSelection &&
+      preparedBytes == 0 &&
+      preparationTotalBytes == null &&
+      preparationStartedAt == null &&
+      preparationAttempt == 0 &&
+      cancellationRequestedAt == null;
+
   static PhoneTransferFile fromJson(Map<Object?, Object?> json) {
+    final status = PhoneTransferStatus.values.byName(json['status']! as String);
+    final phase = _preparationPhase(json['preparationPhase']);
     return PhoneTransferFile(
       fileId: json['fileId']! as String,
       filename: json['filename']! as String,
@@ -175,7 +252,7 @@ class PhoneTransferFile {
       lastModifiedMs: json['lastModifiedMs']! as int,
       lastModifiedKnown: json['lastModifiedKnown'] != false,
       sha256: json['sha256']! as String,
-      status: PhoneTransferStatus.values.byName(json['status']! as String),
+      status: status,
       confirmedOffset: json['confirmedOffset']! as int,
       sourceReference:
           PhoneTransferSourceReference.fromJson(json['source']) ??
@@ -187,7 +264,38 @@ class PhoneTransferFile {
       errorCategory: json['errorCategory'] as String?,
       errorDetail: json['errorDetail'] as String?,
       errorContext: _errorContext(json['errorContext']),
+      preparationPhase:
+          phase ??
+          (status == PhoneTransferStatus.preparing
+              ? PhoneTransferPreparationPhase.readingSelection
+              : null),
+      preparedBytes: json['preparedBytes'] is int
+          ? json['preparedBytes']! as int
+          : 0,
+      preparationTotalBytes: json['preparationTotalBytes'] is int
+          ? json['preparationTotalBytes']! as int
+          : null,
+      preparationStartedAt: json['preparationStartedAt'] is int
+          ? json['preparationStartedAt']! as int
+          : (status == PhoneTransferStatus.preparing
+                ? json['createdAtMs'] as int?
+                : null),
+      preparationAttempt: json['preparationAttempt'] is int
+          ? json['preparationAttempt']! as int
+          : 0,
+      cancellationRequestedAt: json['cancellationRequestedAt'] is int
+          ? json['cancellationRequestedAt']! as int
+          : null,
     );
+  }
+}
+
+PhoneTransferPreparationPhase? _preparationPhase(Object? value) {
+  if (value is! String) return null;
+  try {
+    return PhoneTransferPreparationPhase.values.byName(value);
+  } on ArgumentError {
+    return null;
   }
 }
 
@@ -259,22 +367,32 @@ class PhoneTransferBatch {
   };
 
   static PhoneTransferBatch fromJson(Map<Object?, Object?> json) {
+    final createdAtMs = json['createdAtMs']! as int;
+    final status = PhoneTransferStatus.values.byName(json['status']! as String);
+    final decodedFiles = (json['files']! as List)
+        .map(
+          (file) => PhoneTransferFile.fromJson(
+            (file as Map).cast<Object?, Object?>(),
+          ),
+        )
+        .map(
+          (file) =>
+              file.status == PhoneTransferStatus.preparing &&
+                  file.preparationStartedAt == null
+              ? file.copyWith(preparationStartedAt: createdAtMs)
+              : file,
+        )
+        .toList();
     return PhoneTransferBatch(
       transferId: json['transferId']! as String,
       batchId: json['batchId']! as String,
       direction: PhoneTransferDirection.values.byName(
         json['direction']! as String,
       ),
-      createdAtMs: json['createdAtMs']! as int,
+      createdAtMs: createdAtMs,
       updatedAtMs: json['updatedAtMs']! as int,
-      status: PhoneTransferStatus.values.byName(json['status']! as String),
-      files: (json['files']! as List)
-          .map(
-            (file) => PhoneTransferFile.fromJson(
-              (file as Map).cast<Object?, Object?>(),
-            ),
-          )
-          .toList(),
+      status: status,
+      files: decodedFiles,
     );
   }
 }

@@ -227,6 +227,17 @@ class VidyutFilesPlugin :
                 }
                 result.success(null)
             }
+            "discardSource" -> {
+                val reference = call.argument<String>("reference")
+                if (reference?.startsWith(STAGE_PREFIX) == true) {
+                    ioExecutor.execute {
+                        stageFile(reference).delete()
+                        if (engineAttached.get()) result.success(null)
+                    }
+                } else {
+                    result.success(null)
+                }
+            }
             "publish" -> {
                 val sourcePath = call.argument<String>("sourcePath")
                 val filename = call.argument<String>("filename")

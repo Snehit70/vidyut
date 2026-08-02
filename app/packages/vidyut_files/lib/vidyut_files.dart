@@ -187,6 +187,12 @@ class VidyutFiles {
     await _channel.invokeMethod<void>('retainSource', {'uri': uri});
   }
 
+  Future<void> discardSource(String reference) async {
+    await _channel.invokeMethod<void>('discardSource', {
+      'reference': reference,
+    });
+  }
+
   Future<String> destinationLabel() async {
     return await _channel.invokeMethod<String>('destinationLabel') ??
         'Downloads/Vidyut';
