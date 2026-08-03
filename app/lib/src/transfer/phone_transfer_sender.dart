@@ -415,9 +415,9 @@ class PhoneTransferSender {
       // A managed reference persisted in the row is already committed. Keep
       // it available for an explicit retry; only an uncommitted stage is
       // eligible for discard by the source reader.
-    } else if (reference?.kind == PhoneTransferSourceKind.androidDocumentUri) {
-      await sourceReader.release(reference!.reference);
     }
+    // A cancelled Android document row remains retryable, so its picker grant
+    // stays owned by history until retry succeeds or the user removes the row.
     final cancelled = await _replaceFile(
       batch,
       index,
@@ -717,7 +717,7 @@ class PhoneTransferSender {
           batch = await _replaceFile(
             batch,
             index,
-            file.copyWith(
+            batch.files[index].copyWith(
               filename: _safeBasename(prepared.filename),
               mime: prepared.mime,
               size: prepared.size,
@@ -1649,6 +1649,8 @@ class PhoneTransferSender {
         } else if (reference?.kind ==
             PhoneTransferSourceKind.androidDocumentUri) {
           await sourceReader.release(reference!.reference);
+          transferFile = transferFile.copyWith(clearSourceReference: true);
+          batch = await _replaceFile(batch, index, transferFile);
         }
         _publishBatch(
           batch,
@@ -2102,6 +2104,7 @@ class PhoneTransferSender {
             'lastModifiedMs': file.lastModifiedMs,
             if (!file.lastModifiedKnown) 'lastModifiedKnown': false,
             'sha256': file.sha256,
+            if (file.timing != null) 'timing': file.timing!.toJson(),
           },
         )
         .toList(),

@@ -11,6 +11,7 @@ import type {
   TransferDirection,
   TransferFileOffer,
   TransferOffer,
+  TransferTimingSummary,
 } from "../shared/wire";
 import { isTransferOffer } from "../shared/wire";
 import { partialPathFor } from "./transfer-paths";
@@ -43,17 +44,6 @@ export interface TransferFileRecord extends TransferFileOffer {
   confirmedOffset: number;
   errorCode?: string;
   timing?: TransferTimingSummary;
-}
-
-export interface TransferTimingSummary {
-  v: 1;
-  wallAnchorMs: number;
-  offerWallMs?: number;
-  acceptWallMs?: number;
-  attempts: Array<{
-    attempt: number;
-    stages: Record<string, { startMs: number; endMs?: number }>;
-  }>;
 }
 
 export const transferTimingStage = {
@@ -200,7 +190,7 @@ export class TransferQueue {
         destinationPath: destinationPaths.get(file.fileId)!,
         status: "queued",
         confirmedOffset: 0,
-        timing: this.newTiming(),
+        timing: file.timing ?? this.newTiming(),
       })),
     };
     assertBatch(batch);
@@ -226,6 +216,7 @@ export class TransferQueue {
           lastModifiedMs,
           lastModifiedKnown,
           sha256,
+          timing,
         }) => ({
           fileId,
           filename,
@@ -234,6 +225,7 @@ export class TransferQueue {
           lastModifiedMs,
           ...(lastModifiedKnown === undefined ? {} : { lastModifiedKnown }),
           sha256,
+          ...(timing === undefined ? {} : { timing }),
         }),
       ),
     };
@@ -678,7 +670,9 @@ function offersMatch(left: TransferOffer, right: TransferOffer): boolean {
     origin: offer.origin,
     direction: offer.direction,
     createdAtMs: offer.createdAtMs,
-    files: [...offer.files].sort((a, b) => a.fileId.localeCompare(b.fileId)),
+    files: [...offer.files]
+      .map(({ timing: _timing, ...file }) => file)
+      .sort((a, b) => a.fileId.localeCompare(b.fileId)),
   });
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
