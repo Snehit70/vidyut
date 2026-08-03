@@ -187,16 +187,24 @@ class PhoneTransferSourceReference {
     required this.kind,
     required this.reference,
     required this.ownership,
+    this.persisted = false,
   });
 
   final PhoneTransferSourceKind kind;
   final String reference;
   final PhoneTransferSourceOwnership ownership;
 
+  /// Whether an Android document URI has a persistable read grant.
+  ///
+  /// Missing fields in older history rows decode as false so reconstructed
+  /// document sources are conservatively staged before retry.
+  final bool persisted;
+
   Map<String, Object?> toJson() => {
     'kind': kind.name,
     'reference': reference,
     'ownership': ownership.name,
+    'persisted': persisted,
   };
 
   static PhoneTransferSourceReference? fromJson(Object? value) {
@@ -212,6 +220,7 @@ class PhoneTransferSourceReference {
         kind: PhoneTransferSourceKind.values.byName(kind),
         reference: reference,
         ownership: PhoneTransferSourceOwnership.values.byName(ownership),
+        persisted: value['persisted'] == true,
       );
     } on ArgumentError {
       return null;

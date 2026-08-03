@@ -382,6 +382,7 @@ export class TransferCoordinator {
       for (const id of fileIds) {
         await this.pauseTransfer(transferId, id);
       }
+      await this.options.queue.pause(transferId);
       return;
     }
     const sessions = this.options.progressSessions;

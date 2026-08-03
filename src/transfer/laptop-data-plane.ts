@@ -617,8 +617,10 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         );
         await this.queue.complete(transferId, fileId, verifiedSha256);
         await unlink(partialPath).catch(() => undefined);
-        const modified = new Date(record.lastModifiedMs);
-        await utimes(finalizedPath, modified, modified).catch(() => undefined);
+        if (record.lastModifiedKnown !== false) {
+          const modified = new Date(record.lastModifiedMs);
+          await utimes(finalizedPath, modified, modified).catch(() => undefined);
+        }
       } catch {
         const current = this.lookup(transferId, fileId, "phone_to_laptop");
         if (current?.status === "completed") {

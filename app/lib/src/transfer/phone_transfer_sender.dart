@@ -46,6 +46,7 @@ class PhoneTransferSource {
             : PhoneTransferSourceKind.androidDocumentUri),
     reference: uri ?? path!,
     ownership: ownership,
+    persisted: persisted,
   );
 }
 
@@ -369,7 +370,14 @@ class PhoneTransferSender {
   }
 
   Future<void> removeHistory(PhoneTransferBatch batch) async {
-    for (final file in batch.files) {
+    final current = (await history.load())
+        .where((item) => item.transferId == batch.transferId)
+        .firstOrNull;
+    if (current == null ||
+        current.files.any((file) => !_isTerminal(file.status))) {
+      return;
+    }
+    for (final file in current.files) {
       final reference = file.sourceReference;
       if (reference == null) continue;
       if (reference.ownership == PhoneTransferSourceOwnership.managed ||
@@ -381,7 +389,10 @@ class PhoneTransferSender {
   }
 
   Future<void> clearHistory() async {
-    for (final batch in await history.load()) {
+    final batches = await history.load();
+    for (final batch in batches.where(
+      (batch) => batch.files.every((file) => _isTerminal(file.status)),
+    )) {
       if (batch.direction == PhoneTransferDirection.sent) {
         for (final file in batch.files) {
           final reference = file.sourceReference;
@@ -393,8 +404,8 @@ class PhoneTransferSender {
           }
         }
       }
+      await history.remove(batch.transferId);
     }
-    await history.clear();
   }
 
   Future<void> _finishCancellation(PhoneTransferBatch batch, int index) async {
@@ -1170,7 +1181,9 @@ class PhoneTransferSender {
       mime: file.mime,
       size: file.size,
       lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
-      persisted: reference?.kind == PhoneTransferSourceKind.androidDocumentUri,
+      persisted:
+          reference?.kind == PhoneTransferSourceKind.androidDocumentUri &&
+          reference?.persisted == true,
       kind: reference?.kind,
       ownership: reference?.ownership ?? PhoneTransferSourceOwnership.external,
     );
