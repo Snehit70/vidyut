@@ -406,8 +406,13 @@ class VidyutFilesPlugin :
     }
 
     private fun cleanupPartialStages() {
-        File(context.filesDir, "vidyut-stages").listFiles()?.forEach { file ->
+        val directory = File(context.filesDir, "vidyut-stages")
+        directory.listFiles()?.forEach { file ->
             if (file.name.endsWith(".partial")) file.delete()
+            if (file.name.endsWith(".index")) {
+                val data = File(directory, file.name.removeSuffix(".index"))
+                if (!data.isFile) file.delete()
+            }
         }
     }
 
@@ -536,8 +541,8 @@ class VidyutFilesPlugin :
                     output.writeLong(entry.fileOffset)
                 }
             }
-            check(partial.renameTo(published)) { "Could not publish staged source." }
             check(indexPartial.renameTo(index)) { "Could not publish staged source index." }
+            check(partial.renameTo(published)) { "Could not publish staged source." }
             return mapOf(
                 "reference" to "$STAGE_PREFIX$id",
                 "size" to total,

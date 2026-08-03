@@ -1815,6 +1815,11 @@ class PhoneTransferSender {
           ),
         );
       } catch (error) {
+        if (_cancelledFiles.contains(
+          '${batch.transferId}:${transferFile.fileId}',
+        )) {
+          throw const PreparationCancelled();
+        }
         if (!_isTransientTransferError(error) || reconnectBackoff.isEmpty) {
           rethrow;
         }
@@ -1823,7 +1828,17 @@ class PhoneTransferSender {
     }
     await currentSession.close();
     for (final delay in reconnectBackoff) {
+      if (_cancelledFiles.contains(
+        '${batch.transferId}:${transferFile.fileId}',
+      )) {
+        throw const PreparationCancelled();
+      }
       if (delay > Duration.zero) await Future<void>.delayed(delay);
+      if (_cancelledFiles.contains(
+        '${batch.transferId}:${transferFile.fileId}',
+      )) {
+        throw const PreparationCancelled();
+      }
       _TransferSession? replacement;
       try {
         replacement = await _openSession(pairing, batch);
@@ -1840,6 +1855,11 @@ class PhoneTransferSender {
           ),
         );
       } catch (candidate) {
+        if (_cancelledFiles.contains(
+          '${batch.transferId}:${transferFile.fileId}',
+        )) {
+          throw const PreparationCancelled();
+        }
         reconnectError = candidate;
         await replacement?.close();
         if (!_isTransientTransferError(candidate)) rethrow;

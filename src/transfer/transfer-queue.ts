@@ -472,8 +472,15 @@ export class TransferQueue {
       : batch.files;
     for (const file of files) {
       if (file.status === "failed") {
+        const timing = file.timing ?? this.newTiming();
+        const attempt = (timing.attempts.at(-1)?.attempt ?? -1) + 1;
+        timing.attempts = [
+          ...timing.attempts,
+          { attempt, stages: {} },
+        ].slice(-4);
         file.status = "queued";
         file.confirmedOffset = 0;
+        file.timing = timing;
         delete file.errorCode;
         delete file.finalizingPath;
       }

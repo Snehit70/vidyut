@@ -277,6 +277,27 @@ describe("durable transfer queue", () => {
     expect((await queue.claimNext())!.file.filename).toBe("alpha.bin");
   });
 
+  test("records a new timing attempt when retrying a failed file", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [file("alpha.bin")],
+    });
+    const fileId = batch.files[0]!.fileId;
+    await queue.claimNext();
+    await queue.markStage(batch.transferId, fileId, "payload", true);
+    await queue.fail(batch.transferId, fileId, "source_unavailable");
+
+    await queue.retry(batch.transferId, fileId);
+
+    expect(queue.snapshot().batches[0]!.files[0]!.timing?.attempts)
+      .toEqual([
+        { attempt: 0, stages: { payload: { startMs: 0, endMs: 0 } } },
+        { attempt: 1, stages: {} },
+      ]);
+  });
+
   test("pauses, resumes and cancels without discarding confirmed progress", async () => {
     const queue = await memoryQueue();
     const batch = await queue.enqueue({
