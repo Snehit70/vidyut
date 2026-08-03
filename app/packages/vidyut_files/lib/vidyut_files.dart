@@ -225,7 +225,7 @@ class VidyutFiles {
     required String sourcePath,
     required String filename,
     required String mime,
-    required int lastModifiedMs,
+    required int? lastModifiedMs,
   }) async {
     final destination = await _channel.invokeMethod<String>('publish', {
       'sourcePath': sourcePath,

@@ -429,13 +429,23 @@ class PhoneTransferSender {
     final existing = _resumeRun;
     if (existing != null) return existing;
     final run = () async {
-      for (final batch in await history.load()) {
-        if (batch.direction != PhoneTransferDirection.sent ||
-            (batch.status != PhoneTransferStatus.preparing &&
-                batch.status != PhoneTransferStatus.queued &&
-                batch.status != PhoneTransferStatus.active)) {
-          continue;
-        }
+      final pending =
+          (await history.load())
+              .where(
+                (batch) =>
+                    batch.direction == PhoneTransferDirection.sent &&
+                    (batch.status == PhoneTransferStatus.preparing ||
+                        batch.status == PhoneTransferStatus.queued ||
+                        batch.status == PhoneTransferStatus.active),
+              )
+              .toList(growable: false)
+            ..sort((left, right) {
+              final created = left.createdAtMs.compareTo(right.createdAtMs);
+              return created == 0
+                  ? left.transferId.compareTo(right.transferId)
+                  : created;
+            });
+      for (final batch in pending) {
         final sources = <PhoneTransferSource>[];
         try {
           for (final file in batch.files) {
@@ -637,6 +647,7 @@ class PhoneTransferSender {
       for (var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
         final index = fileIndexes[sourceIndex];
         final file = batch.files[index];
+        String? uncommittedStage;
         if (_cancelledFiles.contains('${batch.transferId}:${file.fileId}')) {
           throw const PreparationCancelled();
         }
@@ -668,6 +679,11 @@ class PhoneTransferSender {
               batch = await _markTiming(batch, index, stage, end: end);
             },
           );
+          uncommittedStage =
+              prepared.reference?.ownership ==
+                  PhoneTransferSourceOwnership.managed
+              ? prepared.reference!.reference
+              : null;
           token.check();
           batch = await _updatePreparationPhase(
             batch,
@@ -693,6 +709,17 @@ class PhoneTransferSender {
               preparationTotalBytes: prepared.size,
             ),
           );
+          if (uncommittedStage != null) {
+            if (sources[sourceIndex].persisted) {
+              try {
+                await sourceReader.release(sources[sourceIndex].uri!);
+              } catch (_) {
+                // The staged reference is durable; original grant cleanup is
+                // best effort and must not fail the prepared transfer.
+              }
+            }
+            uncommittedStage = null;
+          }
         } on Object catch (error) {
           if (_errorCode(error) != 'source_unavailable') {
             rethrow;
@@ -711,6 +738,9 @@ class PhoneTransferSender {
             ),
           );
         } finally {
+          if (uncommittedStage != null) {
+            await _discardSourceBestEffort(uncommittedStage);
+          }
           _preparationTokens.remove(key);
           _cancelledFiles.remove('${batch.transferId}:${file.fileId}');
         }
@@ -777,6 +807,7 @@ class PhoneTransferSender {
             .toList(growable: false),
       );
       await history.upsert(batch);
+      _cleanupTrackingForBatch(batch);
       _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
     } finally {
       final pendingSetup = setupFuture;
@@ -902,39 +933,45 @@ class PhoneTransferSender {
       await onTiming(TransferTimingStage.fallbackStage, false);
       final operationId = _id('stage');
       token.registerStageCancellation(operationId, sourceReader.cancelStage);
-      late final VidyutStagedSource staged;
+      String? stagedReference;
       try {
-        staged = await sourceReader.stage(
-          uri,
-          maximumBytes: maxBytes,
-          operationId: operationId,
-        );
+        try {
+          final staged = await sourceReader.stage(
+            uri,
+            maximumBytes: maxBytes,
+            operationId: operationId,
+          );
+          stagedReference = staged.reference;
+          token.check();
+          await onPhase(
+            PhoneTransferPreparationPhase.staging,
+            staged.size,
+            staged.size,
+          );
+          return (
+            size: staged.size,
+            lastModifiedMs: staged.lastModifiedMs ?? source.lastModifiedMs ?? 0,
+            lastModifiedKnown:
+                staged.lastModifiedMs != null || source.lastModifiedMs != null,
+            filename: probe.filename ?? source.filename,
+            mime: probe.mime ?? source.mime,
+            sha256: staged.sha256,
+            reference: PhoneTransferSourceReference(
+              kind: PhoneTransferSourceKind.managedStage,
+              reference: staged.reference,
+              ownership: PhoneTransferSourceOwnership.managed,
+            ),
+          );
+        } finally {
+          await onTiming(TransferTimingStage.fallbackStage, true);
+        }
       } catch (_) {
+        if (stagedReference != null) {
+          await _discardSourceBestEffort(stagedReference);
+        }
         token.check();
         rethrow;
-      } finally {
-        await onTiming(TransferTimingStage.fallbackStage, true);
       }
-      token.check();
-      await onPhase(
-        PhoneTransferPreparationPhase.staging,
-        staged.size,
-        staged.size,
-      );
-      return (
-        size: staged.size,
-        lastModifiedMs: staged.lastModifiedMs ?? source.lastModifiedMs ?? 0,
-        lastModifiedKnown:
-            staged.lastModifiedMs != null || source.lastModifiedMs != null,
-        filename: probe.filename ?? source.filename,
-        mime: probe.mime ?? source.mime,
-        sha256: staged.sha256,
-        reference: PhoneTransferSourceReference(
-          kind: PhoneTransferSourceKind.managedStage,
-          reference: staged.reference,
-          ownership: PhoneTransferSourceOwnership.managed,
-        ),
-      );
     }
     if (probe.size > maxBytes) {
       throw FormatException(
@@ -1198,6 +1235,7 @@ class PhoneTransferSender {
     }
     _TransferSession? session;
     final stopwatch = Stopwatch();
+    String? activeFileId;
     try {
       for (var index = 0; index < batch.files.length; index++) {
         batch = await _markTiming(batch, index, TransferTimingStage.offerSent);
@@ -1221,6 +1259,7 @@ class PhoneTransferSender {
 
       for (var index = 0; index < batch.files.length; index++) {
         var transferFile = batch.files[index];
+        activeFileId = transferFile.fileId;
         if (transferFile.status == PhoneTransferStatus.completed) continue;
         if (_cancelledFiles.contains(
           '${batch.transferId}:${transferFile.fileId}',
@@ -1599,10 +1638,8 @@ class PhoneTransferSender {
       return batch;
     } catch (error) {
       if (error is PreparationCancelled ||
-          batch.files.any(
-            (file) =>
-                _cancelledFiles.contains('${batch.transferId}:${file.fileId}'),
-          )) {
+          (activeFileId != null &&
+              _cancelledFiles.contains('${batch.transferId}:$activeFileId'))) {
         throw const PreparationCancelled();
       }
       batch = batch.copyWith(
@@ -1632,6 +1669,7 @@ class PhoneTransferSender {
       _activeTransferCancellations.removeWhere(
         (key, _) => key.startsWith('${batch.transferId}:'),
       );
+      _cleanupTrackingForBatch(batch);
       await session?.close();
     }
   }
@@ -1889,6 +1927,9 @@ class PhoneTransferSender {
     if (persist && !_snapshotController.isClosed) {
       _snapshotController.add(updated);
     }
+    if (persist && _isTerminal(file.status)) {
+      _cleanupTrackingForFile(batch.transferId, file.fileId);
+    }
     return updated;
   }
 
@@ -1914,6 +1955,28 @@ class PhoneTransferSender {
     }
     final files = [...batch.files]..[index] = file.copyWith(timing: timing);
     return batch.copyWith(files: files, updatedAtMs: _wallNow());
+  }
+
+  void _cleanupTrackingForFile(String transferId, String fileId) {
+    _timingAnchors.remove('$transferId:$fileId');
+    _lastPreparationPersist.removeWhere((key, _) => key.startsWith('$fileId:'));
+    _lastPreparationPublish.removeWhere((key, _) => key.startsWith('$fileId:'));
+  }
+
+  void _cleanupTrackingForBatch(PhoneTransferBatch batch) {
+    for (final file in batch.files) {
+      if (_isTerminal(file.status)) {
+        _cleanupTrackingForFile(batch.transferId, file.fileId);
+      }
+    }
+  }
+
+  Future<void> _discardSourceBestEffort(String reference) async {
+    try {
+      await sourceReader.discard(reference);
+    } catch (_) {
+      // A failed cleanup must not mask the preparation error.
+    }
   }
 
   Future<PhoneTransferBatch> _markTiming(

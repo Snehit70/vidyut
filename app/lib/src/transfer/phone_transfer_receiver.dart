@@ -264,24 +264,26 @@ class PhoneTransferReceiver {
                 sourcePath: privateDestination.path,
                 filename: offeredFile.filename,
                 mime: offeredFile.mime,
-                lastModifiedMs: offeredFile.lastModifiedMs,
+                lastModifiedMs: offeredFile.lastModifiedKnown
+                    ? offeredFile.lastModifiedMs
+                    : null,
               );
-        _throwIfDisposed();
         record = record.copyWith(
           status: PhoneTransferStatus.completed,
           confirmedOffset: offeredFile.size,
           destinationPath: destination,
         );
         batch = await _replaceFile(batch, index, record);
-        _throwIfDisposed();
-        connection.sendTransferControl({
-          'v': 1,
-          'kind': 'transfer_file_complete',
-          'transferId': offer.transferId,
-          'fileId': offeredFile.fileId,
-          'sha256': digest,
-        });
-        onEvent?.call('Received ${offeredFile.filename}');
+        if (!_disposed) {
+          connection.sendTransferControl({
+            'v': 1,
+            'kind': 'transfer_file_complete',
+            'transferId': offer.transferId,
+            'fileId': offeredFile.fileId,
+            'sha256': digest,
+          });
+          onEvent?.call('Received ${offeredFile.filename}');
+        }
       } on _TransferCancelled {
         return;
       } on Object catch (error) {
@@ -517,7 +519,7 @@ abstract interface class ReceivedFilePublisher {
     required String sourcePath,
     required String filename,
     required String mime,
-    required int lastModifiedMs,
+    required int? lastModifiedMs,
   });
 }
 
@@ -531,7 +533,7 @@ class AndroidReceivedFilePublisher implements ReceivedFilePublisher {
     required String sourcePath,
     required String filename,
     required String mime,
-    required int lastModifiedMs,
+    required int? lastModifiedMs,
   }) {
     return _files.publish(
       sourcePath: sourcePath,

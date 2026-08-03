@@ -262,7 +262,7 @@ class VidyutFilesPlugin :
                 val filename = call.argument<String>("filename")
                 val mime = call.argument<String>("mime")
                 val modified = call.argument<Number>("lastModifiedMs")?.toLong()
-                if (sourcePath == null || filename == null || mime == null || modified == null) {
+                if (sourcePath == null || filename == null || mime == null) {
                     result.error("bad-args", "Missing publish arguments.", null)
                     return
                 }
@@ -653,7 +653,7 @@ class VidyutFilesPlugin :
         return DocumentFile.fromTreeUri(context, Uri.parse(uri))?.name ?: "Selected folder"
     }
 
-    private fun publish(source: File, filename: String, mime: String, modifiedMs: Long): String {
+    private fun publish(source: File, filename: String, mime: String, modifiedMs: Long?): String {
         require(source.isFile) { "Source file does not exist." }
         val tree = preferences().getString(KEY_TREE_URI, null)
         val destination = if (tree == null) {
@@ -690,7 +690,7 @@ class VidyutFilesPlugin :
         source: File,
         filename: String,
         mime: String,
-        modifiedMs: Long
+        modifiedMs: Long?,
     ): String {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             "Public Downloads publishing requires Android 10 or newer."
@@ -710,7 +710,7 @@ class VidyutFilesPlugin :
             put(MediaStore.MediaColumns.DISPLAY_NAME, unique)
             put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-            put(MediaStore.MediaColumns.DATE_MODIFIED, modifiedMs / 1000)
+            modifiedMs?.let { put(MediaStore.MediaColumns.DATE_MODIFIED, it / 1000) }
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
