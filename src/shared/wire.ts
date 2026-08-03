@@ -30,13 +30,26 @@ export interface RelayHealth {
 
 export type TransferDirection = "laptop_to_phone" | "phone_to_laptop";
 
+export interface TransferTimingSummary {
+  v: 1;
+  wallAnchorMs: number;
+  offerWallMs?: number;
+  acceptWallMs?: number;
+  attempts: Array<{
+    attempt: number;
+    stages: Record<string, { startMs: number; endMs?: number }>;
+  }>;
+}
+
 export interface TransferFileOffer {
   fileId: string;
   filename: string;
   mime: string;
   size: number;
   lastModifiedMs: number;
+  lastModifiedKnown?: boolean;
   sha256: string;
+  senderTiming?: TransferTimingSummary;
 }
 
 export interface TransferOffer {
@@ -208,9 +221,53 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
     file.mime.length > 0 &&
     isNonNegativeSafeInteger(file.size) &&
     isNonNegativeSafeInteger(file.lastModifiedMs) &&
+    (file.lastModifiedKnown === undefined ||
+      typeof file.lastModifiedKnown === "boolean") &&
     typeof file.sha256 === "string" &&
+    (file.senderTiming === undefined || isTransferTiming(file.senderTiming)) &&
     sha256Pattern.test(file.sha256)
   );
+}
+
+function isTransferTiming(value: unknown): value is TransferTimingSummary {
+  if (!value || typeof value !== "object") return false;
+  const timing = value as Record<string, unknown>;
+  if (
+    timing.v !== 1 ||
+    !isNonNegativeSafeInteger(timing.wallAnchorMs) ||
+    (timing.offerWallMs !== undefined &&
+      !isNonNegativeSafeInteger(timing.offerWallMs)) ||
+    (timing.acceptWallMs !== undefined &&
+      !isNonNegativeSafeInteger(timing.acceptWallMs)) ||
+    !Array.isArray(timing.attempts) ||
+    timing.attempts.length > 4
+  ) {
+    return false;
+  }
+  return timing.attempts.every((attempt) => {
+    if (!attempt || typeof attempt !== "object") return false;
+    const item = attempt as Record<string, unknown>;
+    if (
+      !isNonNegativeSafeInteger(item.attempt) ||
+      !item.stages ||
+      typeof item.stages !== "object" ||
+      Array.isArray(item.stages)
+    ) {
+      return false;
+    }
+    return Object.values(item.stages).every((span) => {
+      if (!span || typeof span !== "object") return false;
+      const value = span as Record<string, unknown>;
+      return (
+        typeof value.startMs === "number" &&
+        Number.isFinite(value.startMs) &&
+        (value.endMs === undefined ||
+          (typeof value.endMs === "number" &&
+            Number.isFinite(value.endMs) &&
+            value.endMs >= value.startMs))
+      );
+    });
+  });
 }
 
 function isId(value: unknown): value is string {

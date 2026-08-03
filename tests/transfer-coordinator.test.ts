@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "../src/shared/transfer-crypto";
 import type { TransferControlMessage } from "../src/shared/wire";
 import { TransferCoordinator } from "../src/transfer/transfer-coordinator";
 import { TransferQueue } from "../src/transfer/transfer-queue";
+import {
+  ReceiverProgressSessions,
+} from "../src/transfer/laptop-data-plane";
+import { partialPathFor } from "../src/transfer/transfer-paths";
 
 describe("transfer coordinator", () => {
   test("offers a selected laptop batch and waits for receiver progress", async () => {
@@ -93,6 +97,80 @@ describe("transfer coordinator", () => {
         maxChunkBytes: 1024 * 1024,
       },
     ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("checkpoints before pause and removes the partial on cancellation", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-progress-"));
+    const queue = await memoryQueue();
+    const sessions = new ReceiverProgressSessions({ now: () => 100 });
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: () => undefined,
+      progressSessions: sessions,
+    });
+    const offer = {
+      transferId: "transfer_pause_1234",
+      batchId: "batch_pause_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_pause_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: 6,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: "a".repeat(64),
+      }],
+    };
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    const file = queue.snapshot().batches[0]!.files[0]!;
+    const session = sessions.sessionFor(offer.transferId, file);
+    const partialPath = partialPathFor(file.destinationPath!, file.fileId);
+    await writeFile(partialPath, new Uint8Array([1, 2]));
+    session.markAccepted(2);
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_pause",
+        transferId: offer.transferId,
+        fileId: file.fileId,
+      },
+      "phone",
+    );
+
+    expect(queue.snapshot().batches[0]!.files[0]!.confirmedOffset).toBe(2);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("paused");
+    await expect(stat(partialPath)).resolves.toBeTruthy();
+
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_resume",
+        transferId: offer.transferId,
+        fileId: file.fileId,
+      },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_cancel",
+        transferId: offer.transferId,
+        fileId: file.fileId,
+      },
+      "phone",
+    );
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("cancelled");
+    await expect(stat(partialPath)).rejects.toThrow();
     await rm(dir, { recursive: true, force: true });
   });
 

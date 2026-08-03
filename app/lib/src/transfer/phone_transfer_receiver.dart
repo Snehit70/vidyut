@@ -50,24 +50,41 @@ class PhoneTransferReceiver {
   final HttpClient _httpClient;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Future<void> _serial = Future.value();
+  bool _disposed = false;
 
   void start(RelayConnection connection, PairingCode pairing) {
+    if (_disposed) {
+      throw StateError('PhoneTransferReceiver has been disposed.');
+    }
     _subscription = connection.transferControls.listen((message) {
+      if (_disposed) return;
       if (message['kind'] != 'transfer_offer') return;
       _serial = _serial.then((_) async {
         try {
           await _receiveOffer(connection, pairing, message['offer']);
+        } on _TransferCancelled {
+          // Teardown intentionally aborts the active receive without
+          // publishing a stale failure for the retired relay session.
         } on Object catch (error) {
-          onEvent?.call('File transfer failed: $error', isError: true);
+          if (!_disposed) {
+            onEvent?.call('File transfer failed: $error', isError: true);
+          }
         }
       });
     });
   }
 
   Future<void> dispose() async {
-    await _subscription?.cancel();
-    await _serial;
+    if (_disposed) return;
+    _disposed = true;
+    final subscription = _subscription;
+    _subscription = null;
+    // Close before awaiting [_serial] so an in-flight HTTP request is
+    // interrupted immediately instead of holding reconnect teardown until its
+    // request timeout expires.
     _httpClient.close(force: true);
+    await subscription?.cancel();
+    await _serial;
   }
 
   Future<void> _receiveOffer(
@@ -75,6 +92,7 @@ class PhoneTransferReceiver {
     PairingCode pairing,
     Object? rawOffer,
   ) async {
+    _throwIfDisposed();
     TransferOffer offer;
     try {
       offer = TransferOffer.fromJson(rawOffer);
@@ -84,6 +102,7 @@ class PhoneTransferReceiver {
       return;
     }
     if (receiveEnabled != null && !await receiveEnabled!()) {
+      _throwIfDisposed();
       for (final file in offer.files) {
         connection.sendTransferControl({
           'v': 1,
@@ -95,6 +114,7 @@ class PhoneTransferReceiver {
       return;
     }
     if (networkAllowed != null && !await networkAllowed!()) {
+      _throwIfDisposed();
       for (final file in offer.files) {
         connection.sendTransferControl({
           'v': 1,
@@ -107,6 +127,7 @@ class PhoneTransferReceiver {
       return;
     }
     if (destinationAvailable != null && !await destinationAvailable!()) {
+      _throwIfDisposed();
       for (final file in offer.files) {
         connection.sendTransferControl({
           'v': 1,
@@ -124,20 +145,36 @@ class PhoneTransferReceiver {
     final effectiveMax = maximumFileBytes == null
         ? maxFileBytes
         : await maximumFileBytes!();
+    _throwIfDisposed();
     final root = await (rootDirectory ?? _defaultRoot)();
+    _throwIfDisposed();
     await root.create(recursive: true);
     var batch = await _existingOrCreate(offer);
     for (var index = 0; index < offer.files.length; index++) {
       final offeredFile = offer.files[index];
       if (offeredFile.size > effectiveMax) {
+        _throwIfDisposed();
         connection.sendTransferControl({
           'v': 1,
           'kind': 'transfer_file_failed',
           'transferId': offer.transferId,
           'fileId': offeredFile.fileId,
           'code': 'file_too_large',
+          'actualBytes': offeredFile.size,
+          'limitBytes': effectiveMax,
         });
-        batch = await _failFile(batch, index, 'file_too_large');
+        batch = await _failFile(
+          batch,
+          index,
+          'file_too_large',
+          errorOrigin: 'local',
+          errorCategory: 'local_preparation',
+          errorDetail: 'The file exceeds the phone receive limit.',
+          errorContext: {
+            'actualBytes': offeredFile.size,
+            'limitBytes': effectiveMax,
+          },
+        );
         continue;
       }
       var record = batch.files[index];
@@ -152,6 +189,7 @@ class PhoneTransferReceiver {
         confirmedOffset: offset,
       );
       batch = await _replaceFile(batch, index, record);
+      _throwIfDisposed();
       connection.sendTransferControl({
         'v': 1,
         'kind': 'transfer_accept',
@@ -166,18 +204,22 @@ class PhoneTransferReceiver {
         final sink = await partial.open(mode: FileMode.writeOnlyAppend);
         try {
           while (offset < offeredFile.size || offeredFile.size == 0) {
+            _throwIfDisposed();
             final response = await _getChunk(
               pairing: pairing,
               transferId: offer.transferId,
               fileId: offeredFile.fileId,
               offset: offset,
             );
+            _throwIfDisposed();
             final plaintext = await crypto.decrypt(
               chunk: response.chunk,
               pairingSecret: pairing.secret,
             );
+            _throwIfDisposed();
             await sink.writeFrom(plaintext);
             await sink.flush();
+            _throwIfDisposed();
             offset += plaintext.length;
             if (offset <= lastOffset && !response.eof) {
               throw const FormatException('chunk_made_no_progress');
@@ -185,6 +227,7 @@ class PhoneTransferReceiver {
             lastOffset = offset;
             record = record.copyWith(confirmedOffset: offset);
             batch = await _replaceFile(batch, index, record);
+            _throwIfDisposed();
             connection.sendTransferControl({
               'v': 1,
               'kind': 'transfer_progress',
@@ -197,8 +240,10 @@ class PhoneTransferReceiver {
         } finally {
           await sink.close();
         }
+        _throwIfDisposed();
         final digest = (await hashes.sha256.bind(partial.openRead()).first)
             .toString();
+        _throwIfDisposed();
         if (digest != offeredFile.sha256 || offset != offeredFile.size) {
           if (await partial.exists()) await partial.delete();
           throw const FormatException('hash_mismatch');
@@ -208,16 +253,20 @@ class PhoneTransferReceiver {
           root,
           offeredFile.filename,
         );
-        await privateDestination.setLastModified(
-          DateTime.fromMillisecondsSinceEpoch(offeredFile.lastModifiedMs),
-        );
+        if (offeredFile.lastModifiedKnown) {
+          await privateDestination.setLastModified(
+            DateTime.fromMillisecondsSinceEpoch(offeredFile.lastModifiedMs),
+          );
+        }
         final destination = publisher == null
             ? privateDestination.path
             : await publisher!.publish(
                 sourcePath: privateDestination.path,
                 filename: offeredFile.filename,
                 mime: offeredFile.mime,
-                lastModifiedMs: offeredFile.lastModifiedMs,
+                lastModifiedMs: offeredFile.lastModifiedKnown
+                    ? offeredFile.lastModifiedMs
+                    : null,
               );
         record = record.copyWith(
           status: PhoneTransferStatus.completed,
@@ -225,19 +274,31 @@ class PhoneTransferReceiver {
           destinationPath: destination,
         );
         batch = await _replaceFile(batch, index, record);
-        connection.sendTransferControl({
-          'v': 1,
-          'kind': 'transfer_file_complete',
-          'transferId': offer.transferId,
-          'fileId': offeredFile.fileId,
-          'sha256': digest,
-        });
-        onEvent?.call('Received ${offeredFile.filename}');
+        if (!_disposed) {
+          connection.sendTransferControl({
+            'v': 1,
+            'kind': 'transfer_file_complete',
+            'transferId': offer.transferId,
+            'fileId': offeredFile.fileId,
+            'sha256': digest,
+          });
+          onEvent?.call('Received ${offeredFile.filename}');
+        }
+      } on _TransferCancelled {
+        return;
       } on Object catch (error) {
+        if (_disposed) return;
         final code = error.toString().contains('hash_mismatch')
             ? 'hash_mismatch'
             : 'receive_failed';
-        batch = await _failFile(batch, index, code);
+        batch = await _failFile(
+          batch,
+          index,
+          code,
+          errorOrigin: 'local',
+          errorCategory: code == 'hash_mismatch' ? 'integrity' : 'internal',
+          errorDetail: 'Phone could not receive ${offeredFile.filename}.',
+        );
         connection.sendTransferControl({
           'v': 1,
           'kind': 'transfer_file_failed',
@@ -262,11 +323,16 @@ class PhoneTransferReceiver {
     );
     await history.upsert(batch);
     if (notifier != null && (alertsEnabled == null || await alertsEnabled!())) {
+      _throwIfDisposed();
       await notifier!.showBatchResult(
         filenames: batch.files.map((file) => file.filename).toList(),
         failed: failed,
       );
     }
+  }
+
+  void _throwIfDisposed() {
+    if (_disposed) throw const _TransferCancelled();
   }
 
   Future<_DownloadChunk> _getChunk({
@@ -343,6 +409,7 @@ class PhoneTransferReceiver {
               mime: file.mime,
               size: file.size,
               lastModifiedMs: file.lastModifiedMs,
+              lastModifiedKnown: file.lastModifiedKnown,
               sha256: file.sha256,
               status: PhoneTransferStatus.queued,
               confirmedOffset: 0,
@@ -372,14 +439,22 @@ class PhoneTransferReceiver {
   Future<PhoneTransferBatch> _failFile(
     PhoneTransferBatch batch,
     int index,
-    String code,
-  ) {
+    String code, {
+    String? errorOrigin,
+    String? errorCategory,
+    String? errorDetail,
+    Map<String, Object?>? errorContext,
+  }) {
     return _replaceFile(
       batch,
       index,
       batch.files[index].copyWith(
         status: PhoneTransferStatus.failed,
         errorCode: code,
+        errorOrigin: errorOrigin,
+        errorCategory: errorCategory,
+        errorDetail: errorDetail,
+        errorContext: errorContext,
       ),
     );
   }
@@ -444,7 +519,7 @@ abstract interface class ReceivedFilePublisher {
     required String sourcePath,
     required String filename,
     required String mime,
-    required int lastModifiedMs,
+    required int? lastModifiedMs,
   });
 }
 
@@ -458,7 +533,7 @@ class AndroidReceivedFilePublisher implements ReceivedFilePublisher {
     required String sourcePath,
     required String filename,
     required String mime,
-    required int lastModifiedMs,
+    required int? lastModifiedMs,
   }) {
     return _files.publish(
       sourcePath: sourcePath,
@@ -474,6 +549,10 @@ class _DownloadChunk {
 
   final EncryptedTransferChunk chunk;
   final bool eof;
+}
+
+class _TransferCancelled implements Exception {
+  const _TransferCancelled();
 }
 
 Future<File> _finalize(File partial, Directory root, String filename) async {

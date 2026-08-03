@@ -67,4 +67,100 @@ void main() {
     await repository.clear();
     expect(await repository.load(), isEmpty);
   });
+
+  test('round-trips compact timing without changing transfer metadata', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_timing_123456',
+      filename: 'timed.bin',
+      mime: 'application/octet-stream',
+      size: 4,
+      lastModifiedMs: 9,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 4,
+      timing: const TransferTimingSummary(
+        wallAnchorMs: 1_800_000_000_000,
+        attempts: [
+          TransferAttemptTiming(
+            attempt: 0,
+            stages: {
+              TransferTimingStage.sourceHash: (startMs: 3, endMs: 18),
+              TransferTimingStage.durableCompletion: (startMs: 22, endMs: 24),
+            },
+          ),
+        ],
+      ),
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.toJson(), file.toJson());
+    expect(decoded.status, PhoneTransferStatus.completed);
+    expect(decoded.confirmedOffset, 4);
+  });
+
+  test('round-trips structured failure context', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_1234567890123',
+      filename: 'large.mp4',
+      mime: 'video/mp4',
+      size: 4 * 1024 * 1024 * 1024,
+      lastModifiedMs: 9,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.failed,
+      confirmedOffset: 0,
+      errorCode: 'file_too_large',
+      errorOrigin: 'remote',
+      errorCategory: 'remote_rejection',
+      errorDetail: 'Receiver rejected the file.',
+      errorContext: const {
+        'actualBytes': 4 * 1024 * 1024 * 1024,
+        'limitBytes': 1024 * 1024 * 1024,
+      },
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.errorCode, 'file_too_large');
+    expect(decoded.errorOrigin, 'remote');
+    expect(decoded.errorCategory, 'remote_rejection');
+    expect(decoded.errorDetail, 'Receiver rejected the file.');
+    expect(decoded.errorContext, {
+      'actualBytes': 4 * 1024 * 1024 * 1024,
+      'limitBytes': 1024 * 1024 * 1024,
+    });
+  });
+
+  test('round-trips durable URI sources without native handles', () {
+    final file = PhoneTransferFile(
+      fileId: 'file_uri_123456',
+      filename: 'cloud.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 0,
+      lastModifiedKnown: false,
+      sha256: List.filled(64, 'b').join(),
+      status: PhoneTransferStatus.preparing,
+      confirmedOffset: 0,
+      sourceReference: const PhoneTransferSourceReference(
+        kind: PhoneTransferSourceKind.androidDocumentUri,
+        reference: 'content://provider/document/42',
+        ownership: PhoneTransferSourceOwnership.external,
+      ),
+    );
+
+    final decoded = PhoneTransferFile.fromJson(file.toJson());
+
+    expect(decoded.sourcePath, isNull);
+    expect(
+      decoded.sourceReference?.kind,
+      PhoneTransferSourceKind.androidDocumentUri,
+    );
+    expect(
+      decoded.sourceReference?.reference,
+      'content://provider/document/42',
+    );
+    expect(decoded.lastModifiedKnown, isFalse);
+    expect(decoded.toJson(), file.toJson());
+  });
 }

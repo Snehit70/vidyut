@@ -66,9 +66,56 @@ cancellation, a destination, and history.
 _Avoid_: file payload, file sync
 
 **Batch**:
-The files selected in one send action. Batches wait FIFO and files inside a
-batch transfer sequentially.
+The files selected in one send action. Batches transfer FIFO and files inside a
+batch transfer sequentially, though later batches may prepare while they wait.
 _Avoid_: folder, archive, pool
+
+**Transfer attempt**:
+An immutable offer of the prepared files from a batch that are ready to move.
+A later retry may create another attempt without changing the original batch.
+_Avoid_: batch, session, retry batch
+
+**Transfer source**:
+The byte origin of a file in an unfinished or retryable transfer.
+_Avoid_: input file, upload file
+
+**Source reference**:
+A durable representation of a transfer source: an external filesystem path,
+an external Android document URI, or a managed encrypted stage. Temporary open
+handles are not source references.
+_Avoid_: file descriptor, reader ID, session handle
+
+**Source ownership**:
+Responsibility for a transfer source's lifetime. External sources are never
+deleted by Vidyut; managed sources are retained and cleaned with the transfer.
+_Avoid_: path type, permission
+
+**Preparation**:
+The durable phase that checks and fingerprints a transfer source and, when
+necessary, imports it into Vidyut before it is queued for transfer.
+_Avoid_: picker import, preprocessing
+
+**Staged source**:
+A device-encrypted private copy Vidyut owns temporarily when the selected
+transfer source cannot support durable random access. It exists only while a
+transfer remains active or retryable.
+_Avoid_: cache copy, permanent copy
+
+**Waiting for source**:
+A nonterminal preparation condition in which a transfer source is temporarily
+unavailable but may become usable without user intervention.
+_Avoid_: failed, paused, retrying
+
+**Source changed**:
+A terminal condition in which a transfer source no longer has the fingerprint
+originally offered for transfer. Its new contents must be sent as a new batch.
+_Avoid_: retryable, modified warning
+
+**Expired transfer**:
+An unfinished transfer whose seven-day resumability window has elapsed since
+its last durable progress, explicit retry, or source replacement. It retains
+history but no source resources.
+_Avoid_: failed transfer, deleted transfer
 
 **Files**:
 The phone and laptop surface for active batches and local transfer history.

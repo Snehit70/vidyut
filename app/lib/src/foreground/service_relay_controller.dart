@@ -21,6 +21,8 @@ typedef ServiceSettingsLoader = Future<AppSettings> Function();
 typedef ServiceConnectionFactory =
     RelayConnection Function(PairingCode pairing);
 typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
+typedef ServiceTransferReceiverFactory =
+    PhoneTransferReceiver Function(AppSettings settings);
 typedef ServiceEmit = void Function(Map<String, Object?> message);
 typedef ServiceNotificationUpdate =
     Future<void> Function(String title, String text);
@@ -87,7 +89,7 @@ class ServiceRelayController {
     this.screenOnEvents,
     this.clipboardAutoSendWatcher,
     this.autoSendPublish,
-    this.transferReceiver,
+    this.transferReceiverFactory,
     this.deviceId = 'phone',
     this.reconnectBackoff = defaultReconnectBackoff,
     this.syncStepTimeout = defaultSyncStepTimeout,
@@ -131,7 +133,7 @@ class ServiceRelayController {
   /// The one publish path for auto-read text (D3). Left null when the auto-send
   /// watcher is absent (tests, no plugin).
   final ServiceAutoSendPublish? autoSendPublish;
-  final PhoneTransferReceiver? transferReceiver;
+  final ServiceTransferReceiverFactory? transferReceiverFactory;
 
   final String deviceId;
   final List<Duration> reconnectBackoff;
@@ -140,6 +142,7 @@ class ServiceRelayController {
   final Duration watchdogInterval;
 
   RelayConnection? _connection;
+  PhoneTransferReceiver? _transferReceiver;
   PayloadReceiveController? _receiveController;
   StreamSubscription<ConnectionStatus>? _statusSubscription;
   StreamSubscription<RelayEvent>? _eventSubscription;
@@ -470,7 +473,8 @@ class ServiceRelayController {
         });
       },
     )..start();
-    transferReceiver?.start(connection, pairing);
+    _transferReceiver = transferReceiverFactory?.call(settings);
+    _transferReceiver?.start(connection, pairing);
     await connection.start();
   }
 
@@ -707,7 +711,8 @@ class ServiceRelayController {
     _healthSubscription = null;
     await _receiveController?.dispose();
     _receiveController = null;
-    await transferReceiver?.dispose();
+    await _transferReceiver?.dispose();
+    _transferReceiver = null;
     await _connection?.close();
     _connection = null;
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:clipboard_autosend/clipboard_autosend.dart';
+import 'package:crypto/crypto.dart' as hashes;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
@@ -16,7 +17,10 @@ import 'package:vidyut/src/settings/app_settings.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/transfer_crypto.dart';
 import 'package:vidyut/src/shared/wire.dart';
+import 'package:vidyut/src/transfer/phone_transfer_receiver.dart';
+import 'package:vidyut/src/transfer/transfer_history.dart';
 
 void main() {
   const pairing = PairingCode(
@@ -159,6 +163,136 @@ void main() {
     expect(harness.transports.first.closed, isTrue);
     expect(harness.transports.last.closed, isFalse);
   });
+
+  test('creates a fresh transfer receiver for each relay session', () async {
+    final receivers = <PhoneTransferReceiver>[];
+    final harness = _Harness(
+      pairing: pairing,
+      transferReceiverFactory: (_) {
+        final receiver = PhoneTransferReceiver(
+          history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
+        );
+        receivers.add(receiver);
+        return receiver;
+      },
+    );
+
+    await harness.controller.start();
+    expect(receivers, hasLength(1));
+
+    await harness.controller.handleTaskData(const {'kind': 'sync'});
+
+    expect(receivers, hasLength(2));
+    await harness.controller.stop();
+  });
+
+  test(
+    'receives a file through the replacement receiver after reconnect',
+    () async {
+      final bytes = [1, 2, 3];
+      final crypto = TransferCrypto();
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serving = server.listen((request) async {
+        final segments = request.uri.pathSegments;
+        final transferId = segments[2];
+        final fileId = segments[3];
+        final offset = int.parse(request.uri.queryParameters['offset']!);
+        final encrypted = await crypto.encrypt(
+          metadata: TransferChunkMetadata(
+            transferId: transferId,
+            fileId: fileId,
+            offset: offset,
+            plaintextBytes: bytes.length,
+          ),
+          plaintext: bytes,
+          pairingSecret: 'pairing-secret',
+        );
+        request.response.headers
+          ..set('x-vidyut-nonce', encrypted.nonce)
+          ..set('x-vidyut-offset', '$offset')
+          ..set('x-vidyut-plaintext-bytes', '${bytes.length}')
+          ..set('x-vidyut-eof', 'true');
+        request.response.add(encrypted.ciphertext);
+        await request.response.close();
+      });
+      final root = await Directory.systemTemp.createTemp(
+        'vidyut-service-reconnect-',
+      );
+      final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+      final receivers = <PhoneTransferReceiver>[];
+      final reconnectPairing = PairingCode(
+        host: '127.0.0.1',
+        port: server.port,
+        secret: 'pairing-secret',
+      );
+      final harness = _Harness(
+        pairing: reconnectPairing,
+        reconnectBackoff: const [Duration(milliseconds: 20)],
+        transferReceiverFactory: (_) {
+          final receiver = PhoneTransferReceiver(
+            history: history,
+            crypto: crypto,
+            rootDirectory: () async => root,
+          );
+          receivers.add(receiver);
+          return receiver;
+        },
+      );
+
+      try {
+        await harness.controller.start();
+        final first = harness.transports.single;
+        first.receive({'v': 1, 'kind': 'auth_ok'});
+        await _drain();
+
+        await first.drop();
+        await _waitUntil(() => harness.transports.length == 2);
+        final replacement = harness.transports.last;
+        replacement.receive({'v': 1, 'kind': 'auth_ok'});
+        await _drain();
+
+        replacement.receive({
+          'v': 1,
+          'kind': 'transfer_offer',
+          'offer': {
+            'transferId': 'transfer_1234567890',
+            'batchId': 'batch_123456789012',
+            'origin': 'laptop',
+            'direction': 'laptop_to_phone',
+            'createdAtMs': 1753689600000,
+            'files': [
+              {
+                'fileId': 'file_1234567890123',
+                'filename': 'reconnected.bin',
+                'mime': 'application/octet-stream',
+                'size': bytes.length,
+                'lastModifiedMs': 1753689500000,
+                'sha256': hashes.sha256.convert(bytes).toString(),
+              },
+            ],
+          },
+        });
+
+        await _waitUntilAsync(() async {
+          final batches = await history.load();
+          return batches.isNotEmpty &&
+              batches.single.status == PhoneTransferStatus.completed;
+        });
+
+        expect(receivers, hasLength(2));
+        expect(await File('${root.path}/reconnected.bin').readAsBytes(), bytes);
+        expect(
+          replacement.sent.map((message) => message['kind']),
+          contains('transfer_file_complete'),
+        );
+      } finally {
+        await harness.controller.stop();
+        await server.close(force: true);
+        await serving.cancel();
+        await root.delete(recursive: true);
+      }
+    },
+  );
 
   test('sync command goes offline when pairing was reset', () async {
     final harness = _Harness(pairing: pairing);
@@ -1080,6 +1214,19 @@ Future<void> _waitUntil(
   }
 }
 
+Future<void> _waitUntilAsync(
+  Future<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!await condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for condition.');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
 Future<PayloadFrame> _textFrame(
   String text, {
   required String origin,
@@ -1114,6 +1261,7 @@ class _Harness {
     bool provideAutoSendPublish = true,
     Completer<SharePublishResult>? autoSendGate,
     Future<AppSettings> Function()? loadSettings,
+    ServiceTransferReceiverFactory? transferReceiverFactory,
   }) {
     controller = ServiceRelayController(
       reconnectBackoff: reconnectBackoff,
@@ -1123,6 +1271,7 @@ class _Harness {
       screenshotWatcher: screenshotWatcher,
       pushController: pushController,
       clipboardAutoSendWatcher: autoSendWatcher,
+      transferReceiverFactory: transferReceiverFactory,
       autoSendPublish: provideAutoSendPublish
           ? (payload) async {
               autoSendPublished.add(payload.text ?? '');

@@ -451,6 +451,7 @@ class _PairingScreenState extends State<PairingScreen>
       if (pairing != null) _connectionStatus = ConnectionStatus.searching;
     });
     await _syncForegroundService();
+    if (pairing != null) unawaited(_transferSender.resumePending());
     await _startShareIntake();
     await _loadLastActivity();
     await _refreshSetupStatus();
@@ -658,6 +659,7 @@ class _PairingScreenState extends State<PairingScreen>
         builder: (_) => TransferFilesScreen(
           history: _transferHistory,
           sender: _transferSender,
+          onOpenSettings: _openSettings,
         ),
       ),
     );

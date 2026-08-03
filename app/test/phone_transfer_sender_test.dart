@@ -19,16 +19,15 @@ void main() {
       networkAllowed: () async => false,
     );
 
-    await expectLater(
-      sender.enqueue([
-        const PhoneTransferSource(
-          path: '/unused',
-          filename: 'report.bin',
-          mime: 'application/octet-stream',
-        ),
-      ]),
-      throwsA(isA<StateError>()),
-    );
+    final admitted = await sender.enqueue([
+      const PhoneTransferSource(
+        path: '/unused',
+        filename: 'report.bin',
+        mime: 'application/octet-stream',
+      ),
+    ]);
+    final failed = await sender.waitForTerminal(admitted.transferId);
+    expect(failed.files.single.errorCode, 'transfer_failed');
   });
 
   test('offers and uploads a file while persisting progress history', () async {
@@ -75,7 +74,7 @@ void main() {
     final progress = <PhoneTransferProgress>[];
     final progressSubscription = sender.progress.listen(progress.add);
 
-    final result = await sender.enqueue([
+    final result = await _enqueueAndWait(sender, [
       PhoneTransferSource(
         path: source.path,
         filename: 'report.bin',
@@ -159,7 +158,7 @@ void main() {
           history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
         );
 
-        final result = await sender.enqueue([
+        final result = await _enqueueAndWait(sender, [
           PhoneTransferSource(
             path: source.path,
             filename: 'empty.bin',
@@ -215,7 +214,7 @@ void main() {
         history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
       );
 
-      final result = await sender.enqueue([
+      final result = await _enqueueAndWait(sender, [
         PhoneTransferSource(
           path: source.path,
           filename: 'moved.bin',
@@ -262,31 +261,32 @@ void main() {
         connectionFactory: (pairing) => RelayConnection(
           pairing: pairing,
           deviceId: 'phone',
-          transport: _RejectedTransferTransport('insufficient_storage'),
+          transport: _RejectedTransferTransport(
+            'insufficient_storage',
+            context: const {'retryable': true, 'phase': 'acceptance'},
+          ),
         ),
         history: history,
       );
 
-      await expectLater(
-        sender.enqueue([
-          PhoneTransferSource(
-            path: source.path,
-            filename: 'rejected.bin',
-            mime: 'application/octet-stream',
-          ),
-        ]),
-        throwsA(
-          predicate(
-            (error) => error.toString().contains('insufficient_storage'),
-          ),
+      final admitted = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'rejected.bin',
+          mime: 'application/octet-stream',
         ),
-      );
+      ]);
+      final failed = await sender.waitForTerminal(admitted.transferId);
 
       expect(requestCount, 0);
-      expect(
-        (await history.load()).single.files.single.errorCode,
-        'insufficient_storage',
-      );
+      expect(failed.files.single.errorCode, 'insufficient_storage');
+      final failedFile = (await history.load()).single.files.single;
+      expect(failedFile.errorOrigin, 'remote');
+      expect(failedFile.errorCategory, 'remote_rejection');
+      expect(failedFile.errorContext, {
+        'retryable': true,
+        'phase': 'acceptance',
+      });
     } finally {
       await server.close(force: true);
       await serving.cancel();
@@ -342,7 +342,7 @@ void main() {
         reconnectBackoff: const [Duration.zero],
       );
 
-      final result = await sender.enqueue([
+      final result = await _enqueueAndWait(sender, [
         PhoneTransferSource(
           path: source.path,
           filename: 'retry.bin',
@@ -402,19 +402,18 @@ void main() {
         reconnectBackoff: const [Duration.zero, Duration.zero],
       );
 
-      await expectLater(
-        sender.enqueue([
-          PhoneTransferSource(
-            path: source.path,
-            filename: 'retry.bin',
-            mime: 'application/octet-stream',
-          ),
-        ]),
-        throwsA(isA<HttpException>()),
-      );
+      final admitted = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'retry.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+      final failed = await sender.waitForTerminal(admitted.transferId);
 
       expect(requestCount, 3);
       expect(connectionCount, 3);
+      expect(failed.files.single.errorCode, 'transfer_failed');
     } finally {
       await server.close(force: true);
       await serving.cancel();
@@ -461,18 +460,17 @@ void main() {
         chunkBytes: 3,
       );
 
-      await expectLater(
-        sender.enqueue([
-          PhoneTransferSource(
-            path: source.path,
-            filename: 'offset.bin',
-            mime: 'application/octet-stream',
-          ),
-        ]),
-        throwsA(isA<StateError>()),
-      );
+      final admitted = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'offset.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+      final failed = await sender.waitForTerminal(admitted.transferId);
 
       expect(requestCount, 1);
+      expect(failed.files.single.errorCode, 'transfer_failed');
     } finally {
       await server.close(force: true);
       await serving.cancel();
@@ -524,7 +522,7 @@ void main() {
         chunkBytes: 3,
       );
 
-      final result = await sender.enqueue([
+      final result = await _enqueueAndWait(sender, [
         PhoneTransferSource(
           path: source.path,
           filename: 'finalizing.bin',
@@ -636,7 +634,7 @@ void main() {
         reconnectBackoff: const [Duration.zero],
       );
 
-      final result = await sender.enqueue([
+      final result = await _enqueueAndWait(sender, [
         PhoneTransferSource(
           path: source.path,
           filename: 'resume.bin',
@@ -714,7 +712,7 @@ void main() {
           reconnectBackoff: const [Duration.zero],
         );
 
-        final result = await sender.enqueue([
+        final result = await _enqueueAndWait(sender, [
           PhoneTransferSource(
             path: source.path,
             filename: 'resume.bin',
@@ -776,7 +774,7 @@ void main() {
         reconnectBackoff: const [Duration.zero],
       );
 
-      final result = await sender.enqueue([
+      final result = await _enqueueAndWait(sender, [
         PhoneTransferSource(
           path: source.path,
           filename: 'accept.bin',
@@ -824,21 +822,28 @@ void main() {
         reconnectBackoff: const [Duration.zero],
       );
 
-      await expectLater(
-        sender.enqueue([
-          PhoneTransferSource(
-            path: source.path,
-            filename: 'accept.bin',
-            mime: 'application/octet-stream',
-          ),
-        ]),
-        throwsA(isA<TimeoutException>()),
-      );
+      final admitted = await sender.enqueue([
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'accept.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+      final failed = await sender.waitForTerminal(admitted.transferId);
       expect(connectionCount, 2);
+      expect(failed.status, PhoneTransferStatus.failed);
     } finally {
       await directory.delete(recursive: true);
     }
   });
+}
+
+Future<PhoneTransferBatch> _enqueueAndWait(
+  PhoneTransferSender sender,
+  List<PhoneTransferSource> sources,
+) async {
+  final admitted = await sender.enqueue(sources);
+  return sender.waitForTerminal(admitted.transferId);
 }
 
 class _ScriptedTransferTransport implements RelayTransport {
@@ -980,11 +985,12 @@ class _FinalizingTransferTransport implements RelayTransport {
 }
 
 class _RejectedTransferTransport implements RelayTransport {
-  _RejectedTransferTransport(this.code) {
+  _RejectedTransferTransport(this.code, {this.context}) {
     scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
   }
 
   final String code;
+  final Map<String, Object?>? context;
   final _incoming = StreamController<Object?>();
 
   @override
@@ -1009,6 +1015,7 @@ class _RejectedTransferTransport implements RelayTransport {
         'transferId': offer['transferId'],
         'fileId': file['fileId'],
         'code': code,
+        ...?context,
       }),
     );
   }
@@ -1098,7 +1105,7 @@ Future<List<int>> _sendChunkedFile({required int? advertisedChunkBytes}) async {
       history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
     );
 
-    await sender.enqueue([
+    await _enqueueAndWait(sender, [
       PhoneTransferSource(
         path: source.path,
         filename: 'large.bin',

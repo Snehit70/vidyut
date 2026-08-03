@@ -45,3 +45,8 @@ app/**/*.apk
 .vscode/
 *.swp
 .claude/settings.local.json
+
+# Android Eclipse/Buildship project metadata (machine-specific)
+app/**/.project
+app/**/.classpath
+app/**/.settings/
