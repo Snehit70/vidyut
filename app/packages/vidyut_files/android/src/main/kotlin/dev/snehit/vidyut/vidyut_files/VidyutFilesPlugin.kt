@@ -343,10 +343,11 @@ class VidyutFilesPlugin :
             return true
         }
         try {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            val takeFlags = VidyutFileGrantFlags.destinationFlags(data.flags)
+            check(takeFlags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) {
+                "Picker did not return a writable persistable grant."
+            }
+            context.contentResolver.takePersistableUriPermission(uri, takeFlags)
             preferences().edit().putString(KEY_TREE_URI, uri.toString()).apply()
             result.success(destinationLabel())
         } catch (error: Exception) {
@@ -359,7 +360,7 @@ class VidyutFilesPlugin :
         val name = selectedFilename(uri)
         var persisted = false
         var grantError: String? = null
-        val takeFlags = returnedFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val takeFlags = VidyutFileGrantFlags.sourceFlags(returnedFlags)
         if (takeFlags != 0) {
             try {
                 context.contentResolver.takePersistableUriPermission(uri, takeFlags)
@@ -367,6 +368,8 @@ class VidyutFilesPlugin :
             } catch (error: Exception) {
                 grantError = error.javaClass.simpleName
             }
+        } else {
+            grantError = "missing-read-grant"
         }
         val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', ""))
             ?: "application/octet-stream"
@@ -719,4 +722,13 @@ class VidyutFilesPlugin :
         private const val STAGE_KEY_ALIAS = "vidyut-transfer-stage-v1"
         private const val KEY_TREE_URI = "destination_tree_uri"
     }
+}
+
+internal object VidyutFileGrantFlags {
+    fun sourceFlags(returnedFlags: Int): Int =
+        returnedFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION
+
+    fun destinationFlags(returnedFlags: Int): Int =
+        returnedFlags and
+            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
 }
