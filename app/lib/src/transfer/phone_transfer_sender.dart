@@ -265,11 +265,15 @@ class PhoneTransferSender {
   final _preparationTokens = <String, _PreparationToken>{};
   final _preparationRuns = <String, Future<void>>{};
   final _cancelledFiles = <String>{};
+  final _activeTransferCancellations = <String, _ActiveTransferCancellation>{};
   final _lastPreparationPersist = <String, int>{};
   final _lastPreparationPublish = <String, int>{};
   final _timingAnchors = <String, int>{};
   final _defaultMonotonicClock = Stopwatch()..start();
   Future<void>? _resumeRun;
+  Future<void> _sendTail = Future<void>.value();
+  final _sendPredecessors = <String, Future<void>>{};
+  final _sendTurnCompleters = <String, Completer<void>>{};
 
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
   Stream<PhoneTransferBatch> get batchesCreated =>
@@ -292,6 +296,20 @@ class PhoneTransferSender {
     }
   }
 
+  void _registerSendTurn(String transferId) {
+    if (_sendTurnCompleters.containsKey(transferId)) return;
+    final completer = Completer<void>();
+    _sendPredecessors[transferId] = _sendTail;
+    _sendTurnCompleters[transferId] = completer;
+    _sendTail = completer.future;
+  }
+
+  void _completeSendTurn(String transferId) {
+    final completer = _sendTurnCompleters.remove(transferId);
+    _sendPredecessors.remove(transferId);
+    if (completer != null && !completer.isCompleted) completer.complete();
+  }
+
   /// Requests cancellation without making the Files screen the owner of the
   /// work. The request is durable before the active preparation is invalidated.
   Future<void> cancelFile(String transferId, String fileId) async {
@@ -305,7 +323,18 @@ class PhoneTransferSender {
     if (_isTerminal(file.status)) return;
     if (file.status == PhoneTransferStatus.active &&
         file.preparationPhase == null) {
-      // Payload transfer owns cancellation once bytes have been accepted.
+      final key = '$transferId:$fileId';
+      final active = _activeTransferCancellations[key];
+      if (active == null) return;
+      final requestedAt = DateTime.now().millisecondsSinceEpoch;
+      final updated = await _replaceFile(
+        batch,
+        index,
+        file.copyWith(cancellationRequestedAt: requestedAt),
+      );
+      _publishBatch(updated, stage: PhoneTransferProgressStage.cancelling);
+      _cancelledFiles.add(key);
+      await active.cancel();
       return;
     }
     final requestedAt = DateTime.now().millisecondsSinceEpoch;
@@ -414,6 +443,7 @@ class PhoneTransferSender {
             sources.add(_sourceForFile(file));
           }
           if (sources.isNotEmpty) {
+            _registerSendTurn(batch.transferId);
             await _schedulePreparation(batch, sources);
           }
         } on Object catch (error) {
@@ -497,6 +527,7 @@ class PhoneTransferSender {
     // Persist before provider metadata, probing, hashing, policy, pairing, or
     // relay work. This is the durable boundary used by restart recovery.
     await history.upsert(batch);
+    _registerSendTurn(batch.transferId);
     for (var index = 0; index < batch.files.length; index++) {
       batch = _markTimingValue(
         batch,
@@ -524,6 +555,31 @@ class PhoneTransferSender {
     await onBatchCreated?.call(batch);
     unawaited(_schedulePreparation(batch, sources));
     return batch;
+  }
+
+  /// Waits for the durable sender-owned run to reach a terminal file state.
+  /// Enqueue itself intentionally returns the visible preparing card first.
+  Future<PhoneTransferBatch> waitForTerminal(
+    String transferId, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      final batch = (await history.load())
+          .where((item) => item.transferId == transferId)
+          .firstOrNull;
+      if (batch == null) {
+        throw StateError('Transfer $transferId no longer exists.');
+      }
+      if (batch.files.isNotEmpty &&
+          batch.files.every((file) => _isTerminal(file.status))) {
+        return batch;
+      }
+      if (!DateTime.now().isBefore(deadline)) {
+        throw TimeoutException('Timed out waiting for transfer $transferId.');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
   }
 
   Future<void> _schedulePreparation(
@@ -624,6 +680,8 @@ class PhoneTransferSender {
             batch,
             index,
             file.copyWith(
+              filename: _safeBasename(prepared.filename),
+              mime: prepared.mime,
               size: prepared.size,
               lastModifiedMs: prepared.lastModifiedMs,
               lastModifiedKnown: prepared.lastModifiedKnown,
@@ -684,6 +742,8 @@ class PhoneTransferSender {
         Error.throwWithStackTrace(error.error, error.stackTrace);
       }
       handedOffSession = preparedSession;
+      final predecessor = _sendPredecessors[initial.transferId];
+      if (predecessor != null) await predecessor;
       await _send(pairing, batch, preparedSession: preparedSession);
     } on PreparationCancelled {
       final latest = (await history.load())
@@ -740,6 +800,7 @@ class PhoneTransferSender {
       for (final uri in retainedUris) {
         await sourceReader.release(uri);
       }
+      _completeSendTurn(initial.transferId);
     }
   }
 
@@ -764,6 +825,8 @@ class PhoneTransferSender {
       int size,
       int lastModifiedMs,
       bool lastModifiedKnown,
+      String filename,
+      String mime,
       String sha256,
       PhoneTransferSourceReference? reference,
     })
@@ -815,6 +878,8 @@ class PhoneTransferSender {
         size: info.size,
         lastModifiedMs: info.modified.millisecondsSinceEpoch,
         lastModifiedKnown: true,
+        filename: source.filename,
+        mime: source.mime,
         sha256: digest,
         reference: null,
       );
@@ -861,6 +926,8 @@ class PhoneTransferSender {
         lastModifiedMs: staged.lastModifiedMs ?? source.lastModifiedMs ?? 0,
         lastModifiedKnown:
             staged.lastModifiedMs != null || source.lastModifiedMs != null,
+        filename: probe.filename ?? source.filename,
+        mime: probe.mime ?? source.mime,
         sha256: staged.sha256,
         reference: PhoneTransferSourceReference(
           kind: PhoneTransferSourceKind.managedStage,
@@ -893,6 +960,8 @@ class PhoneTransferSender {
       size: probe.size,
       lastModifiedMs: source.lastModifiedMs ?? 0,
       lastModifiedKnown: source.lastModifiedMs != null,
+      filename: probe.filename ?? source.filename,
+      mime: probe.mime ?? source.mime,
       sha256: digest,
       reference: null,
     );
@@ -1086,6 +1155,7 @@ class PhoneTransferSender {
           .toList(),
     );
     await history.upsert(reset);
+    _registerSendTurn(reset.transferId);
     final sources = <PhoneTransferSource>[];
     for (final file in reset.files) {
       if (file.status == PhoneTransferStatus.preparing) {
@@ -1118,6 +1188,12 @@ class PhoneTransferSender {
           preparationStartedAt:
               batch.files.first.preparationStartedAt ?? batch.createdAtMs,
         ),
+      );
+      _publishBatch(
+        batch,
+        stage: PhoneTransferProgressStage.connecting,
+        currentFileIndex: 0,
+        currentFilename: batch.files.first.filename,
       );
     }
     _TransferSession? session;
@@ -1161,6 +1237,21 @@ class PhoneTransferSender {
           );
           batch = await _replaceFile(batch, index, transferFile);
         }
+        final cancellationKey = '${batch.transferId}:${transferFile.fileId}';
+        final cancellationTransferId = batch.transferId;
+        final cancellationFileId = transferFile.fileId;
+        final cancellation = _ActiveTransferCancellation(
+          sendCancel: () async {
+            activeSession.connection.sendTransferControl({
+              'v': 1,
+              'kind': 'transfer_cancel',
+              'transferId': cancellationTransferId,
+              'fileId': cancellationFileId,
+            });
+            await activeSession.close();
+          },
+        );
+        _activeTransferCancellations[cancellationKey] = cancellation;
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.waitingForLaptop,
@@ -1237,7 +1328,7 @@ class PhoneTransferSender {
           if (sourcePath == null && sourceUri == null) {
             throw StateError('Source file is unavailable.');
           }
-          final source = sourcePath == null
+          final source = sourceUri != null || sourcePath == null
               ? null
               : await File(sourcePath).open();
           try {
@@ -1497,6 +1588,7 @@ class PhoneTransferSender {
           currentFilename: transferFile.filename,
           bytesPerSecond: _bytesPerSecond(batch, stopwatch),
         );
+        _activeTransferCancellations.remove(cancellationKey);
       }
       batch = batch.copyWith(
         status: PhoneTransferStatus.completed,
@@ -1506,7 +1598,13 @@ class PhoneTransferSender {
       _publishBatch(batch, stage: PhoneTransferProgressStage.completed);
       return batch;
     } catch (error) {
-      if (error is PreparationCancelled) rethrow;
+      if (error is PreparationCancelled ||
+          batch.files.any(
+            (file) =>
+                _cancelledFiles.contains('${batch.transferId}:${file.fileId}'),
+          )) {
+        throw const PreparationCancelled();
+      }
       batch = batch.copyWith(
         status: PhoneTransferStatus.failed,
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
@@ -1531,6 +1629,9 @@ class PhoneTransferSender {
       _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
       rethrow;
     } finally {
+      _activeTransferCancellations.removeWhere(
+        (key, _) => key.startsWith('${batch.transferId}:'),
+      );
       await session?.close();
     }
   }
@@ -2032,6 +2133,23 @@ class _TransferSession {
     await _statusSubscription.cancel();
     await inbox.close();
     await connection.close();
+  }
+}
+
+class _ActiveTransferCancellation {
+  _ActiveTransferCancellation({required this.sendCancel});
+
+  final Future<void> Function() sendCancel;
+  bool _requested = false;
+
+  Future<void> cancel() async {
+    if (_requested) return;
+    _requested = true;
+    try {
+      await sendCancel();
+    } catch (_) {
+      // Closing an already-disconnected session still completes local cancel.
+    }
   }
 }
 

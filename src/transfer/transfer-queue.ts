@@ -224,6 +224,7 @@ export class TransferQueue {
           mime,
           size,
           lastModifiedMs,
+          lastModifiedKnown,
           sha256,
         }) => ({
           fileId,
@@ -231,6 +232,7 @@ export class TransferQueue {
           mime,
           size,
           lastModifiedMs,
+          ...(lastModifiedKnown === undefined ? {} : { lastModifiedKnown }),
           sha256,
         }),
       ),
@@ -294,33 +296,6 @@ export class TransferQueue {
     if (maxChunkBytes !== undefined) file.maxChunkBytes = maxChunkBytes;
     this.touch(batch);
     await this.persist();
-  }
-
-  /**
-   * Advances the live accepted offset without making it restart-trusted.
-   * Callers must follow this with [confirmProgress] at the chosen durable
-   * checkpoint boundary.
-   */
-  advanceAcceptedProgress(
-    transferId: string,
-    fileId: string,
-    acceptedOffset: number,
-  ): void {
-    const { batch, file } = this.findFile(transferId, fileId);
-    if (file.status !== "active") {
-      throw new Error("Only an active file can accept progress.");
-    }
-    if (
-      !Number.isSafeInteger(acceptedOffset) ||
-      acceptedOffset < file.confirmedOffset ||
-      acceptedOffset > file.size
-    ) {
-      throw new RangeError(
-        "Accepted offset must be monotonic and within the file.",
-      );
-    }
-    file.confirmedOffset = acceptedOffset;
-    this.touch(batch);
   }
 
   async complete(

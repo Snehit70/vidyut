@@ -13,6 +13,7 @@ import android.os.ParcelFileDescriptor
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.system.Os
 import android.system.OsConstants
 import android.webkit.MimeTypeMap
@@ -31,7 +32,6 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.security.MessageDigest
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -245,8 +245,13 @@ class VidyutFilesPlugin :
                 val reference = call.argument<String>("reference")
                 if (reference?.startsWith(STAGE_PREFIX) == true) {
                     ioExecutor.execute {
-                        stageFile(reference).delete()
-                        if (engineAttached.get()) result.success(null)
+                        try {
+                            stageFile(reference).delete()
+                        } catch (_: Exception) {
+                            // Discarding an absent stage is a no-op.
+                        } finally {
+                            if (engineAttached.get()) result.success(null)
+                        }
                     }
                 } else {
                     result.success(null)
@@ -365,6 +370,9 @@ class VidyutFilesPlugin :
             try {
                 context.contentResolver.takePersistableUriPermission(uri, takeFlags)
                 persisted = true
+                val key = grantKey(uri.toString())
+                val count = preferences().getInt(key, 0)
+                preferences().edit().putInt(key, count + 1).apply()
             } catch (error: Exception) {
                 grantError = error.javaClass.simpleName
             }
@@ -410,17 +418,23 @@ class VidyutFilesPlugin :
                     check(Os.read(fd, one, 0, 1) == 1) { "Provider read probe failed." }
                 }
                 Os.lseek(fd, current, OsConstants.SEEK_SET)
-                mapOf(
-                    "seekable" to true,
-                    "size" to size.coerceAtLeast(0),
-                    "sizeKnown" to (size >= 0),
-                )
+                buildMap {
+                    put("seekable", true)
+                    put("size", size.coerceAtLeast(0))
+                    put("sizeKnown", size >= 0)
+                    val metadata = sourceMetadata(uri)
+                    metadata.first?.let { put("filename", it) }
+                    metadata.second?.let { put("mime", it) }
+                }
             } catch (_: Exception) {
-                mapOf(
-                    "seekable" to false,
-                    "size" to size.coerceAtLeast(0),
-                    "sizeKnown" to (size >= 0),
-                )
+                buildMap {
+                    put("seekable", false)
+                    put("size", size.coerceAtLeast(0))
+                    put("sizeKnown", size >= 0)
+                    val metadata = sourceMetadata(uri)
+                    metadata.first?.let { put("filename", it) }
+                    metadata.second?.let { put("mime", it) }
+                }
             }
         }
     }
@@ -481,9 +495,10 @@ class VidyutFilesPlugin :
                         total += count
                         check(total <= maximumBytes) { "Selected source exceeds the configured maximum." }
                         digest.update(buffer, 0, count)
-                        val nonce = ByteArray(GCM_NONCE_BYTES).also(SecureRandom()::nextBytes)
                         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                        cipher.init(Cipher.ENCRYPT_MODE, stageKey(), GCMParameterSpec(128, nonce))
+                        cipher.init(Cipher.ENCRYPT_MODE, stageKey())
+                        val nonce = cipher.iv
+                        check(nonce.size == GCM_NONCE_BYTES) { "Unexpected GCM nonce length." }
                         val encrypted = cipher.doFinal(buffer, 0, count)
                         output.writeInt(count)
                         output.write(nonce)
@@ -605,6 +620,32 @@ class VidyutFilesPlugin :
         } else {
             name
         }
+    }
+
+    private fun sourceMetadata(uri: Uri): Pair<String?, String?> {
+        val displayName = try {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                } else {
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+        val mime = try {
+            context.contentResolver.getType(uri)
+        } catch (_: Exception) {
+            null
+        }
+        return displayName to mime
     }
 
     private fun destinationLabel(): String {

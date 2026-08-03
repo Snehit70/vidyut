@@ -388,11 +388,17 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         if (!record) {
           return Response.json({ code: "transfer_not_found" }, { status: 404 });
         }
-        if (offset !== record.confirmedOffset) {
+        this.progressSessions.sessionFor(transferId, record);
+        const expectedOffset = this.progressSessions.liveAcceptedOffset(
+          transferId,
+          fileId,
+          record.confirmedOffset,
+        );
+        if (offset !== expectedOffset) {
           return Response.json(
             {
               code: "offset_not_confirmed",
-              confirmedOffset: record.confirmedOffset,
+              confirmedOffset: expectedOffset,
             },
             { status: 409 },
           );
@@ -572,11 +578,6 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
       progress.markCheckpoint(confirmedOffset, now);
     } else {
-      this.queue.advanceAcceptedProgress(
-        transferId,
-        fileId,
-        confirmedOffset,
-      );
       progress.markAccepted(confirmedOffset);
     }
     if (publishDue) {

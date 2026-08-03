@@ -282,6 +282,8 @@ class PhoneTransferFile {
   }
 
   PhoneTransferFile copyWith({
+    String? filename,
+    String? mime,
     int? size,
     int? lastModifiedMs,
     bool? lastModifiedKnown,
@@ -311,8 +313,8 @@ class PhoneTransferFile {
   }) {
     return PhoneTransferFile(
       fileId: fileId,
-      filename: filename,
-      mime: mime,
+      filename: filename ?? this.filename,
+      mime: mime ?? this.mime,
       size: size ?? this.size,
       lastModifiedMs: lastModifiedMs ?? this.lastModifiedMs,
       lastModifiedKnown: lastModifiedKnown ?? this.lastModifiedKnown,

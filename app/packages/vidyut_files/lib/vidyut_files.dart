@@ -5,11 +5,15 @@ class VidyutSourceProbe {
     required this.seekable,
     required this.size,
     required this.sizeKnown,
+    this.filename,
+    this.mime,
   });
 
   final bool seekable;
   final int size;
   final bool sizeKnown;
+  final String? filename;
+  final String? mime;
 
   factory VidyutSourceProbe.fromMap(Map<Object?, Object?> value) {
     final seekable = value['seekable'];
@@ -22,6 +26,10 @@ class VidyutSourceProbe {
       seekable: seekable,
       size: size,
       sizeKnown: sizeKnown,
+      filename: value['filename'] is String
+          ? value['filename'] as String
+          : null,
+      mime: value['mime'] is String ? value['mime'] as String : null,
     );
   }
 }
