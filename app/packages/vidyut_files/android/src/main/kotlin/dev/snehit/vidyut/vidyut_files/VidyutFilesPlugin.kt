@@ -30,6 +30,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -55,6 +56,7 @@ class VidyutFilesPlugin :
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val engineAttached = AtomicBoolean(false)
     private val stageCancellations = java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean>()
+    private val hashCancellations = java.util.concurrent.ConcurrentHashMap<String, AtomicBoolean>()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         engineAttached.set(true)
@@ -137,17 +139,22 @@ class VidyutFilesPlugin :
             }
             "hashSource" -> {
                 val uri = call.argument<String>("uri")?.let(Uri::parse)
+                val operationId = call.argument<String>("operationId") ?: UUID.randomUUID().toString()
                 if (uri == null) {
                     result.error("bad-args", "Missing source URI.", null)
                     return
                 }
+                val cancelled = AtomicBoolean(false)
+                hashCancellations[operationId] = cancelled
                 ioExecutor.execute {
                     try {
-                        if (engineAttached.get()) result.success(hashSource(uri.toString()))
+                        if (engineAttached.get()) result.success(hashSource(uri.toString(), cancelled))
                     } catch (error: Exception) {
                         if (engineAttached.get()) {
                             result.error("source-unavailable", error.message, null)
                         }
+                    } finally {
+                        hashCancellations.remove(operationId, cancelled)
                     }
                 }
             }
@@ -182,6 +189,14 @@ class VidyutFilesPlugin :
                     result.success(null)
                 }
             }
+            "cancelHash" -> {
+                val operationId = call.argument<String>("operationId")
+                if (operationId == null) result.error("bad-args", "Missing operation ID.", null)
+                else {
+                    hashCancellations[operationId]?.set(true)
+                    result.success(null)
+                }
+            }
             "readSourceAt" -> {
                 val uri = call.argument<String>("uri")?.let(Uri::parse)
                 val offset = call.argument<Number>("offset")?.toLong()
@@ -206,7 +221,7 @@ class VidyutFilesPlugin :
                 if (reference?.startsWith(STAGE_PREFIX) == true) {
                     ioExecutor.execute {
                         try {
-                            stageFile(reference).delete()
+                            deleteStage(reference)
                         } finally {
                             if (engineAttached.get()) result.success(null)
                         }
@@ -246,7 +261,7 @@ class VidyutFilesPlugin :
                 if (reference?.startsWith(STAGE_PREFIX) == true) {
                     ioExecutor.execute {
                         try {
-                            stageFile(reference).delete()
+                            deleteStage(reference)
                         } catch (_: Exception) {
                             // Discarding an absent stage is a no-op.
                         } finally {
@@ -439,14 +454,15 @@ class VidyutFilesPlugin :
         }
     }
 
-    private fun hashSource(reference: String): String {
-        if (reference.startsWith(STAGE_PREFIX)) return hashStage(reference)
+    private fun hashSource(reference: String, cancelled: AtomicBoolean): String {
+        if (reference.startsWith(STAGE_PREFIX)) return hashStage(reference, cancelled)
         val uri = Uri.parse(reference)
         val digest = MessageDigest.getInstance("SHA-256")
         val descriptor = openSource(uri)
         ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
             val buffer = ByteArray(BUFFER_BYTES)
             while (true) {
+                check(!cancelled.get()) { "Source hashing cancelled." }
                 val count = input.read(buffer)
                 if (count < 0) break
                 digest.update(buffer, 0, count)
@@ -481,8 +497,12 @@ class VidyutFilesPlugin :
         val id = UUID.randomUUID().toString()
         val partial = File(directory, "$id.partial")
         val published = File(directory, id)
+        val indexPartial = File(directory, "$id.index.partial")
+        val index = File(directory, "$id.index")
         val digest = MessageDigest.getInstance("SHA-256")
         var total = 0L
+        var fileOffset = 0L
+        val indexEntries = mutableListOf<StageIndexEntry>()
         try {
             val descriptor = openSource(uri)
             ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
@@ -492,6 +512,7 @@ class VidyutFilesPlugin :
                         check(!cancelled.get()) { "Source staging cancelled." }
                         val count = input.read(buffer)
                         if (count < 0) break
+                        indexEntries += StageIndexEntry(total, fileOffset)
                         total += count
                         check(total <= maximumBytes) { "Selected source exceeds the configured maximum." }
                         digest.update(buffer, 0, count)
@@ -504,11 +525,19 @@ class VidyutFilesPlugin :
                         output.write(nonce)
                         output.writeInt(encrypted.size)
                         output.write(encrypted)
+                        fileOffset += 4L + GCM_NONCE_BYTES + 4L + encrypted.size
                     }
                 }
             }
             check(!cancelled.get()) { "Source staging cancelled." }
+            DataOutputStream(indexPartial.outputStream()).use { output ->
+                indexEntries.forEach { entry ->
+                    output.writeLong(entry.logicalOffset)
+                    output.writeLong(entry.fileOffset)
+                }
+            }
             check(partial.renameTo(published)) { "Could not publish staged source." }
+            check(indexPartial.renameTo(index)) { "Could not publish staged source index." }
             return mapOf(
                 "reference" to "$STAGE_PREFIX$id",
                 "size" to total,
@@ -516,16 +545,33 @@ class VidyutFilesPlugin :
             )
         } catch (error: Exception) {
             partial.delete()
+            published.delete()
+            indexPartial.delete()
+            index.delete()
             throw error
         }
     }
 
-    private fun stageFile(reference: String): File {
+    private fun stageId(reference: String): String {
         val id = reference.removePrefix(STAGE_PREFIX)
         require(id.matches(Regex("[0-9a-fA-F-]{36}"))) { "Invalid managed stage reference." }
+        return id
+    }
+
+    private fun stageFile(reference: String): File {
+        val id = stageId(reference)
         return File(File(context.filesDir, "vidyut-stages"), id).also {
             check(it.isFile) { "Managed staged source is unavailable." }
         }
+    }
+
+    private fun stageIndexFile(reference: String): File {
+        return File(File(context.filesDir, "vidyut-stages"), "${stageId(reference)}.index")
+    }
+
+    private fun deleteStage(reference: String) {
+        stageFile(reference).delete()
+        stageIndexFile(reference).delete()
     }
 
     private fun stageSize(reference: String): Long {
@@ -542,18 +588,27 @@ class VidyutFilesPlugin :
         return total
     }
 
-    private fun hashStage(reference: String): String {
+    private fun hashStage(reference: String, cancelled: AtomicBoolean): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        readStageBlocks(reference) { bytes, count -> digest.update(bytes, 0, count) }
+        readStageBlocks(reference, cancelled) { bytes, count ->
+            digest.update(bytes, 0, count)
+            true
+        }
         return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun readStageAt(reference: String, offset: Long, length: Int): ByteArray {
         require(offset >= 0) { "Offset must be non-negative." }
+        require(offset <= Long.MAX_VALUE - length) { "Source read exceeds the addressable range." }
         val output = ByteArray(length)
+        if (length == 0) return output
+        val index = readStageIndex(reference)
+        if (index.isNotEmpty()) {
+            return readIndexedStageAt(reference, offset, length, index)
+        }
         var outputOffset = 0
         var logicalOffset = 0L
-        readStageBlocks(reference) { bytes, count ->
+        readStageBlocks(reference, block = { bytes, count ->
             val blockStart = logicalOffset
             val blockEnd = logicalOffset + count
             val requestedStart = maxOf(offset, blockStart)
@@ -564,14 +619,74 @@ class VidyutFilesPlugin :
                 outputOffset += copy
             }
             logicalOffset = blockEnd
+            outputOffset < output.size
+        })
+        return if (outputOffset == output.size) output else output.copyOf(outputOffset)
+    }
+
+    private fun readIndexedStageAt(
+        reference: String,
+        offset: Long,
+        length: Int,
+        index: List<StageIndexEntry>,
+    ): ByteArray {
+        val targetEnd = offset + length
+        var low = 0
+        var high = index.size - 1
+        var selected = 0
+        while (low <= high) {
+            val middle = (low + high) ushr 1
+            if (index[middle].logicalOffset <= offset) {
+                selected = middle
+                low = middle + 1
+            } else {
+                high = middle - 1
+            }
+        }
+        val output = ByteArray(length)
+        var outputOffset = 0
+        RandomAccessFile(stageFile(reference), "r").use { input ->
+            input.seek(index[selected].fileOffset)
+            var logicalOffset = index[selected].logicalOffset
+            while (logicalOffset < targetEnd) {
+                val count = input.readInt()
+                val nonce = ByteArray(GCM_NONCE_BYTES)
+                input.readFully(nonce)
+                val encryptedSize = input.readInt()
+                val encrypted = ByteArray(encryptedSize)
+                input.readFully(encrypted)
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, stageKey(), GCMParameterSpec(128, nonce))
+                val bytes = cipher.doFinal(encrypted)
+                check(bytes.size == count) { "Managed stage is corrupt." }
+                val blockStart = logicalOffset
+                val blockEnd = logicalOffset + count
+                val requestedStart = maxOf(offset, blockStart)
+                val requestedEnd = minOf(targetEnd, blockEnd)
+                if (requestedStart < requestedEnd) {
+                    val copy = (requestedEnd - requestedStart).toInt()
+                    bytes.copyInto(
+                        output,
+                        outputOffset,
+                        (requestedStart - blockStart).toInt(),
+                        (requestedStart - blockStart).toInt() + copy,
+                    )
+                    outputOffset += copy
+                }
+                logicalOffset = blockEnd
+            }
         }
         return if (outputOffset == output.size) output else output.copyOf(outputOffset)
     }
 
-    private fun readStageBlocks(reference: String, block: (ByteArray, Int) -> Unit) {
+    private fun readStageBlocks(
+        reference: String,
+        cancelled: AtomicBoolean? = null,
+        block: (ByteArray, Int) -> Boolean,
+    ) {
         DataInputStream(BufferedInputStream(stageFile(reference).inputStream())).use { input ->
-            var index = 0
             while (true) {
+                check(cancelled?.get() != true) { "Source hashing cancelled." }
                 val count = try { input.readInt() } catch (_: java.io.EOFException) { break }
                 val nonce = ByteArray(GCM_NONCE_BYTES)
                 input.readFully(nonce)
@@ -582,11 +697,31 @@ class VidyutFilesPlugin :
                 cipher.init(Cipher.DECRYPT_MODE, stageKey(), GCMParameterSpec(128, nonce))
                 val bytes = cipher.doFinal(encrypted)
                 check(bytes.size == count) { "Managed stage is corrupt." }
-                block(bytes, count)
-                index++
+                if (!block(bytes, count)) break
             }
         }
     }
+
+    private fun readStageIndex(reference: String): List<StageIndexEntry> {
+        val file = stageIndexFile(reference)
+        if (!file.isFile) return emptyList()
+        val entries = mutableListOf<StageIndexEntry>()
+        DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
+            while (true) {
+                try {
+                    entries += StageIndexEntry(input.readLong(), input.readLong())
+                } catch (_: java.io.EOFException) {
+                    break
+                }
+            }
+        }
+        return entries
+    }
+
+    private data class StageIndexEntry(
+        val logicalOffset: Long,
+        val fileOffset: Long,
+    )
 
     private fun stageKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

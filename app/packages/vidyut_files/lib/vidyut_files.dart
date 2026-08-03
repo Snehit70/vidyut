@@ -147,15 +147,19 @@ class VidyutFiles {
     return VidyutSourceProbe.fromMap(Map<Object?, Object?>.from(raw));
   }
 
-  Future<String> hashSource(String uri) async {
+  Future<String> hashSource(String uri, {String? operationId}) async {
     final hash = await _channel.invokeMethod<String>('hashSource', {
       'uri': uri,
+      ...?operationId == null ? null : {'operationId': operationId},
     });
     if (hash == null || !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
       throw const FormatException('Android returned an invalid source hash.');
     }
     return hash;
   }
+
+  Future<void> cancelHash(String operationId) =>
+      _channel.invokeMethod<void>('cancelHash', {'operationId': operationId});
 
   Future<VidyutStagedSource> stageSource(
     String uri, {

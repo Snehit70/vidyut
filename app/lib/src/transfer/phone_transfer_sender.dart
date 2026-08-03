@@ -76,7 +76,17 @@ abstract interface class PhoneTransferSourceReader {
   Future<void> discard(String reference) async {}
 }
 
-class VidyutFilesSourceReader implements PhoneTransferSourceReader {
+abstract interface class PhoneTransferCancellableSourceReader {
+  Future<String> hashSha256Cancellable(
+    String uri, {
+    required String operationId,
+  });
+
+  Future<void> cancelHash(String operationId);
+}
+
+class VidyutFilesSourceReader
+    implements PhoneTransferSourceReader, PhoneTransferCancellableSourceReader {
   const VidyutFilesSourceReader([this.files = const VidyutFiles()]);
 
   final VidyutFiles files;
@@ -86,6 +96,15 @@ class VidyutFilesSourceReader implements PhoneTransferSourceReader {
 
   @override
   Future<String> hashSha256(String uri) => files.hashSource(uri);
+
+  @override
+  Future<String> hashSha256Cancellable(
+    String uri, {
+    required String operationId,
+  }) => files.hashSource(uri, operationId: operationId);
+
+  @override
+  Future<void> cancelHash(String operationId) => files.cancelHash(operationId);
 
   @override
   Future<VidyutStagedSource> stage(
@@ -131,7 +150,7 @@ class _PreparationToken {
   Future<void> Function(String operationId)? _cancelStage;
   String? _operationId;
 
-  void registerStageCancellation(
+  void registerOperationCancellation(
     String operationId,
     Future<void> Function(String operationId) cancelStage,
   ) {
@@ -956,7 +975,10 @@ class PhoneTransferSender {
       await onPhase(PhoneTransferPreparationPhase.staging, 0, null);
       await onTiming(TransferTimingStage.fallbackStage, false);
       final operationId = _id('stage');
-      token.registerStageCancellation(operationId, sourceReader.cancelStage);
+      token.registerOperationCancellation(
+        operationId,
+        sourceReader.cancelStage,
+      );
       String? stagedReference;
       try {
         try {
@@ -1006,8 +1028,24 @@ class PhoneTransferSender {
     token.check();
     await onTiming(TransferTimingStage.sourceHash, false);
     late final String digest;
+    final PhoneTransferCancellableSourceReader? cancellableReader =
+        sourceReader is PhoneTransferCancellableSourceReader
+        ? sourceReader as PhoneTransferCancellableSourceReader
+        : null;
+    final operationId = _id('hash');
+    if (cancellableReader != null) {
+      token.registerOperationCancellation(
+        operationId,
+        cancellableReader.cancelHash,
+      );
+    }
     try {
-      digest = await sourceReader.hashSha256(uri);
+      digest = cancellableReader == null
+          ? await sourceReader.hashSha256(uri)
+          : await cancellableReader.hashSha256Cancellable(
+              uri,
+              operationId: operationId,
+            );
     } finally {
       await onTiming(TransferTimingStage.sourceHash, true);
     }
@@ -2104,7 +2142,7 @@ class PhoneTransferSender {
             'lastModifiedMs': file.lastModifiedMs,
             if (!file.lastModifiedKnown) 'lastModifiedKnown': false,
             'sha256': file.sha256,
-            if (file.timing != null) 'timing': file.timing!.toJson(),
+            if (file.timing != null) 'senderTiming': file.timing!.toJson(),
           },
         )
         .toList(),

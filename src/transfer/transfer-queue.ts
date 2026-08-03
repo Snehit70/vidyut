@@ -190,7 +190,7 @@ export class TransferQueue {
         destinationPath: destinationPaths.get(file.fileId)!,
         status: "queued",
         confirmedOffset: 0,
-        timing: file.timing ?? this.newTiming(),
+        timing: this.newTiming(),
       })),
     };
     assertBatch(batch);
@@ -216,7 +216,7 @@ export class TransferQueue {
           lastModifiedMs,
           lastModifiedKnown,
           sha256,
-          timing,
+          senderTiming,
         }) => ({
           fileId,
           filename,
@@ -225,7 +225,7 @@ export class TransferQueue {
           lastModifiedMs,
           ...(lastModifiedKnown === undefined ? {} : { lastModifiedKnown }),
           sha256,
-          ...(timing === undefined ? {} : { timing }),
+          ...(senderTiming === undefined ? {} : { senderTiming }),
         }),
       ),
     };
@@ -671,7 +671,7 @@ function offersMatch(left: TransferOffer, right: TransferOffer): boolean {
     direction: offer.direction,
     createdAtMs: offer.createdAtMs,
     files: [...offer.files]
-      .map(({ timing: _timing, ...file }) => file)
+      .map(({ senderTiming: _senderTiming, ...file }) => file)
       .sort((a, b) => a.fileId.localeCompare(b.fileId)),
   });
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));

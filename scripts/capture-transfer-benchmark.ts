@@ -20,6 +20,18 @@ type TimingSummary = {
   attempts: TimingAttempt[];
 };
 
+type CapturedTiming = {
+  wallAnchorMs: number;
+  offerWallMs: number | null;
+  acceptWallMs: number | null;
+  attempts: TimingAttempt[];
+  stages: Record<string, {
+    startMs: number;
+    endMs: number | null;
+    durationMs: number | null;
+  }>;
+};
+
 type TransferFile = {
   fileId: string;
   filename: string;
@@ -29,6 +41,7 @@ type TransferFile = {
   status: string;
   confirmedOffset: number;
   timing?: TimingSummary;
+  senderTiming?: TimingSummary;
 };
 
 type TransferSnapshot = {
@@ -79,17 +92,8 @@ export type TransferBenchmarkRow = {
   network: Record<string, unknown> | null;
   relayCpuPercent: number | null;
   relayRssBytes: number | null;
-  timing: {
-    wallAnchorMs: number;
-    offerWallMs: number | null;
-    acceptWallMs: number | null;
-    attempts: TimingAttempt[];
-    stages: Record<string, {
-      startMs: number;
-      endMs: number | null;
-      durationMs: number | null;
-    }>;
-  } | null;
+  timing: CapturedTiming | null;
+  senderTiming: CapturedTiming | null;
 };
 
 type CliOptions = {
@@ -127,7 +131,9 @@ export function captureTransferRows(
   return snapshot.batches.flatMap((batch) =>
     batch.files.map((file) => {
       const attempts = file.timing?.attempts ?? [];
+      const senderAttempts = file.senderTiming?.attempts ?? [];
       const stages = flattenStages(attempts);
+      const senderStages = flattenStages(senderAttempts);
       return {
         schemaVersion: 1,
         capturedAtMs,
@@ -151,17 +157,28 @@ export function captureTransferRows(
         relayCpuPercent: metadata.relay?.cpuPercent ?? null,
         relayRssBytes: metadata.relay?.rssBytes ?? null,
         timing: file.timing
-          ? {
-              wallAnchorMs: file.timing.wallAnchorMs,
-              offerWallMs: file.timing.offerWallMs ?? null,
-              acceptWallMs: file.timing.acceptWallMs ?? null,
-              attempts,
-              stages,
-            }
+          ? capturedTiming(file.timing, attempts, stages)
+          : null,
+        senderTiming: file.senderTiming
+          ? capturedTiming(file.senderTiming, senderAttempts, senderStages)
           : null,
       } satisfies TransferBenchmarkRow;
     }),
   );
+}
+
+function capturedTiming(
+  timing: TimingSummary,
+  attempts: TimingAttempt[],
+  stages: CapturedTiming["stages"],
+): CapturedTiming {
+  return {
+    wallAnchorMs: timing.wallAnchorMs,
+    offerWallMs: timing.offerWallMs ?? null,
+    acceptWallMs: timing.acceptWallMs ?? null,
+    attempts,
+    stages,
+  };
 }
 
 function flattenStages(
@@ -189,7 +206,7 @@ function toCsv(rows: TransferBenchmarkRow[]): string {
     "schemaVersion", "capturedAtMs", "scenario", "run", "transferId",
     "batchId", "fileId", "direction", "filename", "mime", "status",
     "payloadBytes", "confirmedBytes", "retries", "disconnects", "sha256",
-    "relayCpuPercent", "relayRssBytes", "timingJson", "deviceJson",
+    "relayCpuPercent", "relayRssBytes", "senderTimingJson", "timingJson", "deviceJson",
     "buildJson", "networkJson",
   ];
   const lines = [header.join(",")];
@@ -213,6 +230,7 @@ function toCsv(rows: TransferBenchmarkRow[]): string {
       row.sha256,
       row.relayCpuPercent,
       row.relayRssBytes,
+      JSON.stringify(row.senderTiming),
       JSON.stringify(row.timing),
       JSON.stringify(row.device),
       JSON.stringify(row.build),
@@ -225,11 +243,13 @@ function toCsv(rows: TransferBenchmarkRow[]): string {
 function toMarkdown(rows: TransferBenchmarkRow[]): string {
   const durations = new Map<string, number[]>();
   for (const row of rows) {
-    for (const [stage, span] of Object.entries(row.timing?.stages ?? {})) {
-      if (span.durationMs !== null) {
-        const values = durations.get(stage) ?? [];
-        values.push(span.durationMs);
-        durations.set(stage, values);
+    for (const timing of [row.senderTiming, row.timing]) {
+      for (const [stage, span] of Object.entries(timing?.stages ?? {})) {
+        if (span.durationMs !== null) {
+          const values = durations.get(stage) ?? [];
+          values.push(span.durationMs);
+          durations.set(stage, values);
+        }
       }
     }
   }

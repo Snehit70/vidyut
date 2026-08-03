@@ -49,7 +49,7 @@ export interface TransferFileOffer {
   lastModifiedMs: number;
   lastModifiedKnown?: boolean;
   sha256: string;
-  timing?: TransferTimingSummary;
+  senderTiming?: TransferTimingSummary;
 }
 
 export interface TransferOffer {
@@ -224,7 +224,7 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
     (file.lastModifiedKnown === undefined ||
       typeof file.lastModifiedKnown === "boolean") &&
     typeof file.sha256 === "string" &&
-    (file.timing === undefined || isTransferTiming(file.timing)) &&
+    (file.senderTiming === undefined || isTransferTiming(file.senderTiming)) &&
     sha256Pattern.test(file.sha256)
   );
 }
