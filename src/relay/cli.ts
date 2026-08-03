@@ -20,6 +20,7 @@ import {
 import { TransferCoordinator } from "../transfer/transfer-coordinator";
 import {
   LaptopTransferDataPlane,
+  ReceiverProgressSessions,
 } from "../transfer/laptop-data-plane";
 import { preferredTransferChunkBytes } from "../transfer/transfer-chunk-policy";
 
@@ -70,12 +71,14 @@ const transferQueue = await TransferQueue.open({
   ),
 });
 let relay: Awaited<ReturnType<typeof createRelay>>;
+const receiverProgressSessions = new ReceiverProgressSessions();
 const transferCoordinator = new TransferCoordinator({
   queue: transferQueue,
   destinationDirectory: config.transferDestination,
   maxFileBytes: config.maxTransferFileBytes,
   maxChunkBytes: preferredTransferChunkBytes,
   publishControl: (message) => relay.publishTransferControl(message),
+  progressSessions: receiverProgressSessions,
 });
 const transferDataPlane = new LaptopTransferDataPlane(
   config.pairingSecret,
@@ -86,6 +89,8 @@ const transferDataPlane = new LaptopTransferDataPlane(
     await transferCoordinator.activateNext();
   },
   (paths) => transferCoordinator.enqueueLaptopFiles(paths),
+  {},
+  receiverProgressSessions,
 );
 relay = await createRelay({
   hostname: host,

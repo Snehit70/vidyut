@@ -9,7 +9,10 @@ import {
 } from "../src/shared/transfer-crypto";
 import { createTransferHttpAuth } from "../src/shared/transfer-http-auth";
 import { LaptopTransferDataPlane } from "../src/transfer/laptop-data-plane";
-import { TransferQueue } from "../src/transfer/transfer-queue";
+import {
+  JsonTransferQueueStorage,
+  TransferQueue,
+} from "../src/transfer/transfer-queue";
 
 const secret = "pairing-secret-for-laptop-data-plane";
 
@@ -187,10 +190,370 @@ describe("laptop transfer data plane", () => {
     );
     expect(queue.snapshot().batches[0]!.status).toBe("completed");
     expect(controls).toMatchObject([
+      { kind: "transfer_progress", confirmedOffset: 6 },
+      { kind: "transfer_file_complete" },
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("coalesces queue checkpoints and routine progress publication", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-coalesce-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    let persisted: ReturnType<TransferQueue["snapshot"]> | undefined;
+    const persistedOffsets: number[] = [];
+    const queue = await TransferQueue.open({
+      storage: {
+        async load() {
+          return persisted;
+        },
+        async save(value) {
+          persisted = structuredClone(value);
+          persistedOffsets.push(
+            value.batches[0]?.files[0]?.confirmedOffset ?? -1,
+          );
+        },
+      },
+      id: (() => {
+        let sequence = 0;
+        return (prefix: string) => `${prefix}_coalesce_${++sequence}`;
+      })(),
+    });
+    const offer = {
+      transferId: "transfer_coalesce_1234",
+      batchId: "batch_coalesce_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_coalesce_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const controls: unknown[] = [];
+    let now = 0;
+    const plane = new LaptopTransferDataPlane(
+      secret,
+      queue,
+      2,
+      (message) => controls.push(message),
+      undefined,
+      undefined,
+      {
+        now: () => now,
+        checkpointBytes: 4,
+        checkpointIntervalMs: 1_000,
+        publishIntervalMs: 1_000,
+      },
+    );
+
+    const first = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+      bytes.slice(0, 2),
+    );
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      confirmedOffset: 2,
+      complete: false,
+    });
+    expect(persisted!.batches[0]!.files[0]!.confirmedOffset).toBe(0);
+    expect(controls).toEqual([]);
+
+    now = 100;
+    const second = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      2,
+      bytes.slice(2, 4),
+    );
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({
+      confirmedOffset: 4,
+      complete: false,
+    });
+    expect(persisted!.batches[0]!.files[0]!.confirmedOffset).toBe(4);
+    expect(controls).toMatchObject([
+      { kind: "transfer_progress", confirmedOffset: 4 },
+    ]);
+
+    now = 200;
+    const final = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      4,
+      bytes.slice(4),
+    );
+    expect(final.status).toBe(200);
+    expect(await final.json()).toEqual({
+      confirmedOffset: 6,
+      complete: true,
+    });
+    expect(controls).toMatchObject([
       { kind: "transfer_progress", confirmedOffset: 4 },
       { kind: "transfer_progress", confirmedOffset: 6 },
       { kind: "transfer_file_complete" },
     ]);
+    expect(persistedOffsets).not.toContain(2);
+    expect(persistedOffsets).toContain(4);
+    expect(persistedOffsets).toContain(6);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("serializes same-file PUTs and rejects the stale request", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-serialize-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const queue = await emptyQueue();
+    const offer = {
+      transferId: "transfer_serialize_1234",
+      batchId: "batch_serialize_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_serialize_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const plane = new LaptopTransferDataPlane(secret, queue, 2, undefined, undefined, undefined, {
+      checkpointBytes: 4,
+      checkpointIntervalMs: 1_000,
+      publishIntervalMs: 1_000,
+    });
+
+    const [first, duplicate] = await Promise.all([
+      putChunk(
+        plane,
+        offer.transferId,
+        offer.files[0]!.fileId,
+        0,
+        bytes.slice(0, 2),
+      ),
+      putChunk(
+        plane,
+        offer.transferId,
+        offer.files[0]!.fileId,
+        0,
+        bytes.slice(0, 2),
+      ),
+    ]);
+    const statuses = [first.status, duplicate.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const stale = first.status === 409 ? first : duplicate;
+    await expect(stale.json()).resolves.toEqual({
+      code: "offset_not_confirmed",
+      confirmedOffset: 2,
+    });
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("uses time checkpoints independently from routine publication", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-time-checkpoint-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    let persisted: ReturnType<TransferQueue["snapshot"]> | undefined;
+    const persistedOffsets: number[] = [];
+    const queue = await TransferQueue.open({
+      storage: {
+        async load() {
+          return persisted;
+        },
+        async save(value) {
+          persisted = structuredClone(value);
+          persistedOffsets.push(
+            value.batches[0]?.files[0]?.confirmedOffset ?? -1,
+          );
+        },
+      },
+      id: (() => {
+        let sequence = 0;
+        return (prefix: string) => `${prefix}_time_${++sequence}`;
+      })(),
+    });
+    const offer = {
+      transferId: "transfer_time_1234",
+      batchId: "batch_time_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_time_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const controls: unknown[] = [];
+    let now = 0;
+    const plane = new LaptopTransferDataPlane(
+      secret,
+      queue,
+      2,
+      (message) => controls.push(message),
+      undefined,
+      undefined,
+      {
+        now: () => now,
+        checkpointBytes: 100,
+        checkpointIntervalMs: 1_000,
+        publishIntervalMs: 500,
+      },
+    );
+
+    await putChunk(plane, offer.transferId, offer.files[0]!.fileId, 0, bytes.slice(0, 2));
+    now = 600;
+    await putChunk(plane, offer.transferId, offer.files[0]!.fileId, 2, bytes.slice(2, 4));
+    expect(persisted!.batches[0]!.files[0]!.confirmedOffset).toBe(0);
+    expect(controls).toMatchObject([
+      { kind: "transfer_progress", confirmedOffset: 4 },
+    ]);
+
+    now = 1_000;
+    await putChunk(plane, offer.transferId, offer.files[0]!.fileId, 4, bytes.slice(4, 6));
+    expect(persisted!.batches[0]!.files[0]!.confirmedOffset).toBe(6);
+    expect(persistedOffsets).toContain(6);
+    expect(controls).toMatchObject([
+      { kind: "transfer_progress", confirmedOffset: 4 },
+      { kind: "transfer_progress", confirmedOffset: 6 },
+    ]);
+
+    now = 1_100;
+    const final = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      6,
+      bytes.slice(6),
+    );
+    expect(final.status).toBe(200);
+    expect(await final.json()).toEqual({
+      confirmedOffset: 8,
+      complete: true,
+    });
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("restarts from the durable checkpoint and safely overwrites the tail", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-restart-"));
+    const queuePath = join(dir, "queue.json");
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const storage = new JsonTransferQueueStorage(queuePath);
+    const queue = await TransferQueue.open({ storage });
+    const offer = {
+      transferId: "transfer_restart_1234",
+      batchId: "batch_restart_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_restart_123456",
+        filename: "report.bin",
+        mime: "application/octet-stream",
+        size: bytes.length,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: await sha256Hex(bytes),
+      }],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const firstPlane = new LaptopTransferDataPlane(
+      secret,
+      queue,
+      2,
+      undefined,
+      undefined,
+      undefined,
+      {
+        checkpointBytes: 4,
+        checkpointIntervalMs: 1_000,
+        publishIntervalMs: 1_000,
+      },
+    );
+    const first = await putChunk(
+      firstPlane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+      bytes.slice(0, 2),
+    );
+    expect(await first.json()).toEqual({
+      confirmedOffset: 2,
+      complete: false,
+    });
+    const persistedAfterFirst = await storage.load();
+    expect(persistedAfterFirst!.batches[0]!.files[0]!.confirmedOffset).toBe(0);
+
+    const restarted = await TransferQueue.open({ storage });
+    await restarted.claimNext();
+    const secondPlane = new LaptopTransferDataPlane(
+      secret,
+      restarted,
+      2,
+      undefined,
+      undefined,
+      undefined,
+      {
+        checkpointBytes: 4,
+        checkpointIntervalMs: 1_000,
+        publishIntervalMs: 1_000,
+      },
+    );
+    await putChunk(
+      secondPlane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+      bytes.slice(0, 2),
+    );
+    const final = await putChunk(
+      secondPlane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      2,
+      bytes.slice(2),
+    );
+    expect(await final.json()).toEqual({
+      confirmedOffset: 4,
+      complete: true,
+    });
+    expect(new Uint8Array(await Bun.file(destination).arrayBuffer())).toEqual(
+      bytes,
+    );
     await rm(dir, { recursive: true, force: true });
   });
 

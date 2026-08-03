@@ -1,4 +1,4 @@
-import { mkdir, stat, statfs } from "node:fs/promises";
+import { mkdir, stat, statfs, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type {
   TransferControlMessage,
@@ -14,6 +14,10 @@ import {
   legacyTransferChunkBytes,
   negotiateTransferChunkBytes,
 } from "./transfer-chunk-policy";
+import {
+  ReceiverProgressSessions,
+} from "./laptop-data-plane";
+import { partialPathFor } from "./transfer-paths";
 
 export interface TransferCoordinatorOptions {
   queue: TransferQueue;
@@ -22,6 +26,7 @@ export interface TransferCoordinatorOptions {
   maxChunkBytes?: number;
   publishControl(message: TransferControlMessage): void;
   availableBytes?: (path: string) => Promise<number>;
+  progressSessions?: ReceiverProgressSessions;
 }
 
 export class TransferCoordinator {
@@ -111,7 +116,15 @@ export class TransferCoordinator {
         await this.activateNext();
         return;
       case "transfer_pause":
-        await this.options.queue.pause(message.transferId, message.fileId);
+        try {
+          await this.pauseTransfer(message.transferId, message.fileId);
+        } catch {
+          await this.failProgressControl(
+            message.transferId,
+            message.fileId,
+            "checkpoint_failed",
+          );
+        }
         await this.activateNext();
         return;
       case "transfer_resume":
@@ -119,7 +132,15 @@ export class TransferCoordinator {
         await this.activateNext();
         return;
       case "transfer_cancel":
-        await this.options.queue.cancel(message.transferId, message.fileId);
+        try {
+          await this.cancelTransfer(message.transferId, message.fileId);
+        } catch {
+          await this.failProgressControl(
+            message.transferId,
+            message.fileId,
+            "checkpoint_failed",
+          );
+        }
         await this.activateNext();
     }
   }
@@ -157,7 +178,14 @@ export class TransferCoordinator {
         file.status === "active" &&
         (file.size === 0 || file.confirmedOffset < file.size)
       ) {
-        this.publishPhoneAccept(batch.transferId, file);
+        this.publishPhoneAccept(batch.transferId, {
+          ...file,
+          confirmedOffset: this.options.progressSessions?.liveAcceptedOffset(
+            batch.transferId,
+            file.fileId,
+            file.confirmedOffset,
+          ) ?? file.confirmedOffset,
+        });
       }
     }
   }
@@ -337,6 +365,101 @@ export class TransferCoordinator {
         confirmedOffset,
         negotiatedChunkBytes,
       );
+    }
+  }
+
+  private async pauseTransfer(
+    transferId: string,
+    fileId?: string,
+  ): Promise<void> {
+    if (fileId === undefined) {
+      const fileIds = this.options.queue
+        .snapshot()
+        .batches.find((batch) => batch.transferId === transferId)
+        ?.files
+        .filter((file) => file.status === "active")
+        .map((file) => file.fileId) ?? [];
+      for (const id of fileIds) {
+        await this.pauseTransfer(transferId, id);
+      }
+      return;
+    }
+    const sessions = this.options.progressSessions;
+    if (!sessions) {
+      await this.options.queue.pause(transferId, fileId);
+      return;
+    }
+    await sessions.checkpointAnd(
+      this.options.queue,
+      transferId,
+      fileId,
+      () => this.options.queue.pause(transferId, fileId),
+    );
+  }
+
+  private async cancelTransfer(
+    transferId: string,
+    fileId?: string,
+  ): Promise<void> {
+    if (fileId === undefined) {
+      const fileIds = this.options.queue
+        .snapshot()
+        .batches.find((batch) => batch.transferId === transferId)
+        ?.files
+        .filter((file) => file.status === "active")
+        .map((file) => file.fileId) ?? [];
+      for (const id of fileIds) {
+        await this.cancelTransfer(transferId, id);
+      }
+      return;
+    }
+    const sessions = this.options.progressSessions;
+    if (!sessions) {
+      await this.options.queue.cancel(transferId, fileId);
+      return;
+    }
+    const file = this.options.queue
+      .snapshot()
+      .batches.find((batch) => batch.transferId === transferId)
+      ?.files.find((candidate) => candidate.fileId === fileId);
+    await sessions.checkpointAnd(
+      this.options.queue,
+      transferId,
+      fileId,
+      async () => {
+        await this.options.queue.cancel(transferId, fileId);
+        if (file?.destinationPath) {
+          await unlink(
+            partialPathFor(file.destinationPath, fileId),
+          ).catch(() => undefined);
+        }
+        sessions.clear(transferId, fileId);
+      },
+    );
+  }
+
+  private async failProgressControl(
+    transferId: string,
+    fileId: string | undefined,
+    code: string,
+  ): Promise<void> {
+    const fileIds = fileId === undefined
+      ? this.options.queue
+          .snapshot()
+          .batches.find((batch) => batch.transferId === transferId)
+          ?.files
+          .filter((file) => file.status === "active")
+          .map((file) => file.fileId) ?? []
+      : [fileId];
+    for (const id of fileIds) {
+      await this.options.queue.fail(transferId, id, code);
+      this.options.publishControl({
+        v: 1,
+        kind: "transfer_file_failed",
+        transferId,
+        fileId: id,
+        code,
+      });
     }
   }
 }

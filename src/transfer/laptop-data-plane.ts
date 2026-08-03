@@ -24,6 +24,158 @@ import {
 } from "./transfer-chunk-policy";
 import { partialPathFor } from "./transfer-paths";
 
+export interface ReceiverProgressPolicy {
+  now?: () => number;
+  checkpointBytes?: number;
+  checkpointIntervalMs?: number;
+  publishIntervalMs?: number;
+}
+
+export class ReceiverProgressSessions {
+  private readonly sessions = new Map<string, ReceiverProgressSession>();
+  private readonly locks = new Map<string, Promise<void>>();
+
+  constructor(private readonly policy: ReceiverProgressPolicy = {}) {}
+
+  async runExclusive<T>(
+    transferId: string,
+    fileId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = progressKey(transferId, fileId);
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.locks.set(key, current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.locks.get(key) === current) this.locks.delete(key);
+    }
+  }
+
+  sessionFor(
+    transferId: string,
+    record: TransferFileRecord,
+  ): ReceiverProgressSession {
+    const key = progressKey(transferId, record.fileId);
+    let session = this.sessions.get(key);
+    if (!session) {
+      session = new ReceiverProgressSession(record, this.policy);
+      this.sessions.set(key, session);
+    }
+    if (record.confirmedOffset > session.acceptedOffset) {
+      session.acceptedOffset = record.confirmedOffset;
+      session.durableOffset = record.confirmedOffset;
+    }
+    return session;
+  }
+
+  liveAcceptedOffset(
+    transferId: string,
+    fileId: string,
+    fallback: number,
+  ): number {
+    return this.sessions.get(progressKey(transferId, fileId))?.acceptedOffset ??
+      fallback;
+  }
+
+  async checkpointAnd<T>(
+    queue: TransferQueue,
+    transferId: string,
+    fileId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return this.runExclusive(transferId, fileId, async () => {
+      const session = this.sessions.get(progressKey(transferId, fileId));
+      if (session && session.acceptedOffset > session.durableOffset) {
+        const record = queue
+          .snapshot()
+          .batches.find((batch) => batch.transferId === transferId)
+          ?.files.find((file) => file.fileId === fileId);
+        if (!record?.destinationPath) {
+          throw new Error("Cannot checkpoint a transfer without a destination.");
+        }
+        const partialPath = partialPathFor(record.destinationPath, fileId);
+        const destination = await open(partialPath, "r+");
+        try {
+          await destination.sync();
+        } finally {
+          await destination.close();
+        }
+        await queue.confirmProgress(
+          transferId,
+          fileId,
+          session.acceptedOffset,
+        );
+        session.markCheckpoint(session.acceptedOffset, this.now());
+      }
+      return operation();
+    });
+  }
+
+  clear(transferId: string, fileId: string): void {
+    this.sessions.delete(progressKey(transferId, fileId));
+  }
+
+  private now(): number {
+    return this.policy.now?.() ?? performance.now();
+  }
+}
+
+export class ReceiverProgressSession {
+  readonly checkpointBytes: number;
+  readonly checkpointIntervalMs: number;
+  readonly publishIntervalMs: number;
+  acceptedOffset: number;
+  durableOffset: number;
+  private lastCheckpointAt: number;
+  private lastPublishedAt: number;
+
+  constructor(
+    record: TransferFileRecord,
+    policy: ReceiverProgressPolicy = {},
+  ) {
+    this.checkpointBytes = policy.checkpointBytes ?? 4 * 1024 * 1024;
+    this.checkpointIntervalMs = policy.checkpointIntervalMs ?? 1_000;
+    this.publishIntervalMs = policy.publishIntervalMs ?? 1_000;
+    this.acceptedOffset = record.confirmedOffset;
+    this.durableOffset = record.confirmedOffset;
+    const now = policy.now?.() ?? performance.now();
+    this.lastCheckpointAt = now;
+    this.lastPublishedAt = now;
+  }
+
+  shouldCheckpoint(offset: number, now: number): boolean {
+    return (
+      offset - this.durableOffset >= this.checkpointBytes ||
+      now - this.lastCheckpointAt >= this.checkpointIntervalMs
+    );
+  }
+
+  shouldPublish(now: number, immediate = false): boolean {
+    return immediate || now - this.lastPublishedAt >= this.publishIntervalMs;
+  }
+
+  markAccepted(offset: number): void {
+    this.acceptedOffset = offset;
+  }
+
+  markCheckpoint(offset: number, now: number): void {
+    this.acceptedOffset = offset;
+    this.durableOffset = offset;
+    this.lastCheckpointAt = now;
+  }
+
+  markPublished(now: number): void {
+    this.lastPublishedAt = now;
+  }
+}
+
 export class LaptopTransferDataPlane extends TransferHttpDataPlane {
   constructor(
     private readonly chunkPairingSecret: string,
@@ -37,6 +189,10 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     private readonly enqueueLaptopFiles?: (
       paths: string[],
     ) => Promise<unknown>,
+    private readonly progressOptions: ReceiverProgressPolicy = {},
+    private readonly progressSessions = new ReceiverProgressSessions(
+      progressOptions,
+    ),
   ) {
     super(chunkPairingSecret);
   }
@@ -66,17 +222,20 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     );
     if (!match) return undefined;
     const [, transferId, fileId] = match;
-    const record = this.lookup(
-      transferId!,
-      fileId!,
-      request.method === "GET" ? "laptop_to_phone" : "phone_to_laptop",
-    );
-    if (!record) {
-      return Response.json({ code: "transfer_not_found" }, { status: 404 });
-    }
     const offset = parseOffset(url.searchParams.get("offset"));
     if (offset === undefined) {
       return Response.json({ code: "invalid_offset" }, { status: 400 });
+    }
+    if (request.method === "PUT") {
+      return this.handleUpload(request, transferId!, fileId!, offset);
+    }
+    const record = this.lookup(
+      transferId!,
+      fileId!,
+      "laptop_to_phone",
+    );
+    if (!record) {
+      return Response.json({ code: "transfer_not_found" }, { status: 404 });
     }
     if (offset !== record.confirmedOffset) {
       return Response.json(
@@ -85,15 +244,6 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
           confirmedOffset: record.confirmedOffset,
         },
         { status: 409 },
-      );
-    }
-    if (request.method === "PUT") {
-      return this.handleUpload(
-        request,
-        transferId!,
-        fileId!,
-        offset,
-        record,
       );
     }
     if (!record.sourcePath) {
@@ -225,13 +375,42 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     transferId: string,
     fileId: string,
     offset: number,
+  ): Promise<Response> {
+    return this.progressSessions.runExclusive(
+      transferId,
+      fileId,
+      async () => {
+        const record = this.lookup(
+          transferId,
+          fileId,
+          "phone_to_laptop",
+        );
+        if (!record) {
+          return Response.json({ code: "transfer_not_found" }, { status: 404 });
+        }
+        if (offset !== record.confirmedOffset) {
+          return Response.json(
+            {
+              code: "offset_not_confirmed",
+              confirmedOffset: record.confirmedOffset,
+            },
+            { status: 409 },
+          );
+        }
+        return this.handleUploadLocked(request, transferId, fileId, offset, record);
+      },
+    );
+  }
+
+  private async handleUploadLocked(
+    request: Request,
+    transferId: string,
+    fileId: string,
+    offset: number,
     record: TransferFileRecord,
   ): Promise<Response> {
     if (!record.destinationPath || record.status !== "active") {
-      return Response.json(
-        { code: "transfer_not_active" },
-        { status: 409 },
-      );
+      return Response.json({ code: "transfer_not_active" }, { status: 409 });
     }
     const nonce = request.headers.get("x-vidyut-nonce");
     const plaintextBytes = parseNonNegativeInteger(
@@ -306,6 +485,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
           fileId,
           code: "partial_state_missing",
         });
+        this.progressSessions.clear(transferId, fileId);
         await this.onFileTerminal();
         return Response.json(
           { code: "partial_state_missing", confirmedOffset: 0 },
@@ -322,6 +502,12 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     const lastPayloadStarted =
       offset + plaintextBytes === record.size &&
       !hasTimingStage(transferTimingStage.lastPayloadByte);
+    const progress = this.progressSessions.sessionFor(transferId, record);
+    const confirmedOffset = offset + plaintextBytes;
+    const now = this.progressOptions.now?.() ?? performance.now();
+    const checkpointDue =
+      confirmedOffset === record.size ||
+      progress.shouldCheckpoint(confirmedOffset, now);
     try {
       if (firstPayloadStarted) {
         await this.queue.markStage(
@@ -351,7 +537,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
           );
         }
       }
-      await destination.sync();
+      if (checkpointDue) await destination.sync();
     } finally {
       await destination.close();
     }
@@ -373,23 +559,36 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       );
     }
 
-    const confirmedOffset = offset + plaintext.byteLength;
+    const publishDue =
+      checkpointDue || progress.shouldPublish(now);
     if (confirmedOffset === record.size) {
       await this.queue.beginVerification(
         transferId,
         fileId,
         confirmedOffset,
       );
-    } else {
+      progress.markCheckpoint(confirmedOffset, now);
+    } else if (checkpointDue) {
       await this.queue.confirmProgress(transferId, fileId, confirmedOffset);
+      progress.markCheckpoint(confirmedOffset, now);
+    } else {
+      this.queue.advanceAcceptedProgress(
+        transferId,
+        fileId,
+        confirmedOffset,
+      );
+      progress.markAccepted(confirmedOffset);
     }
-    this.publishControl({
-      v: 1,
-      kind: "transfer_progress",
-      transferId,
-      fileId,
-      confirmedOffset,
-    });
+    if (publishDue) {
+      this.publishControl({
+        v: 1,
+        kind: "transfer_progress",
+        transferId,
+        fileId,
+        confirmedOffset,
+      });
+      progress.markPublished(now);
+    }
 
     if (confirmedOffset === record.size) {
       let verifiedSha256: string;
@@ -405,6 +604,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
             fileId,
             code: "hash_mismatch",
           });
+          this.progressSessions.clear(transferId, fileId);
           await this.onFileTerminal();
           return Response.json({ code: "hash_mismatch" }, { status: 409 });
         }
@@ -428,6 +628,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
             fileId,
             sha256: record.sha256,
           });
+          this.progressSessions.clear(transferId, fileId);
           await this.onFileTerminal();
           return Response.json({ confirmedOffset, complete: true });
         }
@@ -450,6 +651,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
           fileId,
           code: "terminal_processing_failed",
         });
+        this.progressSessions.clear(transferId, fileId);
         await this.onFileTerminal();
         return Response.json(
           { code: "terminal_processing_failed" },
@@ -463,6 +665,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
         fileId,
         sha256: verifiedSha256,
       });
+      this.progressSessions.clear(transferId, fileId);
       await this.onFileTerminal();
     }
 
@@ -489,6 +692,10 @@ function parseOffset(value: string | null): number | undefined {
   if (value === null || !/^(0|[1-9][0-9]*)$/.test(value)) return undefined;
   const offset = Number(value);
   return Number.isSafeInteger(offset) && offset >= 0 ? offset : undefined;
+}
+
+function progressKey(transferId: string, fileId: string): string {
+  return `${transferId}:${fileId}`;
 }
 
 function parseNonNegativeInteger(value: string | null): number | undefined {
