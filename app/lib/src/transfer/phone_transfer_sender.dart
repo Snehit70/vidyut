@@ -24,6 +24,8 @@ class PhoneTransferSource {
     this.size,
     this.lastModifiedMs,
     this.persisted = false,
+    this.kind,
+    this.ownership = PhoneTransferSourceOwnership.external,
   }) : assert(path != null || uri != null);
 
   final String? path;
@@ -33,13 +35,17 @@ class PhoneTransferSource {
   final int? size;
   final int? lastModifiedMs;
   final bool persisted;
+  final PhoneTransferSourceKind? kind;
+  final PhoneTransferSourceOwnership ownership;
 
   PhoneTransferSourceReference get reference => PhoneTransferSourceReference(
-    kind: uri == null
-        ? PhoneTransferSourceKind.externalPath
-        : PhoneTransferSourceKind.androidDocumentUri,
+    kind:
+        kind ??
+        (uri == null
+            ? PhoneTransferSourceKind.externalPath
+            : PhoneTransferSourceKind.androidDocumentUri),
     reference: uri ?? path!,
-    ownership: PhoneTransferSourceOwnership.external,
+    ownership: ownership,
   );
 }
 
@@ -410,10 +416,12 @@ class PhoneTransferSender {
         clearCancellationRequestedAt: true,
       ),
     );
-    await history.upsert(
-      cancelled.copyWith(status: _deriveBatchStatus(cancelled.files)),
+    final terminal = cancelled.copyWith(
+      status: _deriveBatchStatus(cancelled.files),
     );
-    _publishBatch(cancelled, stage: PhoneTransferProgressStage.failed);
+    await history.upsert(terminal);
+    _publishSnapshot(terminal);
+    _publishBatch(terminal, stage: PhoneTransferProgressStage.failed);
   }
 
   static bool _isTerminal(PhoneTransferStatus status) =>
@@ -476,6 +484,7 @@ class PhoneTransferSender {
                 .toList(growable: false),
           );
           await history.upsert(failed);
+          _publishSnapshot(failed);
         }
       }
     }();
@@ -615,7 +624,9 @@ class PhoneTransferSender {
     _TransferSession? handedOffSession;
     try {
       for (final source in sources) {
-        if (source.uri != null && source.persisted) {
+        if (source.uri != null &&
+            source.persisted &&
+            source.kind == PhoneTransferSourceKind.androidDocumentUri) {
           await sourceReader.retain(source.uri!);
           retainedUris.add(source.uri!);
         }
@@ -808,6 +819,7 @@ class PhoneTransferSender {
       );
       await history.upsert(batch);
       _cleanupTrackingForBatch(batch);
+      _publishSnapshot(batch);
       _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
     } finally {
       final pendingSetup = setupFuture;
@@ -925,10 +937,11 @@ class PhoneTransferSender {
       await onTiming(TransferTimingStage.sourceOpenProbe, true);
     }
     token.check();
-    if (!source.persisted ||
-        !probe.seekable ||
-        !probe.sizeKnown ||
-        probe.size < 0) {
+    if (source.kind != PhoneTransferSourceKind.managedStage &&
+        (!source.persisted ||
+            !probe.seekable ||
+            !probe.sizeKnown ||
+            probe.size < 0)) {
       await onPhase(PhoneTransferPreparationPhase.staging, 0, null);
       await onTiming(TransferTimingStage.fallbackStage, false);
       final operationId = _id('stage');
@@ -1000,7 +1013,9 @@ class PhoneTransferSender {
       filename: probe.filename ?? source.filename,
       mime: probe.mime ?? source.mime,
       sha256: digest,
-      reference: null,
+      reference: source.kind == PhoneTransferSourceKind.managedStage
+          ? source.reference
+          : null,
     );
   }
 
@@ -1155,7 +1170,9 @@ class PhoneTransferSender {
       mime: file.mime,
       size: file.size,
       lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
-      persisted: uri != null,
+      persisted: reference?.kind == PhoneTransferSourceKind.androidDocumentUri,
+      kind: reference?.kind,
+      ownership: reference?.ownership ?? PhoneTransferSourceOwnership.external,
     );
   }
 
@@ -1634,6 +1651,7 @@ class PhoneTransferSender {
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
       );
       await history.upsert(batch);
+      _publishSnapshot(batch);
       _publishBatch(batch, stage: PhoneTransferProgressStage.completed);
       return batch;
     } catch (error) {
@@ -1663,6 +1681,7 @@ class PhoneTransferSender {
             .toList(),
       );
       await history.upsert(batch);
+      _publishSnapshot(batch);
       _publishBatch(batch, stage: PhoneTransferProgressStage.failed);
       rethrow;
     } finally {
@@ -1924,9 +1943,7 @@ class PhoneTransferSender {
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
     if (persist) await history.upsert(updated);
-    if (persist && !_snapshotController.isClosed) {
-      _snapshotController.add(updated);
-    }
+    if (persist) _publishSnapshot(updated);
     if (persist && _isTerminal(file.status)) {
       _cleanupTrackingForFile(batch.transferId, file.fileId);
     }
@@ -1961,6 +1978,10 @@ class PhoneTransferSender {
     _timingAnchors.remove('$transferId:$fileId');
     _lastPreparationPersist.removeWhere((key, _) => key.startsWith('$fileId:'));
     _lastPreparationPublish.removeWhere((key, _) => key.startsWith('$fileId:'));
+  }
+
+  void _publishSnapshot(PhoneTransferBatch batch) {
+    if (!_snapshotController.isClosed) _snapshotController.add(batch);
   }
 
   void _cleanupTrackingForBatch(PhoneTransferBatch batch) {

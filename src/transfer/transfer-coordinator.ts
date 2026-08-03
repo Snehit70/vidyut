@@ -411,6 +411,7 @@ export class TransferCoordinator {
       for (const id of fileIds) {
         await this.cancelTransfer(transferId, id);
       }
+      await this.options.queue.cancel(transferId);
       return;
     }
     const sessions = this.options.progressSessions;

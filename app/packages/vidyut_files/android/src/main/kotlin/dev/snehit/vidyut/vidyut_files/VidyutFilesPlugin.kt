@@ -160,9 +160,9 @@ class VidyutFilesPlugin :
                     result.error("bad-args", "Invalid stage arguments.", null)
                     return
                 }
+                val cancelled = AtomicBoolean(false)
+                stageCancellations[operationId] = cancelled
                 ioExecutor.execute {
-                    val cancelled = AtomicBoolean(false)
-                    stageCancellations[operationId] = cancelled
                     try {
                         if (engineAttached.get()) result.success(stageSource(Uri.parse(uri), maximumBytes, cancelled))
                     } catch (error: Exception) {
@@ -170,7 +170,7 @@ class VidyutFilesPlugin :
                             result.error("source-stage-failed", error.message, null)
                         }
                     } finally {
-                        stageCancellations.remove(operationId)
+                        stageCancellations.remove(operationId, cancelled)
                     }
                 }
             }
