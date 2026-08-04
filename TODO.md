@@ -56,6 +56,10 @@ The detailed P1 hashing/finalization handoff is in
   checkpoints; checkpoints occur at 4 MiB or 1 second, routine progress is
   throttled, same-file PUTs serialize, restart resumes from the durable offset,
   and pause/cancel checkpoint before changing terminal state.
+- **Cancelled retry and transfer status UI** — current branch.
+  Cancelled phone-to-laptop batches reactivate as a fresh laptop attempt on a
+  repeated offer, completed live progress renders as complete, and active
+  cancellation uses state-aware wording.
 
 ## Remaining P0 acceptance work
 

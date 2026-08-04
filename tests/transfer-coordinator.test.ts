@@ -230,6 +230,67 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("reactivates a cancelled phone offer when the phone retries it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-cancel-retry-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const offer = {
+      transferId: "transfer_cancel_retry_1234",
+      batchId: "batch_cancel_retry_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_cancel_retry_123456",
+        filename: "report.pdf",
+        mime: "application/pdf",
+        size: 3,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: "a".repeat(64),
+      }],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_cancel",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+      },
+      "phone",
+    );
+    expect(queue.snapshot().batches[0]!.status).toBe("cancelled");
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([{
+      v: 1,
+      kind: "transfer_accept",
+      transferId: offer.transferId,
+      fileId: offer.files[0]!.fileId,
+      confirmedOffset: 0,
+      maxChunkBytes: 1024 * 1024,
+    }]);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("checks only remaining bytes when a phone retries an offer", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-storage-"));
     const queue = await memoryQueue();

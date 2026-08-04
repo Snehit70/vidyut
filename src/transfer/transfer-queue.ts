@@ -471,7 +471,7 @@ export class TransferQueue {
       ? [this.findFile(transferId, fileId).file]
       : batch.files;
     for (const file of files) {
-      if (file.status === "failed") {
+      if (file.status === "failed" || file.status === "cancelled") {
         const timing = file.timing ?? this.newTiming();
         const attempt = (timing.attempts.at(-1)?.attempt ?? -1) + 1;
         timing.attempts = [
@@ -483,6 +483,11 @@ export class TransferQueue {
         file.timing = timing;
         delete file.errorCode;
         delete file.finalizingPath;
+        if (file.destinationPath) {
+          await unlink(
+            partialPathFor(file.destinationPath, file.fileId),
+          ).catch(() => undefined);
+        }
       }
     }
     this.deriveBatchStatus(batch);

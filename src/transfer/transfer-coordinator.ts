@@ -252,6 +252,9 @@ export class TransferCoordinator {
     );
     if (existingBatch) {
       await this.options.queue.acceptOffer(offer, destinationPaths);
+      if (existingBatch.status === "cancelled") {
+        await this.options.queue.retry(offer.transferId);
+      }
     } else {
       const tooLarge = offer.files.find(
         (file) => file.size > this.options.maxFileBytes,

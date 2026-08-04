@@ -332,6 +332,8 @@ class _LiveTransferCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTransferring =
         progress.stage == PhoneTransferProgressStage.transferring;
+    final isCompleted =
+        progress.stage == PhoneTransferProgressStage.completed;
     final isPreparing = {
       PhoneTransferProgressStage.preparing,
       PhoneTransferProgressStage.readingSelection,
@@ -425,6 +427,24 @@ class _LiveTransferCard extends StatelessWidget {
                   ),
                 ],
               ),
+            ] else if (isCompleted) ...[
+              if (progress.currentFilename != null) ...[
+                _TransferFileName(
+                  filename: progress.currentFilename,
+                  subtitle: progress.totalBytes == 0
+                      ? null
+                      : _bytes(progress.totalBytes),
+                ),
+                const SizedBox(height: 12),
+              ],
+              const LinearProgressIndicator(value: 1),
+              const SizedBox(height: 12),
+              Text(
+                'Transfer complete. You can return to your files.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
+              ),
             ] else ...[
               if (progress.currentFilename != null) ...[
                 _TransferFileName(
@@ -469,6 +489,8 @@ class _LiveTransferCard extends StatelessWidget {
                   child: Text(
                     isTransferring
                         ? 'Keep Vidyut open while we finish this transfer.'
+                        : isCompleted
+                        ? 'The completed files are available in your history.'
                         : 'You can return to your files after it starts.',
                     style: Theme.of(
                       context,
@@ -556,6 +578,12 @@ class _BatchCard extends StatelessWidget {
       (sum, file) => sum + file.confirmedOffset,
     );
     final progress = total == 0 ? 1.0 : confirmed / total;
+    final hasActiveTransfer = batch.files.any(
+      (file) => file.status == PhoneTransferStatus.active,
+    );
+    final cancelLabel = hasActiveTransfer
+        ? 'Cancel transfer'
+        : 'Cancel preparation';
     final title = batch.files.length == 1
         ? batch.files.single.filename
         : '${batch.files.length} files';
@@ -599,9 +627,9 @@ class _BatchCard extends StatelessWidget {
                         child: Text('Retry failed'),
                       ),
                     if (onCancel != null)
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'cancel',
-                        child: Text('Cancel preparation'),
+                        child: Text(cancelLabel),
                       ),
                     const PopupMenuItem(
                       value: 'remove',
