@@ -316,6 +316,36 @@ describe("durable transfer queue", () => {
     expect(queue.snapshot().batches[0]!.status).toBe("cancelled");
   });
 
+  test("retries a cancelled file as a fresh attempt", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-transfer-cancel-retry-"));
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("alpha.bin"), destinationPath: join(dir, "alpha.bin") }],
+    });
+    const fileId = batch.files[0]!.fileId;
+    const partialPath = partialPathFor(
+      join(dir, "alpha.bin"),
+      fileId,
+    );
+
+    await queue.claimNext();
+    await queue.confirmProgress(batch.transferId, fileId, 4);
+    await writeFile(partialPath, new Uint8Array([1, 2, 3, 4]));
+    await queue.cancel(batch.transferId);
+    await queue.retry(batch.transferId);
+
+    const retried = queue.snapshot().batches[0]!;
+    expect(retried.status).toBe("queued");
+    expect(retried.files[0]!.status).toBe("queued");
+    expect(retried.files[0]!.confirmedOffset).toBe(0);
+    await expect(stat(partialPath)).rejects.toThrow();
+    expect((await queue.claimNext())!.file.status).toBe("active");
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("expires unfinished work after seven days but retains history", async () => {
     let now = 1_753_689_600_000;
     const queue = await memoryQueue(() => now);

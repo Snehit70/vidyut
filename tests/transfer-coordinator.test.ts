@@ -230,6 +230,215 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("reactivates a cancelled phone offer when the phone retries it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-cancel-retry-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const offer = {
+      transferId: "transfer_cancel_retry_1234",
+      batchId: "batch_cancel_retry_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_cancel_retry_123456",
+        filename: "report.pdf",
+        mime: "application/pdf",
+        size: 3,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: "a".repeat(64),
+      }],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_cancel",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+      },
+      "phone",
+    );
+    expect(queue.snapshot().batches[0]!.status).toBe("cancelled");
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([{
+      v: 1,
+      kind: "transfer_accept",
+      transferId: offer.transferId,
+      fileId: offer.files[0]!.fileId,
+      confirmedOffset: 0,
+      maxChunkBytes: 1024 * 1024,
+    }]);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("reactivates a cancelled file in a batch with completed files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-cancel-mixed-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => 2048,
+      publishControl: (message) => controls.push(message),
+    });
+    const offer = {
+      transferId: "transfer_cancel_mixed_1234",
+      batchId: "batch_cancel_mixed_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_cancel_mixed_done",
+          filename: "done.pdf",
+          mime: "application/pdf",
+          size: 1,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: "d".repeat(64),
+        },
+        {
+          fileId: "file_cancel_mixed_pending",
+          filename: "pending.pdf",
+          mime: "application/pdf",
+          size: 3,
+          lastModifiedMs: 1_753_689_400_000,
+          sha256: "e".repeat(64),
+        },
+      ],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_progress",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        confirmedOffset: offer.files[0]!.size,
+      },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_file_complete",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+        sha256: offer.files[0]!.sha256,
+      },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_cancel",
+        transferId: offer.transferId,
+        fileId: offer.files[1]!.fileId,
+      },
+      "phone",
+    );
+    expect(queue.snapshot().batches[0]!.status).toBe("completed_with_issues");
+    controls.length = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
+    expect(queue.snapshot().batches[0]!.files[1]!.status).toBe("active");
+    expect(controls).toContainEqual({
+      v: 1,
+      kind: "transfer_accept",
+      transferId: offer.transferId,
+      fileId: offer.files[1]!.fileId,
+      confirmedOffset: 0,
+      maxChunkBytes: 1024 * 1024,
+    });
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("keeps a cancelled file terminal when a retry offer runs out of space", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-cancel-storage-"));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    let availableBytes = 3;
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: dir,
+      maxFileBytes: 1024,
+      maxChunkBytes: 1024 * 1024,
+      availableBytes: async () => availableBytes,
+      publishControl: (message) => controls.push(message),
+    });
+    const offer = {
+      transferId: "transfer_cancel_storage_1234",
+      batchId: "batch_cancel_storage_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [{
+        fileId: "file_cancel_storage_123456",
+        filename: "report.pdf",
+        mime: "application/pdf",
+        size: 3,
+        lastModifiedMs: 1_753_689_500_000,
+        sha256: "a".repeat(64),
+      }],
+    };
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_cancel",
+        transferId: offer.transferId,
+        fileId: offer.files[0]!.fileId,
+      },
+      "phone",
+    );
+    controls.length = 0;
+    availableBytes = 0;
+
+    await coordinator.handleControl(
+      { v: 1, kind: "transfer_offer", offer },
+      "phone",
+    );
+
+    expect(controls).toEqual([]);
+    expect(queue.snapshot().batches[0]!.status).toBe("cancelled");
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("cancelled");
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("checks only remaining bytes when a phone retries an offer", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-storage-"));
     const queue = await memoryQueue();

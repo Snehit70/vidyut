@@ -276,17 +276,21 @@ export class TransferCoordinator {
           .batches.find((batch) => batch.transferId === offer.transferId)
       : undefined;
     const requiredBytes = currentBatch
-      ? currentBatch.files.reduce(
-          (total, file) =>
+      ? currentBatch.files.reduce((total, file) => {
+          if (
             file.status === "queued" ||
             file.status === "active" ||
             file.status === "verifying" ||
             file.status === "finalizing" ||
             file.status === "paused"
-              ? total + Math.max(0, file.size - file.confirmedOffset)
-              : total,
-          0,
-        )
+          ) {
+            return total + Math.max(0, file.size - file.confirmedOffset);
+          }
+          if (file.status === "cancelled") {
+            return total + file.size;
+          }
+          return total;
+        }, 0)
       : offer.files.reduce((total, file) => total + file.size, 0);
     if (requiredBytes > availableBytes) {
       if (currentBatch) {
@@ -297,6 +301,9 @@ export class TransferCoordinator {
           }
           if (file.status === "failed") {
             this.publishPhoneFailure(offer.transferId, file);
+            continue;
+          }
+          if (file.status === "cancelled") {
             continue;
           }
           await this.options.queue.fail(
@@ -326,7 +333,13 @@ export class TransferCoordinator {
       return "rejected";
     }
     await mkdir(this.options.destinationDirectory, { recursive: true });
-    if (!existingBatch) {
+    if (existingBatch) {
+      for (const file of existingBatch.files) {
+        if (file.status === "cancelled") {
+          await this.options.queue.retry(offer.transferId, file.fileId);
+        }
+      }
+    } else {
       await this.options.queue.acceptOffer(offer, destinationPaths);
     }
     return existingBatch ? "existing" : "new";
