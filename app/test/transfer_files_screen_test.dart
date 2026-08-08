@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/pairing/pairing_repository.dart';
-import 'package:vidyut/src/shared/relay_connection.dart';
 import 'package:vidyut/src/transfer/phone_transfer_sender.dart';
 import 'package:vidyut/src/transfer/transfer_files_screen.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
