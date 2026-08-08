@@ -196,24 +196,34 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     await _load();
   }
 
-  Iterable<PhoneTransferBatch> get _visible {
+  Iterable<PhoneTransferBatch> get _visible => _batches.where(_isVisible);
+
+  bool get _liveProgressIsVisible {
+    final progress = _liveProgress;
+    if (progress == null) return false;
+    final matching = _batches.where(
+      (batch) => batch.transferId == progress.transferId,
+    );
+    if (matching.isEmpty) return true;
+    return matching.any(_isVisible);
+  }
+
+  bool _isVisible(PhoneTransferBatch batch) {
     final query = _search.text.trim().toLowerCase();
-    return _batches.where((batch) {
-      if (_direction != null && batch.direction != _direction) return false;
-      if (!_matchesDateFilter(batch)) return false;
-      switch (_filter) {
-        case _FilesFilter.all:
-          break;
-        case _FilesFilter.active:
-          if (!_isActiveBatch(batch)) return false;
-        case _FilesFilter.needsAttention:
-          if (!_needsAttention(batch)) return false;
-      }
-      return query.isEmpty ||
-          batch.files.any(
-            (file) => file.filename.toLowerCase().contains(query),
-          );
-    });
+    if (_direction != null && batch.direction != _direction) return false;
+    if (!_matchesDateFilter(batch)) return false;
+    switch (_filter) {
+      case _FilesFilter.all:
+        break;
+      case _FilesFilter.active:
+        if (!_isActiveBatch(batch)) return false;
+      case _FilesFilter.needsAttention:
+        if (!_needsAttention(batch)) return false;
+    }
+    return query.isEmpty ||
+        batch.files.any(
+          (file) => file.filename.toLowerCase().contains(query),
+        );
   }
 
   @override
@@ -277,7 +287,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                     child: _NoResults(onClear: _clearFilters),
                   )
                 else ...[
-                  if (_liveProgress != null)
+                  if (_liveProgress != null && _liveProgressIsVisible)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
                       sliver: SliverToBoxAdapter(
@@ -649,7 +659,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   }
 
   VoidCallback? _cancelCallback(PhoneTransferBatch batch) {
-    return _isActiveBatch(batch)
+    return _canCancelBatch(batch)
         ? () => widget.sender.cancelBatch(batch.transferId)
         : null;
   }
@@ -672,6 +682,14 @@ bool _isActiveBatch(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.active ||
   PhoneTransferStatus.paused => true,
   _ => false,
+};
+
+bool _canCancelBatch(PhoneTransferBatch batch) => switch (batch.status) {
+  PhoneTransferStatus.completed ||
+  PhoneTransferStatus.failed ||
+  PhoneTransferStatus.cancelled ||
+  PhoneTransferStatus.expired => false,
+  _ => true,
 };
 
 bool _canCancelLive(PhoneTransferProgress progress) {

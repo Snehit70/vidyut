@@ -103,7 +103,13 @@ void main() {
           persisted: true,
         ),
       ]),
-      throwsA(isA<Object>()),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'storage unavailable',
+        ),
+      ),
     );
 
     expect(reader.retained, [freshlyRetained]);

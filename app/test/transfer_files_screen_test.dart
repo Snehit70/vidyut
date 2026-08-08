@@ -91,6 +91,31 @@ void main() {
       expect(rows.single.status, PhoneTransferStatus.cancelled);
     });
 
+    testWidgets('offers cancellation for waiting-for-source history rows', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'blocked.zip',
+          status: PhoneTransferStatus.waitingForSource,
+          createdAtMs: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Transfer actions'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cancel transfer'), findsOneWidget);
+      await tester.tap(find.text('Cancel transfer'));
+      await tester.pumpAndSettle();
+
+      final rows = await TransferHistoryRepository(history).load();
+      expect(rows.single.status, PhoneTransferStatus.cancelled);
+    });
+
     testWidgets('keeps other active rows visible beside live progress', (
       tester,
     ) async {
@@ -325,6 +350,64 @@ void main() {
       expect(find.text('Send again'), findsOneWidget);
     });
 
+    testWidgets('hides live progress that does not match the active filter', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      final now = DateTime.now();
+      final earlier = now.subtract(const Duration(days: 3));
+      await _seed(history, [
+        _batch(
+          filename: 'older.pdf',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: earlier.millisecondsSinceEpoch,
+        ),
+      ]);
+      final sender = _ProgressControlledSender(
+        history: TransferHistoryRepository(history),
+      );
+      await tester.pumpWidget(_screen(history, sender: sender));
+      await tester.pumpAndSettle();
+
+      final live = _batch(
+        filename: 'live.pdf',
+        status: PhoneTransferStatus.queued,
+        createdAtMs: now.millisecondsSinceEpoch,
+      );
+      sender.emitBatch(live);
+      await tester.pump();
+      sender.emit(
+        PhoneTransferProgress(
+          stage: PhoneTransferProgressStage.preparing,
+          fileCount: 1,
+          totalBytes: 1000,
+          transferredBytes: 0,
+          currentFileIndex: 0,
+          currentFilename: 'live.pdf',
+          transferId: live.transferId,
+          preparedBytes: 500,
+          preparationTotalBytes: 1000,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('older.pdf'), findsOneWidget);
+      expect(find.text('Sending to your laptop'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Filter'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Earlier').last,
+        100,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('Earlier').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('older.pdf'), findsOneWidget);
+      expect(find.text('Sending to your laptop'), findsNothing);
+    });
+
     testWidgets('supports multi-select history cleanup mode', (tester) async {
       final history = MemoryTransferHistoryStorage();
       await _seed(history, [
@@ -537,10 +620,16 @@ class _ProgressControlledSender extends PhoneTransferSender {
 
   final _progressController =
       StreamController<PhoneTransferProgress>.broadcast();
+  final _batchController = StreamController<PhoneTransferBatch>.broadcast();
 
   void emit(PhoneTransferProgress progress) =>
       _progressController.add(progress);
 
+  void emitBatch(PhoneTransferBatch batch) => _batchController.add(batch);
+
   @override
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
+
+  @override
+  Stream<PhoneTransferBatch> get batchesCreated => _batchController.stream;
 }

@@ -193,24 +193,43 @@ class MainActivity : FlutterActivity() {
         return try {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         } catch (_: IllegalArgumentException) {
-            pruneSharedStages()
-            val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-            val staged = File(
-                File(cacheDir, SHARED_STAGE_DIRECTORY),
-                "${file.absolutePath.hashCode().toUInt().toString(16)}-$safeName",
-            )
-            staged.parentFile?.mkdirs()
-            try {
-                file.copyTo(staged, overwrite = true)
-                staged.setLastModified(System.currentTimeMillis())
-            } catch (error: Exception) {
-                staged.delete()
-                throw error
-            }
-            grantedStageFiles[staged.absolutePath] = System.currentTimeMillis()
-            pruneSharedStages(protected = staged)
-            FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
+            stageSourceForSharing(file)
         }
+    }
+
+    private fun stageSourceForSharing(file: File): Uri {
+        val sourceSize = file.length()
+        if (sourceSize > MAX_SHARED_STAGE_BYTES) {
+            throw IllegalStateException("File is too large to stage for sharing.")
+        }
+        pruneSharedStages()
+        val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
+        directory.mkdirs()
+        val usedBytes = directory.listFiles()
+            ?.filter { it.isFile }
+            ?.sumOf { it.length() } ?: 0L
+        if (sourceSize > MAX_SHARED_STAGE_BYTES - usedBytes) {
+            throw IllegalStateException("Not enough space to stage this file for sharing.")
+        }
+        val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val staged = File(directory, nextStageName(safeName))
+        try {
+            file.copyTo(staged, overwrite = false)
+            staged.setLastModified(System.currentTimeMillis())
+        } catch (error: Exception) {
+            staged.delete()
+            throw error
+        }
+        grantedStageFiles[staged.absolutePath] = System.currentTimeMillis()
+        pruneSharedStages(protected = staged)
+        return FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
+    }
+
+    private var stageSequence = 0L
+
+    private fun nextStageName(safeName: String): String {
+        stageSequence++
+        return "${System.currentTimeMillis()}-$stageSequence-$safeName"
     }
 
     private fun pruneSharedStages(protected: File? = null) {
