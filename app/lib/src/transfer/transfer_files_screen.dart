@@ -1103,21 +1103,25 @@ class _BatchDetailsSheet extends StatelessWidget {
                   _DetailAction(
                     icon: Icons.open_in_new,
                     label: 'Open',
-                    onTap: () => _runAction(context, 'Open', onOpenFile, file),
+                    onTap: () => unawaited(
+                      _runAction(context, 'Open', onOpenFile, file),
+                    ),
                   ),
                 if (onShareFile != null)
                   _DetailAction(
                     icon: Icons.share_outlined,
                     label: 'Share',
-                    onTap: () =>
-                        _runAction(context, 'Share', onShareFile, file),
+                    onTap: () => unawaited(
+                      _runAction(context, 'Share', onShareFile, file),
+                    ),
                   ),
                 if (onSendAgain != null && canSendAgain?.call(file) == true)
                   _DetailAction(
                     icon: Icons.send_outlined,
                     label: 'Send again',
-                    onTap: () =>
-                        _runAction(context, 'Send again', onSendAgain, file),
+                    onTap: () => unawaited(
+                      _runAction(context, 'Send again', onSendAgain, file),
+                    ),
                   ),
               ],
             if (onRetry != null)
@@ -1160,15 +1164,20 @@ class _BatchDetailsSheet extends StatelessWidget {
     );
   }
 
-  void _runAction(
+  Future<void> _runAction(
     BuildContext context,
     String label,
     Future<void> Function(PhoneTransferFile file)? action,
     PhoneTransferFile file,
-  ) {
+  ) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     Navigator.pop(context);
     if (action == null) return;
-    unawaited(action(file));
+    try {
+      await action(file);
+    } catch (_) {
+      messenger?.showSnackBar(SnackBar(content: Text('$label failed.')));
+    }
   }
 }
 

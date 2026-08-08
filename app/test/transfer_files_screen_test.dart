@@ -134,6 +134,35 @@ void main() {
       expect(find.text('Send again'), findsNothing);
     });
 
+    testWidgets(
+      'reports file action failures after closing the details sheet',
+      (tester) async {
+        final history = MemoryTransferHistoryStorage();
+        await _seed(history, [
+          _batch(
+            filename: 'broken.pdf',
+            status: PhoneTransferStatus.completed,
+            createdAtMs: 1,
+            sourcePath: '/source',
+          ),
+        ]);
+
+        await tester.pumpWidget(
+          _screen(
+            history,
+            onOpenFile: (_) async => throw StateError('open failed'),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('broken.pdf'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Open'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Open failed.'), findsOneWidget);
+      },
+    );
+
     testWidgets('exposes actions for every file in a completed batch', (
       tester,
     ) async {

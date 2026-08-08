@@ -662,14 +662,33 @@ class _PairingScreenState extends State<PairingScreen>
           history: _transferHistory,
           sender: _transferSender,
           onOpenSettings: _openSettings,
-          onOpenFile: _transferFileActions.open,
-          onShareFile: _transferFileActions.share,
-          onSendAgain: (file) async {
-            await _transferSender.sendAgain(file);
-          },
+          onOpenFile: (file) => _runTransferFileAction(
+            'Open file',
+            () => _transferFileActions.open(file),
+          ),
+          onShareFile: (file) => _runTransferFileAction(
+            'Share file',
+            () => _transferFileActions.share(file),
+          ),
+          onSendAgain: (file) => _runTransferFileAction(
+            'Send again',
+            () => _transferSender.sendAgain(file),
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _runTransferFileAction(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (error) {
+      _debugLog.add('transfer', '$label failed: $error', isError: true);
+      if (mounted) _showSnack('$label failed.');
+    }
   }
 
   Future<void> _updateSettings(AppSettings settings) async {
