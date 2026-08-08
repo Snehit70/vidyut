@@ -917,7 +917,11 @@ class _TransferRow extends StatelessWidget {
                   activeColor: Palette.raspberry,
                 )
               else
-                _FileTypeIcon(file: first, direction: batch.direction),
+                _FileTypeIcon(
+                  filename: first?.filename,
+                  mime: first?.mime,
+                  direction: batch.direction,
+                ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1036,7 +1040,11 @@ class _BatchDetailsSheet extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FileTypeIcon(file: file, direction: batch.direction),
+                _FileTypeIcon(
+                  filename: file?.filename,
+                  mime: file?.mime,
+                  direction: batch.direction,
+                ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -1187,14 +1195,19 @@ class _DetailAction extends StatelessWidget {
 }
 
 class _FileTypeIcon extends StatelessWidget {
-  const _FileTypeIcon({required this.file, required this.direction});
+  const _FileTypeIcon({
+    required this.filename,
+    required this.mime,
+    required this.direction,
+  });
 
-  final PhoneTransferFile? file;
+  final String? filename;
+  final String? mime;
   final PhoneTransferDirection direction;
 
   @override
   Widget build(BuildContext context) {
-    final visual = _fileVisual(file, direction);
+    final visual = _fileVisual(filename, mime, direction);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Palette.ground,
@@ -1211,25 +1224,27 @@ class _FileTypeIcon extends StatelessWidget {
 }
 
 ({IconData icon, Color color}) _fileVisual(
-  PhoneTransferFile? file,
+  String? filename,
+  String? mime,
   PhoneTransferDirection direction,
 ) {
-  final filename = file?.filename.toLowerCase() ?? '';
-  final mime = file?.mime.toLowerCase() ?? '';
-  if (mime == 'application/pdf' || filename.endsWith('.pdf')) {
+  final normalizedFilename = filename?.toLowerCase() ?? '';
+  final normalizedMime = mime?.toLowerCase() ?? '';
+  if (normalizedMime == 'application/pdf' ||
+      normalizedFilename.endsWith('.pdf')) {
     return (icon: Icons.picture_as_pdf_outlined, color: Palette.raspberry);
   }
-  if (mime.startsWith('image/') ||
-      filename.endsWith('.png') ||
-      filename.endsWith('.jpg') ||
-      filename.endsWith('.jpeg')) {
+  if (normalizedMime.startsWith('image/') ||
+      normalizedFilename.endsWith('.png') ||
+      normalizedFilename.endsWith('.jpg') ||
+      normalizedFilename.endsWith('.jpeg')) {
     return (icon: Icons.image_outlined, color: Palette.raspberry);
   }
-  if (mime == 'text/csv' || filename.endsWith('.csv')) {
+  if (normalizedMime == 'text/csv' || normalizedFilename.endsWith('.csv')) {
     return (icon: Icons.table_chart_outlined, color: Palette.success);
   }
-  if (filename.endsWith('.apk') ||
-      mime == 'application/vnd.android.package-archive') {
+  if (normalizedFilename.endsWith('.apk') ||
+      normalizedMime == 'application/vnd.android.package-archive') {
     return (icon: Icons.android_outlined, color: Palette.raspberry);
   }
   return (
@@ -1345,18 +1360,8 @@ class _LiveTransferCard extends StatelessWidget {
             Row(
               children: [
                 _FileTypeIcon(
-                  file: progress.currentFilename == null
-                      ? null
-                      : PhoneTransferFile(
-                          fileId: '',
-                          filename: progress.currentFilename!,
-                          mime: '',
-                          size: progress.totalBytes,
-                          lastModifiedMs: 0,
-                          sha256: '',
-                          status: PhoneTransferStatus.active,
-                          confirmedOffset: progress.transferredBytes,
-                        ),
+                  filename: progress.currentFilename,
+                  mime: null,
                   direction: PhoneTransferDirection.sent,
                 ),
                 const SizedBox(width: 12),
