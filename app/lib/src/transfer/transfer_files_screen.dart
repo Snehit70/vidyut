@@ -219,7 +219,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   Widget build(BuildContext context) {
     final visible = _visible.toList()
       ..sort((left, right) => right.createdAtMs.compareTo(left.createdAtMs));
-    final active = visible.where(_isActiveBatch).toList();
+    final active = visible
+        .where(
+          (batch) =>
+              _isActiveBatch(batch) &&
+              batch.transferId != _liveProgress?.transferId,
+        )
+        .toList();
     final history = visible.where((batch) => !_isActiveBatch(batch)).toList();
     final groupedHistory = _groupByDate(history);
     final showEmpty = !_loading && _batches.isEmpty;
@@ -284,7 +290,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                         ),
                       ),
                     ),
-                  if (_liveProgress == null && active.isNotEmpty) ...[
+                  if (active.isNotEmpty) ...[
                     _sectionHeader('Active'),
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),

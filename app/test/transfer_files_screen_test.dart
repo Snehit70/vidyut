@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/design/theme.dart';
@@ -5,6 +7,7 @@ import 'package:vidyut/src/pairing/pairing_repository.dart';
 import 'package:vidyut/src/transfer/phone_transfer_sender.dart';
 import 'package:vidyut/src/transfer/transfer_files_screen.dart';
 import 'package:vidyut/src/transfer/transfer_history.dart';
+import 'package:vidyut_files/vidyut_files.dart';
 
 void main() {
   group('TransferFilesScreen', () {
@@ -86,6 +89,44 @@ void main() {
 
       final rows = await TransferHistoryRepository(history).load();
       expect(rows.single.status, PhoneTransferStatus.cancelled);
+    });
+
+    testWidgets('keeps other active rows visible beside live progress', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'queued.zip',
+          status: PhoneTransferStatus.queued,
+          createdAtMs: 1,
+        ),
+      ]);
+      final reader = _BlockingTransferSourceReader();
+      final sender = PhoneTransferSender(
+        pairingRepository: PairingRepository(MemoryPairingStorage()),
+        connectionFactory: (_) => throw UnimplementedError(),
+        history: TransferHistoryRepository(history),
+        sourceReader: reader,
+      );
+
+      await tester.pumpWidget(_screen(history, sender: sender));
+      await tester.pumpAndSettle();
+      await sender.enqueue([
+        const PhoneTransferSource(
+          uri: 'content://provider/live-progress',
+          filename: 'live.pdf',
+          mime: 'application/pdf',
+        ),
+      ]);
+      await tester.pump();
+
+      expect(find.text('live.pdf'), findsWidgets);
+      expect(find.text('queued.zip'), findsOneWidget);
+      expect(find.text('Active'), findsWidgets);
+
+      reader.releaseProbe();
+      await tester.pump(const Duration(milliseconds: 20));
     });
 
     testWidgets('opens completed batch details from its history row', (
@@ -305,6 +346,7 @@ void main() {
 
 Widget _screen(
   MemoryTransferHistoryStorage storage, {
+  PhoneTransferSender? sender,
   Future<void> Function(PhoneTransferFile file)? onOpenFile,
   Future<void> Function(PhoneTransferFile file)? onShareFile,
   Future<void> Function(PhoneTransferFile file)? onSendAgain,
@@ -313,11 +355,13 @@ Widget _screen(
     theme: buildVidyutTheme(),
     home: TransferFilesScreen(
       history: TransferHistoryRepository(storage),
-      sender: PhoneTransferSender(
-        pairingRepository: PairingRepository(MemoryPairingStorage()),
-        connectionFactory: (_) => throw UnimplementedError(),
-        history: TransferHistoryRepository(storage),
-      ),
+      sender:
+          sender ??
+          PhoneTransferSender(
+            pairingRepository: PairingRepository(MemoryPairingStorage()),
+            connectionFactory: (_) => throw UnimplementedError(),
+            history: TransferHistoryRepository(storage),
+          ),
       onOpenFile: onOpenFile,
       onShareFile: onShareFile,
       onSendAgain: onSendAgain,
@@ -404,4 +448,45 @@ PhoneTransferBatch _mixedBatch() {
       ),
     ],
   );
+}
+
+class _BlockingTransferSourceReader implements PhoneTransferSourceReader {
+  final _probeReady = Completer<void>();
+
+  void releaseProbe() => _probeReady.complete();
+
+  @override
+  Future<void> cancelStage(String operationId) async {}
+
+  @override
+  Future<void> discard(String reference) async {}
+
+  @override
+  Future<void> release(String reference) async {}
+
+  @override
+  Future<void> retain(String reference) async {}
+
+  @override
+  Future<VidyutSourceProbe> probe(String uri) async {
+    await _probeReady.future;
+    return const VidyutSourceProbe(seekable: true, size: 42, sizeKnown: true);
+  }
+
+  @override
+  Future<String> hashSha256(String uri) async => List.filled(64, 'b').join();
+
+  @override
+  Future<VidyutStagedSource> stage(
+    String uri, {
+    required int maximumBytes,
+    String? operationId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<int>> readAt(
+    String uri, {
+    required int offset,
+    required int length,
+  }) => throw UnimplementedError();
 }
