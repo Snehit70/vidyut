@@ -27,7 +27,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
   final _search = TextEditingController();
   List<PhoneTransferBatch> _batches = const [];
   PhoneTransferDirection? _direction;
-  bool _failedOnly = false;
+  _FilesFilter _filter = _FilesFilter.all;
   bool _loading = true;
   bool _sending = false;
   PhoneTransferProgress? _liveProgress;
@@ -189,10 +189,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     final query = _search.text.trim().toLowerCase();
     return _batches.where((batch) {
       if (_direction != null && batch.direction != _direction) return false;
-      if (_failedOnly &&
-          batch.status != PhoneTransferStatus.failed &&
-          batch.status != PhoneTransferStatus.completedWithIssues) {
-        return false;
+      switch (_filter) {
+        case _FilesFilter.all:
+          break;
+        case _FilesFilter.active:
+          if (!_isActiveBatch(batch)) return false;
+        case _FilesFilter.needsAttention:
+          if (!_needsAttention(batch)) return false;
       }
       return query.isEmpty ||
           batch.files.any(
@@ -203,7 +206,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final visible = _visible.toList();
+    final visible = _visible.toList()
+      ..sort((left, right) => right.createdAtMs.compareTo(left.createdAtMs));
+    final active = visible.where(_isActiveBatch).toList();
+    final history = visible.where((batch) => !_isActiveBatch(batch)).toList();
+    final groupedHistory = _groupByDate(history);
+    final showEmpty = !_loading && _batches.isEmpty;
+    final showNoResults = !_loading && _batches.isNotEmpty && visible.isEmpty;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Files'),
@@ -218,122 +227,661 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _sending ? null : _chooseFiles,
-        icon: const Icon(Icons.add),
+        icon: const Icon(Icons.add, size: 28),
         label: const Text('Send files'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                  child: TextField(
-                    controller: _search,
-                    decoration: const InputDecoration(
-                      hintText: 'Search filenames',
-                      prefixIcon: Icon(Icons.search),
+          : CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: _SummaryStrip(batches: _batches),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: TextField(
+                      controller: _search,
+                      decoration: const InputDecoration(
+                        hintText: 'Search filenames',
+                        prefixIcon: Icon(Icons.search),
+                      ),
                     ),
                   ),
                 ),
-                SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      FilterChip(
-                        label: const Text('Sent'),
-                        selected: _direction == PhoneTransferDirection.sent,
-                        onSelected: (selected) => setState(
-                          () => _direction = selected
-                              ? PhoneTransferDirection.sent
-                              : null,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilterChip(
-                        label: const Text('Received'),
-                        selected: _direction == PhoneTransferDirection.received,
-                        onSelected: (selected) => setState(
-                          () => _direction = selected
-                              ? PhoneTransferDirection.received
-                              : null,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilterChip(
-                        label: const Text('Failed'),
-                        selected: _failedOnly,
-                        onSelected: (selected) =>
-                            setState(() => _failedOnly = selected),
-                      ),
-                    ],
-                  ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  sliver: SliverToBoxAdapter(child: _buildFilters()),
                 ),
-                const SizedBox(height: 8),
-                if (_liveProgress != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: _LiveTransferCard(progress: _liveProgress!),
-                  ),
-                Expanded(
-                  child: visible.isEmpty
-                      ? const _EmptyFiles()
-                      : ListView.separated(
-                          padding: EdgeInsets.fromLTRB(
-                            16,
-                            _liveProgress == null ? 8 : 12,
-                            16,
-                            100,
+                if (showEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _EmptyFiles(onSend: _chooseFiles),
+                  )
+                else if (showNoResults)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _NoResults(onClear: _clearFilters),
+                  )
+                else ...[
+                  if (_liveProgress != null)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                      sliver: SliverToBoxAdapter(
+                        child: _LiveTransferCard(
+                          progress: _liveProgress!,
+                          onCancel: _liveProgress!.transferId == null
+                              ? null
+                              : () => widget.sender.cancelBatch(
+                                  _liveProgress!.transferId!,
+                                ),
+                        ),
+                      ),
+                    ),
+                  if (_liveProgress == null && active.isNotEmpty) ...[
+                    _sectionHeader('Active'),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                      sliver: SliverList.builder(
+                        itemCount: active.length,
+                        itemBuilder: (_, index) => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: index == active.length - 1 ? 0 : 10,
                           ),
-                          itemCount: visible.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (_, index) {
-                            final batch = visible[index];
-                            return _BatchCard(
-                              batch: batch,
-                              onCancel:
-                                  batch.files.any(
-                                    (file) => !_isTerminalStatus(file.status),
-                                  )
-                                  ? () => widget.sender.cancelBatch(
-                                      batch.transferId,
-                                    )
-                                  : null,
-                              onRetry:
-                                  batch.status == PhoneTransferStatus.failed ||
-                                      batch.status ==
-                                          PhoneTransferStatus
-                                              .completedWithIssues ||
-                                      batch.status ==
-                                          PhoneTransferStatus.cancelled ||
-                                      batch.status ==
-                                          PhoneTransferStatus.waitingForSource
-                                  ? () => _retry(batch)
-                                  : null,
-                              onOpenSettings: widget.onOpenSettings,
-                              onRemove: () => _remove(batch),
-                            );
-                          },
+                          child: _TransferRow(
+                            batch: active[index],
+                            onRetry: null,
+                            onRemove: () => _remove(active[index]),
+                          ),
                         ),
-                ),
+                      ),
+                    ),
+                  ],
+                  for (final entry in groupedHistory.entries) ...[
+                    _sectionHeader(entry.key),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                      sliver: SliverList.builder(
+                        itemCount: entry.value.length,
+                        itemBuilder: (_, index) {
+                          final batch = entry.value[index];
+                          return Padding(
+                            padding: EdgeInsets.only(
+                              bottom: index == entry.value.length - 1 ? 0 : 10,
+                            ),
+                            child: _TransferRow(
+                              batch: batch,
+                              onRetry: _retryCallback(batch),
+                              onRemove: () => _remove(batch),
+                              onOpenSettings: widget.onOpenSettings,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  const SliverPadding(padding: EdgeInsets.only(bottom: 112)),
+                ],
               ],
             ),
     );
   }
+
+  Widget _buildFilters() => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        _FilterButton(
+          label: 'All',
+          selected: _filter == _FilesFilter.all,
+          onTap: () => setState(() => _filter = _FilesFilter.all),
+        ),
+        const SizedBox(width: 10),
+        _FilterButton(
+          label: 'Active',
+          selected: _filter == _FilesFilter.active,
+          dotColor: Palette.active,
+          onTap: () => setState(() => _filter = _FilesFilter.active),
+        ),
+        const SizedBox(width: 10),
+        _FilterButton(
+          label: 'Needs attention',
+          selected: _filter == _FilesFilter.needsAttention,
+          dotColor: Palette.error,
+          onTap: () => setState(() => _filter = _FilesFilter.needsAttention),
+        ),
+        const SizedBox(width: 10),
+        OutlinedButton.icon(
+          onPressed: _showDirectionFilter,
+          icon: const Icon(Icons.tune_outlined, size: 18),
+          label: Text(
+            _direction == null
+                ? 'Filter'
+                : _direction == PhoneTransferDirection.sent
+                ? 'Sent'
+                : 'Received',
+          ),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            side: const BorderSide(color: Palette.hairline, width: 1.5),
+            foregroundColor: Palette.ink,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _showDirectionFilter() async {
+    final next = await showModalBottomSheet<_DirectionFilterChoice>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Filter transfers',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(
+                  _direction == null
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: _direction == null ? Palette.raspberry : Palette.muted,
+                ),
+                title: const Text('All directions'),
+                onTap: () => Navigator.pop(context, _DirectionFilterChoice.all),
+              ),
+              ListTile(
+                leading: Icon(
+                  _direction == PhoneTransferDirection.sent
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: _direction == PhoneTransferDirection.sent
+                      ? Palette.raspberry
+                      : Palette.muted,
+                ),
+                title: const Text('Sent'),
+                onTap: () =>
+                    Navigator.pop(context, _DirectionFilterChoice.sent),
+              ),
+              ListTile(
+                leading: Icon(
+                  _direction == PhoneTransferDirection.received
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: _direction == PhoneTransferDirection.received
+                      ? Palette.raspberry
+                      : Palette.muted,
+                ),
+                title: const Text('Received'),
+                onTap: () =>
+                    Navigator.pop(context, _DirectionFilterChoice.received),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || next == null) return;
+    setState(() {
+      _direction = switch (next) {
+        _DirectionFilterChoice.all => null,
+        _DirectionFilterChoice.sent => PhoneTransferDirection.sent,
+        _DirectionFilterChoice.received => PhoneTransferDirection.received,
+      };
+    });
+  }
+
+  void _clearFilters() {
+    _search.clear();
+    setState(() {
+      _filter = _FilesFilter.all;
+      _direction = null;
+    });
+  }
+
+  VoidCallback? _retryCallback(PhoneTransferBatch batch) {
+    final retryable =
+        batch.status == PhoneTransferStatus.failed ||
+        batch.status == PhoneTransferStatus.completedWithIssues ||
+        batch.status == PhoneTransferStatus.cancelled ||
+        batch.status == PhoneTransferStatus.waitingForSource;
+    return retryable ? () => _retry(batch) : null;
+  }
+
+  SliverToBoxAdapter _sectionHeader(String title) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+    ),
+  );
 }
 
+enum _FilesFilter { all, active, needsAttention }
+
+enum _DirectionFilterChoice { all, sent, received }
+
+bool _isActiveBatch(PhoneTransferBatch batch) => switch (batch.status) {
+  PhoneTransferStatus.preparing ||
+  PhoneTransferStatus.waitingForSource ||
+  PhoneTransferStatus.queued ||
+  PhoneTransferStatus.active ||
+  PhoneTransferStatus.paused => true,
+  _ => false,
+};
+
+bool _needsAttention(PhoneTransferBatch batch) => switch (batch.status) {
+  PhoneTransferStatus.failed ||
+  PhoneTransferStatus.completedWithIssues ||
+  PhoneTransferStatus.waitingForSource ||
+  PhoneTransferStatus.expired => true,
+  _ => false,
+};
+
+Map<String, List<PhoneTransferBatch>> _groupByDate(
+  Iterable<PhoneTransferBatch> batches,
+) {
+  final grouped = <String, List<PhoneTransferBatch>>{};
+  for (final batch in batches) {
+    grouped.putIfAbsent(_dateGroup(batch.createdAtMs), () => []).add(batch);
+  }
+  return grouped;
+}
+
+String _dateGroup(int timestampMs) {
+  final date = DateTime.fromMillisecondsSinceEpoch(timestampMs).toLocal();
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final candidate = DateTime(date.year, date.month, date.day);
+  final days = today.difference(candidate).inDays;
+  if (days == 0) return 'Today';
+  if (days == 1) return 'Yesterday';
+  if (days > 1 && days < 7) return 'Earlier this week';
+  return 'Earlier';
+}
+
+String _timeLabel(int timestampMs) {
+  final date = DateTime.fromMillisecondsSinceEpoch(timestampMs).toLocal();
+  final hour = date.hour == 0
+      ? 12
+      : date.hour > 12
+      ? date.hour - 12
+      : date.hour;
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '$hour:$minute ${date.hour >= 12 ? 'PM' : 'AM'}';
+}
+
+class _SummaryStrip extends StatelessWidget {
+  const _SummaryStrip({required this.batches});
+
+  final List<PhoneTransferBatch> batches;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = batches.where(_isActiveBatch).length;
+    final attention = batches.where(_needsAttention).length;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Palette.mist,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Palette.hairline),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: _SummaryMetric(
+                icon: Icons.sync_outlined,
+                color: Palette.active,
+                value: '$active',
+                label: 'active',
+              ),
+            ),
+            const _SummaryDivider(),
+            Expanded(
+              child: _SummaryMetric(
+                icon: Icons.file_upload_outlined,
+                color: Palette.raspberry,
+                value: '${batches.length}',
+                label: 'transfers',
+              ),
+            ),
+            const _SummaryDivider(),
+            Expanded(
+              child: _SummaryMetric(
+                icon: Icons.error_outline,
+                color: attention == 0 ? Palette.muted : Palette.error,
+                value: '$attention',
+                label: 'need attention',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryMetric extends StatelessWidget {
+  const _SummaryMetric({
+    required this.icon,
+    required this.color,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Icon(icon, color: color, size: 22),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          '$value $label',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+      ),
+    ],
+  );
+}
+
+class _SummaryDivider extends StatelessWidget {
+  const _SummaryDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 1,
+    height: 24,
+    color: Palette.hairline,
+    margin: const EdgeInsets.symmetric(horizontal: 6),
+  );
+}
+
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.dotColor,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? dotColor;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton(
+    onPressed: onTap,
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size(0, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      backgroundColor: selected ? Palette.petal : Colors.transparent,
+      foregroundColor: selected ? Palette.ink : Palette.ink,
+      side: BorderSide(
+        color: selected ? Palette.petal : Palette.hairline,
+        width: 1.5,
+      ),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label),
+        if (dotColor != null) ...[
+          const SizedBox(width: 8),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+class _TransferRow extends StatelessWidget {
+  const _TransferRow({
+    required this.batch,
+    required this.onRemove,
+    this.onRetry,
+    this.onOpenSettings,
+  });
+
+  final PhoneTransferBatch batch;
+  final VoidCallback onRemove;
+  final VoidCallback? onRetry;
+  final VoidCallback? onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = batch.files.isEmpty ? null : batch.files.first;
+    final title = batch.files.length == 1
+        ? first!.filename
+        : '${batch.files.length} files';
+    final size = batch.files.fold<int>(0, (sum, file) => sum + file.size);
+    final status = _statusVisual(batch.status);
+    final subtitle = batch.files.length == 1
+        ? '${_directionLabel(batch.direction)} · ${_timeLabel(batch.createdAtMs)}'
+        : '${_directionLabel(batch.direction)} · ${_bytes(size)} · ${_timeLabel(batch.createdAtMs)}';
+    final failure = batch.files
+        .where((file) => file.status == PhoneTransferStatus.failed)
+        .firstOrNull;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _needsAttention(batch) ? status.background : Palette.ground,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Palette.hairline),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        child: Row(
+          children: [
+            _FileTypeIcon(file: first, direction: batch.direction),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                  ),
+                  if (failure != null) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      _failureReason(failure),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(color: Palette.error),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  _bytes(size),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                ),
+                const SizedBox(height: 8),
+                Icon(status.icon, color: status.color, size: 22),
+              ],
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Transfer actions',
+              onSelected: (value) {
+                if (value == 'retry') onRetry?.call();
+                if (value == 'remove') onRemove();
+                if (value == 'settings') onOpenSettings?.call();
+                if (value == 'cancel') {
+                  // The parent supplies cancellation through the current
+                  // transfer action in the live surface.
+                }
+              },
+              itemBuilder: (_) => [
+                if (onRetry != null)
+                  const PopupMenuItem(value: 'retry', child: Text('Retry')),
+                if (failure?.errorCode == 'file_too_large' &&
+                    onOpenSettings != null)
+                  const PopupMenuItem(
+                    value: 'settings',
+                    child: Text('Open transfer settings'),
+                  ),
+                const PopupMenuItem(
+                  value: 'remove',
+                  child: Text('Remove from history'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FileTypeIcon extends StatelessWidget {
+  const _FileTypeIcon({required this.file, required this.direction});
+
+  final PhoneTransferFile? file;
+  final PhoneTransferDirection direction;
+
+  @override
+  Widget build(BuildContext context) {
+    final visual = _fileVisual(file, direction);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Palette.ground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Palette.hairline),
+      ),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Icon(visual.icon, color: visual.color, size: 28),
+      ),
+    );
+  }
+}
+
+({IconData icon, Color color}) _fileVisual(
+  PhoneTransferFile? file,
+  PhoneTransferDirection direction,
+) {
+  final filename = file?.filename.toLowerCase() ?? '';
+  final mime = file?.mime.toLowerCase() ?? '';
+  if (mime == 'application/pdf' || filename.endsWith('.pdf')) {
+    return (icon: Icons.picture_as_pdf_outlined, color: Palette.raspberry);
+  }
+  if (mime.startsWith('image/') ||
+      filename.endsWith('.png') ||
+      filename.endsWith('.jpg') ||
+      filename.endsWith('.jpeg')) {
+    return (icon: Icons.image_outlined, color: Palette.raspberry);
+  }
+  if (mime == 'text/csv' || filename.endsWith('.csv')) {
+    return (icon: Icons.table_chart_outlined, color: Palette.success);
+  }
+  if (filename.endsWith('.apk') ||
+      mime == 'application/vnd.android.package-archive') {
+    return (icon: Icons.android_outlined, color: Palette.raspberry);
+  }
+  return (
+    icon: direction == PhoneTransferDirection.sent
+        ? Icons.file_upload_outlined
+        : Icons.file_download_outlined,
+    color: Palette.raspberry,
+  );
+}
+
+class _StatusVisual {
+  const _StatusVisual(this.icon, this.color, this.background);
+
+  final IconData icon;
+  final Color color;
+  final Color background;
+}
+
+_StatusVisual _statusVisual(PhoneTransferStatus status) => switch (status) {
+  PhoneTransferStatus.completed => const _StatusVisual(
+    Icons.check_circle_outline,
+    Palette.success,
+    Palette.successMist,
+  ),
+  PhoneTransferStatus.completedWithIssues => const _StatusVisual(
+    Icons.warning_amber_outlined,
+    Palette.warning,
+    Palette.warningMist,
+  ),
+  PhoneTransferStatus.failed || PhoneTransferStatus.expired =>
+    const _StatusVisual(Icons.error_outline, Palette.error, Color(0xFFFFF2F4)),
+  PhoneTransferStatus.waitingForSource => const _StatusVisual(
+    Icons.error_outline,
+    Palette.warning,
+    Palette.warningMist,
+  ),
+  _ => const _StatusVisual(
+    Icons.timelapse_outlined,
+    Palette.active,
+    Palette.activeMist,
+  ),
+};
+
+String _directionLabel(PhoneTransferDirection direction) =>
+    direction == PhoneTransferDirection.sent
+    ? 'Sent to your laptop'
+    : 'Received from your laptop';
+
 class _LiveTransferCard extends StatelessWidget {
-  const _LiveTransferCard({required this.progress});
+  const _LiveTransferCard({required this.progress, this.onCancel});
 
   final PhoneTransferProgress progress;
+  final Future<void> Function()? onCancel;
 
   @override
   Widget build(BuildContext context) {
     final isTransferring =
         progress.stage == PhoneTransferProgressStage.transferring;
-    final isCompleted =
-        progress.stage == PhoneTransferProgressStage.completed;
+    final isCompleted = progress.stage == PhoneTransferProgressStage.completed;
     final isPreparing = {
       PhoneTransferProgressStage.preparing,
       PhoneTransferProgressStage.readingSelection,
@@ -341,9 +889,6 @@ class _LiveTransferCard extends StatelessWidget {
       PhoneTransferProgressStage.hashing,
       PhoneTransferProgressStage.policyCheck,
     }.contains(progress.stage);
-    final itemLabel = progress.currentFileIndex == null
-        ? '${progress.fileCount} files'
-        : '${progress.currentFileIndex! + 1} of ${progress.fileCount} files';
     final title = switch (progress.stage) {
       PhoneTransferProgressStage.preparing => 'Preparing files',
       PhoneTransferProgressStage.readingSelection => 'Reading selection',
@@ -358,143 +903,145 @@ class _LiveTransferCard extends StatelessWidget {
       PhoneTransferProgressStage.completed => 'Transfer complete',
       PhoneTransferProgressStage.failed => 'Transfer needs attention',
     };
+    final fraction = isCompleted ? 1.0 : progress.fraction;
+    final stageLabel = isTransferring
+        ? 'Transferring'
+        : isPreparing
+        ? 'Preparing'
+        : title;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Palette.mist,
-        borderRadius: BorderRadius.circular(24),
+        color: isTransferring ? Palette.activeMist : Palette.mist,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: isTransferring ? const Color(0xFFFFD2A5) : Palette.hairline,
+        ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(
-                  Icons.upload_file_outlined,
-                  color: Palette.raspberry,
+                _FileTypeIcon(
+                  file: progress.currentFilename == null
+                      ? null
+                      : PhoneTransferFile(
+                          fileId: '',
+                          filename: progress.currentFilename!,
+                          mime: '',
+                          size: progress.totalBytes,
+                          lastModifiedMs: 0,
+                          sha256: '',
+                          status: PhoneTransferStatus.active,
+                          confirmedOffset: progress.transferredBytes,
+                        ),
+                  direction: PhoneTransferDirection.sent,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        progress.currentFilename ??
+                            'Getting the transfer ready',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Sending to your laptop',
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                      ),
+                    ],
                   ),
                 ),
-                Text(itemLabel, style: Theme.of(context).textTheme.labelLarge),
+                _StatusBadge(
+                  label: stageLabel,
+                  color: isTransferring ? Palette.active : Palette.raspberry,
+                  background: isTransferring
+                      ? const Color(0xFFFFE2C1)
+                      : Palette.petal,
+                ),
               ],
             ),
             const SizedBox(height: 18),
-            if (isTransferring) ...[
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${(progress.fraction * 100).round()}%',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: Palette.raspberry,
-                      fontWeight: FontWeight.w700,
-                    ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${(fraction * 100).round()}%',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    color: isTransferring ? Palette.active : Palette.raspberry,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: _TransferFileName(
-                      filename: progress.currentFilename,
-                      subtitle: progress.totalBytes == 0
-                          ? null
-                          : _bytes(progress.totalBytes),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              LinearProgressIndicator(value: progress.fraction),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: _ProgressDetail(
-                      '${_bytes(progress.transferredBytes)} of ${_bytes(progress.totalBytes)}',
-                      align: TextAlign.start,
-                    ),
-                  ),
-                  _ProgressDetail(_rate(progress.bytesPerSecond)),
-                  Expanded(
-                    child: _ProgressDetail(
-                      _remaining(progress.remaining),
-                      align: TextAlign.end,
-                    ),
-                  ),
-                ],
-              ),
-            ] else if (isCompleted) ...[
-              if (progress.currentFilename != null) ...[
-                _TransferFileName(
-                  filename: progress.currentFilename,
-                  subtitle: progress.totalBytes == 0
-                      ? null
-                      : _bytes(progress.totalBytes),
                 ),
-                const SizedBox(height: 12),
-              ],
-              const LinearProgressIndicator(value: 1),
-              const SizedBox(height: 12),
-              Text(
-                'Transfer complete. You can return to your files.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
-              ),
-            ] else ...[
-              if (progress.currentFilename != null) ...[
-                _TransferFileName(
-                  filename: progress.currentFilename,
-                  subtitle: isPreparing
-                      ? '${_bytes(progress.preparedBytes)}${progress.preparationTotalBytes == null ? '' : ' of ${_bytes(progress.preparationTotalBytes!)}'} · ${_elapsed(progress.preparationElapsed)}'
-                      : null,
+                const Spacer(),
+                Text(
+                  _remaining(progress.remaining),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Palette.muted),
                 ),
-                const SizedBox(height: 12),
               ],
-              LinearProgressIndicator(
-                value:
-                    isPreparing &&
-                        progress.preparationTotalBytes != null &&
-                        progress.preparationTotalBytes! > 0
-                    ? (progress.preparedBytes / progress.preparationTotalBytes!)
-                          .clamp(0.0, 1.0)
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                isPreparing
-                    ? 'Preparation continues if you leave this screen.'
-                    : 'Keep Vidyut open while we start this transfer.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
-              ),
-            ],
-            const SizedBox(height: 16),
-            const Divider(height: 1, color: Palette.hairline),
-            const SizedBox(height: 12),
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: isPreparing && progress.preparationTotalBytes == null
+                  ? null
+                  : fraction,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(8),
+              color: isTransferring ? Palette.active : Palette.raspberry,
+              backgroundColor: Colors.white,
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
-                const Icon(
-                  Icons.info_outline,
-                  size: 18,
-                  color: Palette.raspberry,
-                ),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    isTransferring
-                        ? 'Keep Vidyut open while we finish this transfer.'
-                        : isCompleted
-                        ? 'The completed files are available in your history.'
-                        : 'You can return to your files after it starts.',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                  child: _ProgressDetail(
+                    '${_bytes(progress.transferredBytes)} of ${_bytes(progress.totalBytes)}',
+                    align: TextAlign.start,
+                  ),
+                ),
+                _ProgressDetail(_rate(progress.bytesPerSecond)),
+                Expanded(
+                  child: _ProgressDetail(
+                    isPreparing
+                        ? _elapsed(progress.preparationElapsed)
+                        : _remaining(progress.remaining),
+                    align: TextAlign.end,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.pause, size: 20),
+                    label: const Text('Pause'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onCancel == null
+                        ? null
+                        : () => unawaited(onCancel!()),
+                    icon: const Icon(Icons.close, size: 20),
+                    label: const Text('Cancel'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Palette.raspberry,
+                    ),
                   ),
                 ),
               ],
@@ -506,36 +1053,31 @@ class _LiveTransferCard extends StatelessWidget {
   }
 }
 
-class _TransferFileName extends StatelessWidget {
-  const _TransferFileName({required this.filename, this.subtitle});
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({
+    required this.label,
+    required this.color,
+    required this.background,
+  });
 
-  final String? filename;
-  final String? subtitle;
+  final String label;
+  final Color color;
+  final Color background;
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          filename ?? 'Getting the transfer ready',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 2),
-          Text(
-            subtitle!,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
-          ),
-        ],
-      ],
-    );
-  }
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: background,
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: color),
+      ),
+    ),
+  );
 }
 
 class _ProgressDetail extends StatelessWidget {
@@ -555,112 +1097,61 @@ class _ProgressDetail extends StatelessWidget {
   );
 }
 
-class _BatchCard extends StatelessWidget {
-  const _BatchCard({
-    required this.batch,
-    required this.onRemove,
-    this.onCancel,
-    this.onRetry,
-    this.onOpenSettings,
-  });
+class _EmptyFiles extends StatelessWidget {
+  const _EmptyFiles({required this.onSend});
 
-  final PhoneTransferBatch batch;
-  final VoidCallback onRemove;
-  final VoidCallback? onCancel;
-  final VoidCallback? onRetry;
-  final VoidCallback? onOpenSettings;
+  final VoidCallback onSend;
 
   @override
   Widget build(BuildContext context) {
-    final total = batch.files.fold<int>(0, (sum, file) => sum + file.size);
-    final confirmed = batch.files.fold<int>(
-      0,
-      (sum, file) => sum + file.confirmedOffset,
-    );
-    final progress = total == 0 ? 1.0 : confirmed / total;
-    final hasActiveTransfer = batch.files.any(
-      (file) => file.status == PhoneTransferStatus.active,
-    );
-    final cancelLabel = hasActiveTransfer
-        ? 'Cancel transfer'
-        : 'Cancel preparation';
-    final title = batch.files.length == 1
-        ? batch.files.single.filename
-        : '${batch.files.length} files';
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Palette.mist,
-        borderRadius: BorderRadius.circular(20),
-      ),
+    return Center(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(32, 28, 32, 96),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              children: [
-                Icon(
-                  batch.direction == PhoneTransferDirection.sent
-                      ? Icons.upload_file
-                      : Icons.download,
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: Palette.mist,
+                shape: BoxShape.circle,
+                border: Border.all(color: Palette.hairline),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.all(28),
+                child: Icon(
+                  Icons.file_upload_outlined,
+                  size: 56,
                   color: Palette.raspberry,
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'retry') onRetry?.call();
-                    if (value == 'cancel') onCancel?.call();
-                    if (value == 'remove') onRemove();
-                  },
-                  itemBuilder: (_) => [
-                    if (onRetry != null)
-                      const PopupMenuItem(
-                        value: 'retry',
-                        child: Text('Retry failed'),
-                      ),
-                    if (onCancel != null)
-                      PopupMenuItem(
-                        value: 'cancel',
-                        child: Text(cancelLabel),
-                      ),
-                    const PopupMenuItem(
-                      value: 'remove',
-                      child: Text('Remove from history'),
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(_statusLabel(batch.status)),
-            ...batch.files
-                .where((file) => file.status == PhoneTransferStatus.preparing)
-                .map((file) => _PreparationDetail(file: file)),
-            if (batch.status == PhoneTransferStatus.active ||
-                batch.status == PhoneTransferStatus.queued) ...[
-              const SizedBox(height: 10),
-              LinearProgressIndicator(value: progress.clamp(0, 1)),
-              const SizedBox(height: 5),
-              Text('${_bytes(confirmed)} of ${_bytes(total)}'),
-            ],
-            if (batch.status == PhoneTransferStatus.failed ||
-                batch.status == PhoneTransferStatus.completedWithIssues)
-              ...batch.files
-                  .where((file) => file.status == PhoneTransferStatus.failed)
-                  .map(
-                    (file) => _FailureDetail(
-                      file: file,
-                      onOpenSettings: onOpenSettings,
-                    ),
-                  ),
+            const SizedBox(height: 24),
+            Text(
+              'Send files between your devices',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Files you send or receive will appear here.\nTransfers stay on your local Wi-Fi.',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyLarge?.copyWith(color: Palette.muted),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: onSend,
+              icon: const Icon(Icons.add),
+              label: const Text('Send files'),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'You can send multiple files at once.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+            ),
           ],
         ),
       ),
@@ -668,129 +1159,39 @@ class _BatchCard extends StatelessWidget {
   }
 }
 
-class _FailureDetail extends StatelessWidget {
-  const _FailureDetail({required this.file, this.onOpenSettings});
+class _NoResults extends StatelessWidget {
+  const _NoResults({required this.onClear});
 
-  final PhoneTransferFile file;
-  final VoidCallback? onOpenSettings;
+  final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) {
-    final code = file.errorCode ?? 'transfer_failed';
-    final limit = file.errorContext?['limitBytes'];
-    final reason = code == 'file_too_large' && limit is int
-        ? '${_bytes(file.size)} exceeds the receiver limit of ${_bytes(limit)}.'
-        : _failureReason(file);
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
+          const Icon(Icons.search_off_outlined, size: 48, color: Palette.muted),
+          const SizedBox(height: 16),
           Text(
-            'Error: $code',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Palette.raspberry,
-              fontWeight: FontWeight.w700,
-            ),
+            'No transfers found',
+            style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 2),
-          Text(reason),
-          if (code == 'file_too_large' && onOpenSettings != null)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: onOpenSettings,
-                child: const Text('Open file transfer settings'),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PreparationDetail extends StatelessWidget {
-  const _PreparationDetail({required this.file});
-
-  final PhoneTransferFile file;
-
-  @override
-  Widget build(BuildContext context) {
-    final total = file.preparationTotalBytes;
-    final fraction = total == null || total == 0
-        ? null
-        : (file.preparedBytes / total).clamp(0.0, 1.0);
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(file.filename, maxLines: 1, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 3),
+          const SizedBox(height: 6),
           Text(
-            '${_preparationLabel(file.preparationPhase)} · ${_bytes(file.preparedBytes)}${total == null ? '' : ' of ${_bytes(total)}'} · ${_elapsed(file.preparationElapsed)}',
+            'Try another filename or clear the filters.',
+            textAlign: TextAlign.center,
             style: Theme.of(
               context,
-            ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+            ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
           ),
-          const SizedBox(height: 5),
-          LinearProgressIndicator(value: fraction),
+          const SizedBox(height: 14),
+          TextButton(onPressed: onClear, child: const Text('Clear filters')),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
-
-class _EmptyFiles extends StatelessWidget {
-  const _EmptyFiles();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Text(
-          'Files you send and receive will appear here.',
-          textAlign: TextAlign.center,
-          style: Theme.of(
-            context,
-          ).textTheme.bodyLarge?.copyWith(color: Palette.muted),
-        ),
-      ),
-    );
-  }
-}
-
-String _statusLabel(PhoneTransferStatus status) {
-  return switch (status) {
-    PhoneTransferStatus.preparing => 'Preparing',
-    PhoneTransferStatus.waitingForSource => 'Waiting for source',
-    PhoneTransferStatus.queued => 'Queued',
-    PhoneTransferStatus.active => 'Transferring',
-    PhoneTransferStatus.paused => 'Paused',
-    PhoneTransferStatus.completed => 'Completed',
-    PhoneTransferStatus.completedWithIssues => 'Completed with issues',
-    PhoneTransferStatus.failed => 'Failed',
-    PhoneTransferStatus.cancelled => 'Cancelled',
-    PhoneTransferStatus.expired => 'Expired',
-  };
-}
-
-bool _isTerminalStatus(PhoneTransferStatus status) =>
-    status == PhoneTransferStatus.completed ||
-    status == PhoneTransferStatus.failed ||
-    status == PhoneTransferStatus.cancelled ||
-    status == PhoneTransferStatus.expired;
-
-String _preparationLabel(PhoneTransferPreparationPhase? phase) =>
-    switch (phase) {
-      PhoneTransferPreparationPhase.readingSelection => 'Reading selection',
-      PhoneTransferPreparationPhase.staging => 'Staging fallback',
-      PhoneTransferPreparationPhase.hashing => 'Verifying',
-      PhoneTransferPreparationPhase.policyCheck => 'Checking requirements',
-      PhoneTransferPreparationPhase.connecting => 'Connecting',
-      null => 'Preparing',
-    };
 
 String _elapsed(Duration? value) {
   if (value == null) return 'starting';
