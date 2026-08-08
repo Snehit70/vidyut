@@ -69,15 +69,26 @@ void main() {
       tester,
     ) async {
       final history = MemoryTransferHistoryStorage();
+      final opened = <PhoneTransferFile>[];
+      final shared = <PhoneTransferFile>[];
+      final resent = <PhoneTransferFile>[];
       await _seed(history, [
         _batch(
           filename: 'report.pdf',
           status: PhoneTransferStatus.completed,
           createdAtMs: 1,
+          sourcePath: '/source',
         ),
       ]);
 
-      await tester.pumpWidget(_screen(history));
+      await tester.pumpWidget(
+        _screen(
+          history,
+          onOpenFile: (file) async => opened.add(file),
+          onShareFile: (file) async => shared.add(file),
+          onSendAgain: (file) async => resent.add(file),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('report.pdf'));
       await tester.pumpAndSettle();
@@ -87,6 +98,78 @@ void main() {
       expect(find.text('Share'), findsOneWidget);
       expect(find.text('Send again'), findsOneWidget);
       expect(find.text('Remove from history'), findsOneWidget);
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      expect(opened.single.filename, 'report.pdf');
+      expect(shared, isEmpty);
+      expect(resent, isEmpty);
+    });
+
+    testWidgets('hides file actions for non-completed batches', (tester) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'failed.pdf',
+          status: PhoneTransferStatus.failed,
+          createdAtMs: 1,
+          sourcePath: '/source',
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        _screen(
+          history,
+          onOpenFile: (_) async {},
+          onShareFile: (_) async {},
+          onSendAgain: (_) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('failed.pdf'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open'), findsNothing);
+      expect(find.text('Share'), findsNothing);
+      expect(find.text('Send again'), findsNothing);
+    });
+
+    testWidgets('exposes actions for every file in a completed batch', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      final shared = <PhoneTransferFile>[];
+      await _seed(history, [
+        _batch(
+          filename: 'one.pdf',
+          additionalFilenames: const ['two.pdf'],
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 1,
+          sourcePath: '/source',
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        _screen(
+          history,
+          onOpenFile: (_) async {},
+          onShareFile: (file) async => shared.add(file),
+          onSendAgain: (_) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('2 files'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('one.pdf'), findsOneWidget);
+      expect(find.text('two.pdf'), findsOneWidget);
+      expect(find.text('Open'), findsNWidgets(2));
+      expect(find.text('Share'), findsNWidgets(2));
+      expect(find.text('Send again'), findsNWidgets(2));
+
+      await tester.tap(find.text('Share').last);
+      await tester.pumpAndSettle();
+      expect(shared.single.filename, 'two.pdf');
     });
 
     testWidgets('supports multi-select history cleanup mode', (tester) async {
@@ -145,7 +228,12 @@ void main() {
   });
 }
 
-Widget _screen(MemoryTransferHistoryStorage storage) {
+Widget _screen(
+  MemoryTransferHistoryStorage storage, {
+  Future<void> Function(PhoneTransferFile file)? onOpenFile,
+  Future<void> Function(PhoneTransferFile file)? onShareFile,
+  Future<void> Function(PhoneTransferFile file)? onSendAgain,
+}) {
   return MaterialApp(
     theme: buildVidyutTheme(),
     home: TransferFilesScreen(
@@ -155,6 +243,9 @@ Widget _screen(MemoryTransferHistoryStorage storage) {
         connectionFactory: (_) => throw UnimplementedError(),
         history: TransferHistoryRepository(storage),
       ),
+      onOpenFile: onOpenFile,
+      onShareFile: onShareFile,
+      onSendAgain: onSendAgain,
     ),
   );
 }
@@ -174,7 +265,10 @@ PhoneTransferBatch _batch({
   required PhoneTransferStatus status,
   required int createdAtMs,
   PhoneTransferDirection direction = PhoneTransferDirection.sent,
+  String? sourcePath,
+  List<String> additionalFilenames = const [],
 }) {
+  final filenames = [filename, ...additionalFilenames];
   return PhoneTransferBatch(
     transferId: 'transfer-$filename',
     batchId: 'batch-$filename',
@@ -182,17 +276,20 @@ PhoneTransferBatch _batch({
     createdAtMs: createdAtMs,
     updatedAtMs: createdAtMs,
     status: status,
-    files: [
-      PhoneTransferFile(
-        fileId: 'file-$filename',
-        filename: filename,
-        mime: filename.endsWith('.pdf') ? 'application/pdf' : 'text/csv',
-        size: 1024,
-        lastModifiedMs: createdAtMs,
-        sha256: List.filled(64, 'a').join(),
-        status: status,
-        confirmedOffset: status == PhoneTransferStatus.completed ? 1024 : 0,
-      ),
-    ],
+    files: filenames
+        .map(
+          (name) => PhoneTransferFile(
+            fileId: 'file-$name',
+            filename: name,
+            mime: name.endsWith('.pdf') ? 'application/pdf' : 'text/csv',
+            size: 1024,
+            lastModifiedMs: createdAtMs,
+            sha256: List.filled(64, 'a').join(),
+            status: status,
+            confirmedOffset: status == PhoneTransferStatus.completed ? 1024 : 0,
+            sourcePath: sourcePath == null ? null : '$sourcePath/$name',
+          ),
+        )
+        .toList(),
   );
 }

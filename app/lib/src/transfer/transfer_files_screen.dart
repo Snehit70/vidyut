@@ -613,6 +613,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         onOpenFile: widget.onOpenFile,
         onShareFile: widget.onShareFile,
         onSendAgain: widget.onSendAgain,
+        canSendAgain: widget.sender.canSendAgain,
         onRetry: _retryCallback(batch),
         onRemove: () async {
           Navigator.pop(context);
@@ -1006,6 +1007,7 @@ class _BatchDetailsSheet extends StatelessWidget {
     this.onOpenFile,
     this.onShareFile,
     this.onSendAgain,
+    this.canSendAgain,
     this.onRetry,
     this.onOpenSettings,
   });
@@ -1015,12 +1017,13 @@ class _BatchDetailsSheet extends StatelessWidget {
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
+  final bool Function(PhoneTransferFile file)? canSendAgain;
   final VoidCallback? onRetry;
   final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
-    final file = batch.files.isEmpty ? null : batch.files.first;
+    final firstFile = batch.files.isEmpty ? null : batch.files.first;
     final size = batch.files.fold<int>(0, (sum, item) => sum + item.size);
     final status = _statusVisual(batch.status);
     return SafeArea(
@@ -1033,8 +1036,8 @@ class _BatchDetailsSheet extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _FileTypeIcon(
-                  filename: file?.filename,
-                  mime: file?.mime,
+                  filename: firstFile?.filename,
+                  mime: firstFile?.mime,
                   direction: batch.direction,
                 ),
                 const SizedBox(width: 14),
@@ -1044,7 +1047,7 @@ class _BatchDetailsSheet extends StatelessWidget {
                     children: [
                       Text(
                         batch.files.length == 1
-                            ? file!.filename
+                            ? firstFile!.filename
                             : '${batch.files.length} files',
                         style: Theme.of(context).textTheme.headlineMedium,
                       ),
@@ -1086,24 +1089,37 @@ class _BatchDetailsSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            if (file != null) ...[
-              _DetailAction(
-                icon: Icons.open_in_new,
-                label: 'Open',
-                onTap: () => _runAction(context, 'Open', onOpenFile, file),
-              ),
-              _DetailAction(
-                icon: Icons.share_outlined,
-                label: 'Share',
-                onTap: () => _runAction(context, 'Share', onShareFile, file),
-              ),
-              _DetailAction(
-                icon: Icons.send_outlined,
-                label: 'Send again',
-                onTap: () =>
-                    _runAction(context, 'Send again', onSendAgain, file),
-              ),
-            ],
+            if (batch.status == PhoneTransferStatus.completed)
+              for (final file in batch.files) ...[
+                if (batch.files.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 4),
+                    child: Text(
+                      file.filename,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                if (onOpenFile != null)
+                  _DetailAction(
+                    icon: Icons.open_in_new,
+                    label: 'Open',
+                    onTap: () => _runAction(context, 'Open', onOpenFile, file),
+                  ),
+                if (onShareFile != null)
+                  _DetailAction(
+                    icon: Icons.share_outlined,
+                    label: 'Share',
+                    onTap: () =>
+                        _runAction(context, 'Share', onShareFile, file),
+                  ),
+                if (onSendAgain != null && canSendAgain?.call(file) == true)
+                  _DetailAction(
+                    icon: Icons.send_outlined,
+                    label: 'Send again',
+                    onTap: () =>
+                        _runAction(context, 'Send again', onSendAgain, file),
+                  ),
+              ],
             if (onRetry != null)
               _DetailAction(
                 icon: Icons.refresh,

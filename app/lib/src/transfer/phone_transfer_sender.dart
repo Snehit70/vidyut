@@ -1303,6 +1303,15 @@ class PhoneTransferSender {
     return enqueue([_sourceForFile(file)]);
   }
 
+  bool canSendAgain(PhoneTransferFile file) {
+    try {
+      _sourceForFile(file);
+      return true;
+    } on StateError {
+      return false;
+    }
+  }
+
   Future<PhoneTransferBatch> _send(
     PairingCode pairing,
     PhoneTransferBatch initial, {
