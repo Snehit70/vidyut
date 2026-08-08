@@ -686,6 +686,7 @@ bool _isActiveBatch(PhoneTransferBatch batch) => switch (batch.status) {
 
 bool _canCancelBatch(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.completed ||
+  PhoneTransferStatus.completedWithIssues ||
   PhoneTransferStatus.failed ||
   PhoneTransferStatus.cancelled ||
   PhoneTransferStatus.expired => false,

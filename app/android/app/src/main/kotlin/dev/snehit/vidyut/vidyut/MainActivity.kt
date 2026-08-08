@@ -20,6 +20,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private companion object {
         const val SHARED_STAGE_DIRECTORY = "vidyut_updates/shared"
+        const val MAX_STAGE_COMPONENT_BYTES = 255
         const val MAX_SHARED_STAGE_FILES = 8
         const val MAX_SHARED_STAGE_BYTES = 512L * 1024 * 1024
         const val SHARED_STAGE_MAX_AGE_MS = 24L * 60 * 60 * 1000
@@ -229,7 +230,26 @@ class MainActivity : FlutterActivity() {
 
     private fun nextStageName(safeName: String): String {
         stageSequence++
-        return "${System.currentTimeMillis()}-$stageSequence-$safeName"
+        val prefix = "${System.currentTimeMillis()}-$stageSequence-"
+        val available = MAX_STAGE_COMPONENT_BYTES - prefix.length
+        val bounded = if (safeName.length > available) {
+            val extension = safeName.substringAfterLast('.', "")
+            val stem = safeName.substring(0, safeName.length - extension.length)
+            val stemLimit = if (extension.isEmpty()) {
+                available
+            } else {
+                (available - extension.length - 1).coerceAtLeast(0)
+            }
+            val truncated = stem.take(stemLimit)
+            if (extension.isEmpty()) {
+                truncated
+            } else {
+                "$truncated.$extension"
+            }
+        } else {
+            safeName
+        }
+        return "$prefix$bounded"
     }
 
     private fun pruneSharedStages(protected: File? = null) {

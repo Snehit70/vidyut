@@ -116,6 +116,20 @@ void main() {
       expect(rows.single.status, PhoneTransferStatus.cancelled);
     });
 
+    testWidgets('does not offer cancellation for mixed-result batches', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [_mixedBatch()]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Transfer actions'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cancel transfer'), findsNothing);
+    });
+
     testWidgets('keeps other active rows visible beside live progress', (
       tester,
     ) async {
