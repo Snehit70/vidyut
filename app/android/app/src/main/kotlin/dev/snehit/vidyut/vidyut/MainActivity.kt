@@ -5,15 +5,21 @@ import android.content.ClipData
 import android.net.wifi.WifiManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val fileActionExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -80,39 +86,12 @@ class MainActivity : FlutterActivity() {
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "vidyut/transfer_files")
             .setMethodCallHandler { call, result ->
-                try {
-                    val path = call.argument<String>("path")
-                    val uri = call.argument<String>("uri")
-                    val mime = call.argument<String>("mime") ?: "*/*"
-                    when (call.method) {
-                        "open" -> {
-                            launchFileIntent(Intent.ACTION_VIEW, path, uri, mime)
-                            result.success(null)
-                        }
-                        "share" -> {
-                            val contentUri = resolveFileUri(path, uri)
-                            startActivity(
-                                Intent.createChooser(
-                                    Intent(Intent.ACTION_SEND).apply {
-                                        type = mime
-                                        putExtra(Intent.EXTRA_STREAM, contentUri)
-                                        clipData = ClipData.newRawUri("Vidyut file", contentUri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    },
-                                    "Share file",
-                                ),
-                            )
-                            result.success(null)
-                        }
-                        else -> result.notImplemented()
-                    }
-                } catch (error: Exception) {
-                    result.error("transfer-file-action", error.message, null)
-                }
+                handleTransferFileAction(call, result)
             }
     }
 
     override fun onDestroy() {
+        fileActionExecutor.shutdownNow()
         releaseMulticastLock()
         multicastLock = null
         super.onDestroy()
@@ -133,18 +112,67 @@ class MainActivity : FlutterActivity() {
         multicastLock?.takeIf { it.isHeld }?.release()
     }
 
+    private fun handleTransferFileAction(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val path = call.argument<String>("path")
+        val uri = call.argument<String>("uri")
+        val mime = call.argument<String>("mime") ?: "*/*"
+        if (call.method != "open" && call.method != "share") {
+            result.notImplemented()
+            return
+        }
+        try {
+            fileActionExecutor.execute {
+                try {
+                    val contentUri = resolveFileUri(path, uri)
+                    mainHandler.post {
+                        try {
+                            when (call.method) {
+                                "open" -> launchFileIntent(Intent.ACTION_VIEW, contentUri, mime)
+                                "share" -> launchShareIntent(contentUri, mime)
+                            }
+                            result.success(null)
+                        } catch (error: Exception) {
+                            result.error("transfer-file-action", error.message, null)
+                        }
+                    }
+                } catch (error: Exception) {
+                    mainHandler.post {
+                        result.error("transfer-file-action", error.message, null)
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            result.error("transfer-file-action", error.message, null)
+        }
+    }
+
     private fun launchFileIntent(
         action: String,
-        path: String?,
-        uri: String?,
+        contentUri: Uri,
         mime: String,
     ) {
-        val contentUri = resolveFileUri(path, uri)
         startActivity(
             Intent(action).apply {
                 setDataAndType(contentUri, mime)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             },
+        )
+    }
+
+    private fun launchShareIntent(contentUri: Uri, mime: String) {
+        startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, contentUri)
+                    clipData = ClipData.newRawUri("Vidyut file", contentUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "Share file",
+            ),
         )
     }
 
