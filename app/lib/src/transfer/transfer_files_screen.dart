@@ -687,15 +687,12 @@ String _dateGroup(int timestampMs) {
   return 'Earlier';
 }
 
-String _timeLabel(int timestampMs) {
+String _timeLabel(BuildContext context, int timestampMs) {
   final date = DateTime.fromMillisecondsSinceEpoch(timestampMs).toLocal();
-  final hour = date.hour == 0
-      ? 12
-      : date.hour > 12
-      ? date.hour - 12
-      : date.hour;
-  final minute = date.minute.toString().padLeft(2, '0');
-  return '$hour:$minute ${date.hour >= 12 ? 'PM' : 'AM'}';
+  return MaterialLocalizations.of(context).formatTimeOfDay(
+    TimeOfDay.fromDateTime(date),
+    alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+  );
 }
 
 class _SummaryStrip extends StatelessWidget {
@@ -888,8 +885,8 @@ class _TransferRow extends StatelessWidget {
     final size = batch.files.fold<int>(0, (sum, file) => sum + file.size);
     final status = _statusVisual(batch.status);
     final subtitle = batch.files.length == 1
-        ? '${_directionLabel(batch.direction)} · ${_timeLabel(batch.createdAtMs)}'
-        : '${_directionLabel(batch.direction)} · ${_bytes(size)} · ${_timeLabel(batch.createdAtMs)}';
+        ? '${_directionLabel(batch.direction)} · ${_timeLabel(context, batch.createdAtMs)}'
+        : '${_directionLabel(batch.direction)} · ${_bytes(size)} · ${_timeLabel(context, batch.createdAtMs)}';
     final failure = batch.files
         .where((file) => file.status == PhoneTransferStatus.failed)
         .firstOrNull;
@@ -1059,7 +1056,7 @@ class _BatchDetailsSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${_bytes(size)} · ${_directionLabel(batch.direction)} · ${_dateGroup(batch.createdAtMs)}, ${_timeLabel(batch.createdAtMs)}',
+                        '${_bytes(size)} · ${_directionLabel(batch.direction)} · ${_dateGroup(batch.createdAtMs)}, ${_timeLabel(context, batch.createdAtMs)}',
                         style: Theme.of(
                           context,
                         ).textTheme.bodySmall?.copyWith(color: Palette.muted),
