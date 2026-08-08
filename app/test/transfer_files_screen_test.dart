@@ -84,7 +84,6 @@ void main() {
 
       expect(find.text('Saved on your laptop'), findsOneWidget);
       expect(find.text('Open'), findsOneWidget);
-      expect(find.text('Show in folder'), findsOneWidget);
       expect(find.text('Share'), findsOneWidget);
       expect(find.text('Send again'), findsOneWidget);
       expect(find.text('Remove from history'), findsOneWidget);

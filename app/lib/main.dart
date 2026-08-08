@@ -663,7 +663,6 @@ class _PairingScreenState extends State<PairingScreen>
           sender: _transferSender,
           onOpenSettings: _openSettings,
           onOpenFile: _transferFileActions.open,
-          onShowFolder: _transferFileActions.showFolder,
           onShareFile: _transferFileActions.share,
           onSendAgain: (file) async {
             await _transferSender.sendAgain(file);

@@ -14,7 +14,6 @@ class TransferFilesScreen extends StatefulWidget {
     required this.sender,
     this.onOpenSettings,
     this.onOpenFile,
-    this.onShowFolder,
     this.onShareFile,
     this.onSendAgain,
   });
@@ -23,7 +22,6 @@ class TransferFilesScreen extends StatefulWidget {
   final PhoneTransferSender sender;
   final VoidCallback? onOpenSettings;
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
-  final Future<void> Function(PhoneTransferFile file)? onShowFolder;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
 
@@ -615,7 +613,6 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       builder: (context) => _BatchDetailsSheet(
         batch: batch,
         onOpenFile: widget.onOpenFile,
-        onShowFolder: widget.onShowFolder,
         onShareFile: widget.onShareFile,
         onSendAgain: widget.onSendAgain,
         onRetry: _retryCallback(batch),
@@ -1006,7 +1003,6 @@ class _BatchDetailsSheet extends StatelessWidget {
     required this.batch,
     required this.onRemove,
     this.onOpenFile,
-    this.onShowFolder,
     this.onShareFile,
     this.onSendAgain,
     this.onRetry,
@@ -1016,7 +1012,6 @@ class _BatchDetailsSheet extends StatelessWidget {
   final PhoneTransferBatch batch;
   final VoidCallback onRemove;
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
-  final Future<void> Function(PhoneTransferFile file)? onShowFolder;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
   final VoidCallback? onRetry;
@@ -1095,12 +1090,6 @@ class _BatchDetailsSheet extends StatelessWidget {
                 icon: Icons.open_in_new,
                 label: 'Open',
                 onTap: () => _runAction(context, 'Open', onOpenFile, file),
-              ),
-              _DetailAction(
-                icon: Icons.folder_open_outlined,
-                label: 'Show in folder',
-                onTap: () =>
-                    _runAction(context, 'Show in folder', onShowFolder, file),
               ),
               _DetailAction(
                 icon: Icons.share_outlined,

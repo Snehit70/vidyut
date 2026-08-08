@@ -7,8 +7,6 @@ import 'transfer_history.dart';
 abstract interface class TransferFileActions {
   Future<void> open(PhoneTransferFile file);
 
-  Future<void> showFolder(PhoneTransferFile file);
-
   Future<void> share(PhoneTransferFile file);
 }
 
@@ -20,10 +18,6 @@ class AndroidTransferFileActions implements TransferFileActions {
 
   @override
   Future<void> open(PhoneTransferFile file) => _invoke('open', file);
-
-  @override
-  Future<void> showFolder(PhoneTransferFile file) =>
-      _invoke('showFolder', file);
 
   @override
   Future<void> share(PhoneTransferFile file) => _invoke('share', file);

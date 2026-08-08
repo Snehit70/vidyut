@@ -89,16 +89,6 @@ class MainActivity : FlutterActivity() {
                             launchFileIntent(Intent.ACTION_VIEW, path, uri, mime)
                             result.success(null)
                         }
-                        "showFolder" -> {
-                            val folder = path?.let { File(it).parentFile?.path }
-                            launchFileIntent(
-                                Intent.ACTION_VIEW,
-                                folder,
-                                null,
-                                "resource/folder",
-                            )
-                            result.success(null)
-                        }
                         "share" -> {
                             val contentUri = resolveFileUri(path, uri)
                             startActivity(
