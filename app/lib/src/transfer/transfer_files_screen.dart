@@ -509,10 +509,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     final date = DateTime.fromMillisecondsSinceEpoch(
       batch.createdAtMs,
     ).toLocal();
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final candidate = DateTime(date.year, date.month, date.day);
-    final days = today.difference(candidate).inDays;
+    final days = _calendarDayDifference(DateTime.now(), date);
     return switch (_dateFilter) {
       _DateFilter.all => true,
       _DateFilter.today => days == 0,
@@ -674,14 +671,17 @@ Map<String, List<PhoneTransferBatch>> _groupByDate(
 
 String _dateGroup(int timestampMs) {
   final date = DateTime.fromMillisecondsSinceEpoch(timestampMs).toLocal();
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  final candidate = DateTime(date.year, date.month, date.day);
-  final days = today.difference(candidate).inDays;
+  final days = _calendarDayDifference(DateTime.now(), date);
   if (days == 0) return 'Today';
   if (days == 1) return 'Yesterday';
   if (days > 1 && days < 7) return 'Earlier this week';
   return 'Earlier';
+}
+
+int _calendarDayDifference(DateTime now, DateTime candidate) {
+  final today = DateTime.utc(now.year, now.month, now.day);
+  final date = DateTime.utc(candidate.year, candidate.month, candidate.day);
+  return today.difference(date).inDays;
 }
 
 String _timeLabel(BuildContext context, int timestampMs) {
