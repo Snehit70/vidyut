@@ -53,6 +53,15 @@ void main() {
       'mime': 'application/pdf',
     });
   });
+
+  test('rejects arbitrary shared-intake paths for platform actions', () {
+    final file = _file(
+      filename: 'shared.pdf',
+      sourcePath: '/storage/emulated/0/Download/shared.pdf',
+    );
+
+    expect(transferFileActionAvailable(file), isFalse);
+  });
 }
 
 PhoneTransferFile _file({

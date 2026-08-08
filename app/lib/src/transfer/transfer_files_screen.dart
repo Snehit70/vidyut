@@ -16,6 +16,7 @@ class TransferFilesScreen extends StatefulWidget {
     this.onOpenFile,
     this.onShareFile,
     this.onSendAgain,
+    this.canUseFileAction,
   });
 
   final TransferHistoryRepository history;
@@ -24,6 +25,7 @@ class TransferFilesScreen extends StatefulWidget {
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
+  final bool Function(PhoneTransferFile file)? canUseFileAction;
 
   @override
   State<TransferFilesScreen> createState() => _TransferFilesScreenState();
@@ -614,6 +616,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         onShareFile: widget.onShareFile,
         onSendAgain: widget.onSendAgain,
         canSendAgain: widget.sender.canSendAgain,
+        canUseFileAction: widget.canUseFileAction,
         onRetry: _retryCallback(batch),
         onRemove: () async {
           Navigator.pop(context);
@@ -1008,6 +1011,7 @@ class _BatchDetailsSheet extends StatelessWidget {
     this.onShareFile,
     this.onSendAgain,
     this.canSendAgain,
+    this.canUseFileAction,
     this.onRetry,
     this.onOpenSettings,
   });
@@ -1018,6 +1022,7 @@ class _BatchDetailsSheet extends StatelessWidget {
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
   final bool Function(PhoneTransferFile file)? canSendAgain;
+  final bool Function(PhoneTransferFile file)? canUseFileAction;
   final VoidCallback? onRetry;
   final VoidCallback? onOpenSettings;
 
@@ -1099,7 +1104,8 @@ class _BatchDetailsSheet extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
-                if (onOpenFile != null)
+                if (onOpenFile != null &&
+                    (canUseFileAction?.call(file) ?? true))
                   _DetailAction(
                     icon: Icons.open_in_new,
                     label: 'Open',
@@ -1107,7 +1113,8 @@ class _BatchDetailsSheet extends StatelessWidget {
                       _runAction(context, 'Open', onOpenFile, file),
                     ),
                   ),
-                if (onShareFile != null)
+                if (onShareFile != null &&
+                    (canUseFileAction?.call(file) ?? true))
                   _DetailAction(
                     icon: Icons.share_outlined,
                     label: 'Share',

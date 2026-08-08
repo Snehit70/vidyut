@@ -670,6 +670,7 @@ class _PairingScreenState extends State<PairingScreen>
             'Share file',
             () => _transferFileActions.share(file),
           ),
+          canUseFileAction: _transferFileActions.canUse,
           onSendAgain: (file) => _runTransferFileAction(
             'Send again',
             () => _transferSender.sendAgain(file),

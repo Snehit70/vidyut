@@ -8,6 +8,8 @@ abstract interface class TransferFileActions {
   Future<void> open(PhoneTransferFile file);
 
   Future<void> share(PhoneTransferFile file);
+
+  bool canUse(PhoneTransferFile file);
 }
 
 class AndroidTransferFileActions implements TransferFileActions {
@@ -21,6 +23,9 @@ class AndroidTransferFileActions implements TransferFileActions {
 
   @override
   Future<void> share(PhoneTransferFile file) => _invoke('share', file);
+
+  @override
+  bool canUse(PhoneTransferFile file) => transferFileActionAvailable(file);
 
   Future<void> _invoke(String method, PhoneTransferFile file) {
     final target = transferFileActionTarget(file);
@@ -52,4 +57,15 @@ Map<String, Object?> transferFileActionTarget(PhoneTransferFile file) {
   if (path != null) target['path'] = path;
   if (uri != null) target['uri'] = uri;
   return target;
+}
+
+bool transferFileActionAvailable(PhoneTransferFile file) {
+  final target = transferFileActionTarget(file);
+  if (target['uri'] is String) return true;
+  final path = target['path'];
+  if (path is! String) return false;
+  final normalized = path.replaceAll('\\', '/');
+  return normalized.contains('/files/vidyut_received/') ||
+      normalized.contains('/files/vidyut_received_files/') ||
+      normalized.contains('/cache/vidyut_updates/');
 }
