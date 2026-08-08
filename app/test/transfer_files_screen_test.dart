@@ -201,6 +201,29 @@ void main() {
       expect(shared.single.filename, 'two.pdf');
     });
 
+    testWidgets('keeps completed files actionable in a mixed-result batch', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [_mixedBatch()]);
+
+      await tester.pumpWidget(
+        _screen(
+          history,
+          onOpenFile: (_) async {},
+          onShareFile: (_) async {},
+          onSendAgain: (_) async {},
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('2 files'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('Share'), findsOneWidget);
+      expect(find.text('Send again'), findsOneWidget);
+    });
+
     testWidgets('supports multi-select history cleanup mode', (tester) async {
       final history = MemoryTransferHistoryStorage();
       await _seed(history, [
@@ -320,5 +343,42 @@ PhoneTransferBatch _batch({
           ),
         )
         .toList(),
+  );
+}
+
+PhoneTransferBatch _mixedBatch() {
+  const createdAtMs = 1;
+  return PhoneTransferBatch(
+    transferId: 'transfer-mixed',
+    batchId: 'batch-mixed',
+    direction: PhoneTransferDirection.sent,
+    createdAtMs: createdAtMs,
+    updatedAtMs: createdAtMs,
+    status: PhoneTransferStatus.completedWithIssues,
+    files: [
+      PhoneTransferFile(
+        fileId: 'file-complete',
+        filename: 'complete.pdf',
+        mime: 'application/pdf',
+        size: 1024,
+        lastModifiedMs: createdAtMs,
+        sha256:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: PhoneTransferStatus.completed,
+        confirmedOffset: 1024,
+        sourcePath: '/source/complete.pdf',
+      ),
+      PhoneTransferFile(
+        fileId: 'file-failed',
+        filename: 'failed.pdf',
+        mime: 'application/pdf',
+        size: 1024,
+        lastModifiedMs: createdAtMs,
+        sha256:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: PhoneTransferStatus.failed,
+        confirmedOffset: 0,
+      ),
+    ],
   );
 }

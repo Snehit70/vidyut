@@ -1094,8 +1094,12 @@ class _BatchDetailsSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            if (batch.status == PhoneTransferStatus.completed)
-              for (final file in batch.files) ...[
+            if (batch.files.any(
+              (file) => file.status == PhoneTransferStatus.completed,
+            ))
+              for (final file in batch.files.where(
+                (file) => file.status == PhoneTransferStatus.completed,
+              )) ...[
                 if (batch.files.length > 1)
                   Padding(
                     padding: const EdgeInsets.only(top: 8, bottom: 4),
