@@ -586,7 +586,10 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Remove ${_selectedTransferIds.length} transfers?'),
+        title: Text(
+          'Remove ${_selectedTransferIds.length} '
+          '${_selectedTransferIds.length == 1 ? 'transfer' : 'transfers'}?',
+        ),
         content: const Text(
           'This removes history only. Files on your devices are not deleted.',
         ),

@@ -313,7 +313,7 @@ void main() {
 
       await tester.tap(find.text('Remove from history (1)'));
       await tester.pumpAndSettle();
-      expect(find.text('Remove 1 transfers?'), findsOneWidget);
+      expect(find.text('Remove 1 transfer?'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
