@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'package:flutter/services.dart';
 
 import 'transfer_history.dart';
@@ -34,15 +36,21 @@ class AndroidTransferFileActions implements TransferFileActions {
 
 Map<String, Object?> transferFileActionTarget(PhoneTransferFile file) {
   final source = file.sourceReference;
-  final uri = source?.kind == PhoneTransferSourceKind.androidDocumentUri
+  final destination = file.destinationPath;
+  final destinationUri = destination == null ? null : Uri.tryParse(destination);
+  final uri = destinationUri?.scheme == 'content'
+      ? destination
+      : destination == null &&
+            source?.kind == PhoneTransferSourceKind.androidDocumentUri
       ? source?.reference
       : null;
-  final path =
-      file.destinationPath ??
-      file.sourcePath ??
-      (source?.kind == PhoneTransferSourceKind.externalPath
-          ? source?.reference
-          : null);
+  final path = destinationUri?.scheme == 'content'
+      ? null
+      : destination ??
+            file.sourcePath ??
+            (source?.kind == PhoneTransferSourceKind.externalPath
+                ? source?.reference
+                : null);
   final target = <String, Object?>{
     'filename': file.filename,
     'mime': file.mime,

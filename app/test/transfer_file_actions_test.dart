@@ -34,6 +34,25 @@ void main() {
       'mime': 'application/pdf',
     });
   });
+
+  test('uses a received content destination as the action URI', () {
+    final file = _file(
+      filename: 'received.pdf',
+      destinationPath: 'content://media/external/downloads/42',
+      sourceReference: const PhoneTransferSourceReference(
+        kind: PhoneTransferSourceKind.androidDocumentUri,
+        reference: 'content://tree/source/document/17',
+        ownership: PhoneTransferSourceOwnership.external,
+        persisted: true,
+      ),
+    );
+
+    expect(transferFileActionTarget(file), {
+      'uri': 'content://media/external/downloads/42',
+      'filename': 'received.pdf',
+      'mime': 'application/pdf',
+    });
+  });
 }
 
 PhoneTransferFile _file({
