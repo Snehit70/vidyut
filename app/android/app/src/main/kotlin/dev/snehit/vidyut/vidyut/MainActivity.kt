@@ -10,6 +10,7 @@ import android.os.Looper
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,11 +23,13 @@ class MainActivity : FlutterActivity() {
         const val MAX_SHARED_STAGE_FILES = 8
         const val MAX_SHARED_STAGE_BYTES = 512L * 1024 * 1024
         const val SHARED_STAGE_MAX_AGE_MS = 24L * 60 * 60 * 1000
+        const val SHARED_STAGE_GRANT_GRACE_MS = 30L * 60 * 1000
     }
 
     private var multicastLock: WifiManager.MulticastLock? = null
     private val fileActionExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val grantedStageFiles = ConcurrentHashMap<String, Long>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -204,6 +207,7 @@ class MainActivity : FlutterActivity() {
                 staged.delete()
                 throw error
             }
+            grantedStageFiles[staged.absolutePath] = System.currentTimeMillis()
             pruneSharedStages(protected = staged)
             FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
         }
@@ -211,15 +215,26 @@ class MainActivity : FlutterActivity() {
 
     private fun pruneSharedStages(protected: File? = null) {
         val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
-        val files = directory.listFiles()?.filter { it.isFile && it != protected }
-            ?: return
-        val staleBefore = System.currentTimeMillis() - SHARED_STAGE_MAX_AGE_MS
-        files.filter { it.lastModified() < staleBefore }.forEach { it.delete() }
+        val now = System.currentTimeMillis()
+        val staleBefore = now - SHARED_STAGE_MAX_AGE_MS
+        val grantGraceBefore = now - SHARED_STAGE_GRANT_GRACE_MS
 
-        val remaining = directory.listFiles()
-            ?.filter { it.isFile && it != protected }
-            ?.sortedBy { it.lastModified() }
-            ?: return
+        grantedStageFiles.entries.removeIf { it.value < grantGraceBefore }
+
+        fun isGrantedRecently(file: File): Boolean =
+            (grantedStageFiles[file.absolutePath] ?: 0L) >= grantGraceBefore
+
+        val allFiles = directory.listFiles()?.filter { it.isFile } ?: return
+
+        allFiles
+            .filter {
+                it.lastModified() < staleBefore &&
+                    it != protected &&
+                    !isGrantedRecently(it)
+            }
+            .forEach { it.delete() }
+
+        val remaining = allFiles.filter { it.exists() }.sortedBy { it.lastModified() }
         var count = remaining.size
         var totalBytes = remaining.sumOf { it.length() }
         for (file in remaining) {
@@ -227,10 +242,12 @@ class MainActivity : FlutterActivity() {
                 totalBytes <= MAX_SHARED_STAGE_BYTES) {
                 break
             }
+            if (file == protected || isGrantedRecently(file)) continue
             val size = file.length()
             if (file.delete()) {
                 count--
                 totalBytes -= size
+                grantedStageFiles.remove(file.absolutePath)
             }
         }
     }
