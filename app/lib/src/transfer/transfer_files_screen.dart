@@ -1411,11 +1411,18 @@ class _LiveTransferCard extends StatelessWidget {
       PhoneTransferProgressStage.failed => 'Transfer needs attention',
     };
     final fraction = isCompleted ? 1.0 : progress.fraction;
+    final preparationTotal = progress.preparationTotalBytes;
+    final hasPreparationTotal =
+        isPreparing && preparationTotal != null && preparationTotal > 0;
+    final progressFraction = hasPreparationTotal
+        ? (progress.preparedBytes / preparationTotal).clamp(0.0, 1.0)
+        : fraction;
     final stageLabel = isTransferring
         ? 'Transferring'
         : isPreparing
         ? 'Preparing'
         : title;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         color: isTransferring ? Palette.activeMist : Palette.mist,
@@ -1472,7 +1479,7 @@ class _LiveTransferCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${(fraction * 100).round()}%',
+                  '${(progressFraction * 100).round()}%',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     color: isTransferring ? Palette.active : Palette.raspberry,
                   ),
@@ -1490,7 +1497,7 @@ class _LiveTransferCard extends StatelessWidget {
             LinearProgressIndicator(
               value: isPreparing && progress.preparationTotalBytes == null
                   ? null
-                  : fraction,
+                  : progressFraction,
               minHeight: 8,
               borderRadius: BorderRadius.circular(8),
               color: isTransferring ? Palette.active : Palette.raspberry,
@@ -1501,7 +1508,9 @@ class _LiveTransferCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _ProgressDetail(
-                    '${_bytes(progress.transferredBytes)} of ${_bytes(progress.totalBytes)}',
+                    hasPreparationTotal
+                        ? '${_bytes(progress.preparedBytes)} of ${_bytes(preparationTotal)}'
+                        : '${_bytes(progress.transferredBytes)} of ${_bytes(progress.totalBytes)}',
                     align: TextAlign.start,
                   ),
                 ),

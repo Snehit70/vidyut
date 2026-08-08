@@ -129,10 +129,47 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     });
 
+    testWidgets(
+      'live card shows preparation progress from preparation bytes',
+      (tester) async {
+        final history = MemoryTransferHistoryStorage();
+        await _seed(history, [
+          _batch(
+            filename: 'previous.pdf',
+            status: PhoneTransferStatus.completed,
+            createdAtMs: 1,
+          ),
+        ]);
+        final sender = _ProgressControlledSender(
+          history: TransferHistoryRepository(history),
+        );
+        await tester.pumpWidget(_screen(history, sender: sender));
+        await tester.pump();
+
+        sender.emit(
+          PhoneTransferProgress(
+            stage: PhoneTransferProgressStage.hashing,
+            fileCount: 1,
+            totalBytes: 1000,
+            transferredBytes: 0,
+            currentFileIndex: 0,
+            currentFilename: 'photo.jpg',
+            preparedBytes: 25,
+            preparationTotalBytes: 100,
+            preparationStartedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('25%'), findsOneWidget);
+        expect(find.text('25 B of 100 B'), findsOneWidget);
+        expect(find.text('0 B of 1000 B'), findsNothing);
+      },
+    );
+
     testWidgets('opens completed batch details from its history row', (
       tester,
-    ) async {
-      final history = MemoryTransferHistoryStorage();
+    ) async {      final history = MemoryTransferHistoryStorage();
       final opened = <PhoneTransferFile>[];
       final shared = <PhoneTransferFile>[];
       final resent = <PhoneTransferFile>[];
@@ -489,4 +526,21 @@ class _BlockingTransferSourceReader implements PhoneTransferSourceReader {
     required int offset,
     required int length,
   }) => throw UnimplementedError();
+}
+
+class _ProgressControlledSender extends PhoneTransferSender {
+  _ProgressControlledSender({required super.history})
+    : super(
+        pairingRepository: PairingRepository(MemoryPairingStorage()),
+        connectionFactory: (_) => throw UnimplementedError(),
+      );
+
+  final _progressController =
+      StreamController<PhoneTransferProgress>.broadcast();
+
+  void emit(PhoneTransferProgress progress) =>
+      _progressController.add(progress);
+
+  @override
+  Stream<PhoneTransferProgress> get progress => _progressController.stream;
 }
