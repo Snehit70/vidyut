@@ -54,13 +54,13 @@ void main() {
     });
   });
 
-  test('rejects arbitrary shared-intake paths for platform actions', () {
+  test('accepts arbitrary shared-intake paths for provider staging', () {
     final file = _file(
       filename: 'shared.pdf',
       sourcePath: '/storage/emulated/0/Download/shared.pdf',
     );
 
-    expect(transferFileActionAvailable(file), isFalse);
+    expect(transferFileActionAvailable(file), isTrue);
   });
 }
 

@@ -151,10 +151,18 @@ class MainActivity : FlutterActivity() {
     private fun resolveFileUri(path: String?, uri: String?): Uri {
         if (uri != null) return Uri.parse(uri)
         require(!path.isNullOrBlank()) { "A file path or document URI is required." }
-        return FileProvider.getUriForFile(
-            this,
-            "$packageName.fileprovider",
-            File(path),
-        )
+        val file = File(path)
+        return try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        } catch (_: IllegalArgumentException) {
+            val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val staged = File(
+                File(cacheDir, "vidyut_updates/shared"),
+                "${file.absolutePath.hashCode().toUInt().toString(16)}-$safeName",
+            )
+            staged.parentFile?.mkdirs()
+            file.copyTo(staged, overwrite = true)
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
+        }
     }
 }

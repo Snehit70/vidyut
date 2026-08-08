@@ -63,9 +63,5 @@ bool transferFileActionAvailable(PhoneTransferFile file) {
   final target = transferFileActionTarget(file);
   if (target['uri'] is String) return true;
   final path = target['path'];
-  if (path is! String) return false;
-  final normalized = path.replaceAll('\\', '/');
-  return normalized.contains('/files/vidyut_received/') ||
-      normalized.contains('/files/vidyut_received_files/') ||
-      normalized.contains('/cache/vidyut_updates/');
+  return path is String && path.isNotEmpty;
 }
