@@ -1758,13 +1758,22 @@ class PhoneTransferSender {
         );
         transferFile = batch.files[index];
         final reference = transferFile.sourceReference;
-        if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
-          await sourceReader.release(reference!.reference);
+        final transientDocument = reference?.kind ==
+                PhoneTransferSourceKind.androidDocumentUri &&
+            reference!.persisted == false;
+        if (reference?.ownership == PhoneTransferSourceOwnership.managed ||
+            transientDocument) {
+          if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
+            await sourceReader.release(reference!.reference);
+          }
           transferFile = transferFile.copyWith(clearSourceReference: true);
           batch = await _replaceFile(batch, index, transferFile);
         }
         // Persisted document grants stay with the history row so Send again
-        // remains available until the user removes the row.
+        // remains available until the user removes the row. Transient grants
+        // are dropped because the temporary URI permission is revoked on
+        // reboot, which would leave Open, Share, and Send again exposed but
+        // failing.
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.transferring,

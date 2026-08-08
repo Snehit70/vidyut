@@ -232,19 +232,17 @@ class MainActivity : FlutterActivity() {
         stageSequence++
         val prefix = "${System.currentTimeMillis()}-$stageSequence-"
         val available = MAX_STAGE_COMPONENT_BYTES - prefix.length
+        if (available <= 0) return prefix.dropLast(1)
         val bounded = if (safeName.length > available) {
             val extension = safeName.substringAfterLast('.', "")
-            val stem = safeName.substring(0, safeName.length - extension.length)
-            val stemLimit = if (extension.isEmpty()) {
-                available
-            } else {
-                (available - extension.length - 1).coerceAtLeast(0)
-            }
-            val truncated = stem.take(stemLimit)
-            if (extension.isEmpty()) {
+            val extensionLimit = (available / 2).coerceAtLeast(1)
+            val cappedExtension = extension.take(extensionLimit)
+            val stemLimit = (available - cappedExtension.length - 1).coerceAtLeast(0)
+            val truncated = safeName.take(stemLimit)
+            if (cappedExtension.isEmpty()) {
                 truncated
             } else {
-                "$truncated.$extension"
+                "$truncated.$cappedExtension"
             }
         } else {
             safeName
