@@ -1249,6 +1249,10 @@ class PhoneTransferSender {
         size: file.size,
         lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
         kind: PhoneTransferSourceKind.androidDocumentUri,
+        // Received destinations are published into MediaStore or a configured
+        // document tree, so the app owns durable read access. Marking them
+        // persisted keeps the URI on the completed row instead of staging it.
+        persisted: true,
       );
     }
     if (destination != null) {

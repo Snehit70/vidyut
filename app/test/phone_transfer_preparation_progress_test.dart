@@ -75,6 +75,48 @@ void main() {
     expect(reader.released, [uri, uri, uri, uri]);
   });
 
+  test('keeps a durable received destination through Send again', () async {
+    const destination = 'content://media/external/downloads/42';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    final received = PhoneTransferFile(
+      fileId: 'received-1',
+      filename: 'received.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 1,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 42,
+      destinationPath: destination,
+    );
+
+    final resent = await sender.sendAgain(received);
+    await sender.waitForTerminal(resent.transferId);
+
+    // The durable received URI is read directly rather than staged as a
+    // managed stage, and it survives the send attempt on the completed row.
+    expect(reader.stageCalls, isEmpty);
+    final attempted = (await history.load()).single.files.single;
+    expect(
+      attempted.sourceReference?.kind,
+      PhoneTransferSourceKind.androidDocumentUri,
+    );
+    expect(attempted.sourceReference?.reference, destination);
+    expect(attempted.sourceReference?.persisted, isTrue);
+    expect(
+      attempted.sourceReference?.ownership,
+      PhoneTransferSourceOwnership.external,
+    );
+  });
+
   test('releases pre-owned grants when the durable queue card fails', () async {
     const preOwned = 'content://provider/item/pre-owned';
     const freshlyRetained = 'content://provider/item/fresh';
@@ -643,6 +685,7 @@ class _ImmediateSourceReader implements PhoneTransferSourceReader {
 class _GrantTrackingSourceReader implements PhoneTransferSourceReader {
   final retained = <String>[];
   final released = <String>[];
+  final stageCalls = <String>[];
 
   @override
   Future<void> cancelStage(String operationId) async {}
@@ -668,7 +711,10 @@ class _GrantTrackingSourceReader implements PhoneTransferSourceReader {
     String uri, {
     required int maximumBytes,
     String? operationId,
-  }) => throw UnimplementedError();
+  }) {
+    stageCalls.add(uri);
+    return throw UnimplementedError();
+  }
 
   @override
   Future<List<int>> readAt(

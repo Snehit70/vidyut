@@ -206,9 +206,14 @@ class MainActivity : FlutterActivity() {
         pruneSharedStages()
         val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
         directory.mkdirs()
-        val usedBytes = directory.listFiles()
-            ?.filter { it.isFile }
-            ?.sumOf { it.length() } ?: 0L
+        val existing = directory.listFiles()?.filter { it.isFile }.orEmpty()
+        // Recently-granted stages survive pruning for their grace period, so
+        // the count can exceed MAX_SHARED_STAGE_FILES. Reject rather than
+        // accumulate a ninth copy that cannot be reduced safely.
+        if (existing.size >= MAX_SHARED_STAGE_FILES) {
+            throw IllegalStateException("Too many files are currently staged for sharing.")
+        }
+        val usedBytes = existing.sumOf { it.length() }
         if (sourceSize > MAX_SHARED_STAGE_BYTES - usedBytes) {
             throw IllegalStateException("Not enough space to stage this file for sharing.")
         }
