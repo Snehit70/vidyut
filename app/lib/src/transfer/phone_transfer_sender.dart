@@ -26,6 +26,7 @@ class PhoneTransferSource {
     this.persisted = false,
     this.kind,
     this.ownership = PhoneTransferSourceOwnership.external,
+    this.grantAlreadyRetained = false,
   }) : assert(path != null || uri != null);
 
   final String? path;
@@ -37,6 +38,10 @@ class PhoneTransferSource {
   final bool persisted;
   final PhoneTransferSourceKind? kind;
   final PhoneTransferSourceOwnership ownership;
+
+  /// Whether the picker/native source layer already owns one persisted grant
+  /// that this history row is taking ownership of.
+  final bool grantAlreadyRetained;
 
   PhoneTransferSourceReference get reference => PhoneTransferSourceReference(
     kind:
@@ -894,7 +899,8 @@ class PhoneTransferSender {
     final retained = <String>[];
     try {
       for (final source in sources) {
-        if (_isPersistedDocumentSource(source)) {
+        if (_isPersistedDocumentSource(source) &&
+            !source.grantAlreadyRetained) {
           await sourceReader.retain(source.uri!);
           retained.add(source.uri!);
         }

@@ -122,6 +122,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                 size: file.size,
                 lastModifiedMs: file.lastModifiedMs,
                 persisted: file.persisted,
+                grantAlreadyRetained: file.persisted,
               ),
             )
             .toList(),

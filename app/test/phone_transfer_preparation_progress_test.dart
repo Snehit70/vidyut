@@ -59,6 +59,7 @@ void main() {
         filename: 'resend.pdf',
         mime: 'application/pdf',
         persisted: true,
+        grantAlreadyRetained: true,
       ),
     ]);
     await sender.waitForTerminal(first.transferId);
@@ -67,7 +68,7 @@ void main() {
     final second = await sender.sendAgain(firstFile);
     await sender.waitForTerminal(second.transferId);
 
-    expect(reader.retained, [uri, uri, uri, uri]);
+    expect(reader.retained, [uri, uri, uri]);
     expect(reader.released, [uri, uri]);
 
     await sender.clearHistory();
