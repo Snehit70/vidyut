@@ -592,10 +592,11 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       ),
     );
     if (confirmed != true) return;
-    for (final transferId in _selectedTransferIds.toList()) {
-      final batch = _batches.firstWhere(
-        (item) => item.transferId == transferId,
-      );
+    final selected = _selectedTransferIds.toSet();
+    for (final batch
+        in _batches
+            .where((item) => selected.contains(item.transferId))
+            .toList()) {
       await widget.sender.removeHistory(batch);
     }
     _selectedTransferIds.clear();

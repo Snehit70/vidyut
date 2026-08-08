@@ -111,6 +111,16 @@ void main() {
 
       expect(find.text('1 selected'), findsOneWidget);
       expect(find.text('Remove from history (1)'), findsOneWidget);
+
+      await tester.tap(find.text('Remove from history (1)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Remove 1 transfers?'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('one.pdf'), findsNothing);
+      expect(find.text('two.pdf'), findsOneWidget);
     });
 
     testWidgets('offers date filters from the filter sheet', (tester) async {
