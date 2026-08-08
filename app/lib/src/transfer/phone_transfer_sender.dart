@@ -1272,6 +1272,12 @@ class PhoneTransferSender {
     return reset;
   }
 
+  /// Creates a fresh batch from a completed file's non-owning source hint.
+  /// Managed stages and revoked document sources fail clearly during enqueue.
+  Future<PhoneTransferBatch> sendAgain(PhoneTransferFile file) {
+    return enqueue([_sourceForFile(file)]);
+  }
+
   Future<PhoneTransferBatch> _send(
     PairingCode pairing,
     PhoneTransferBatch initial, {

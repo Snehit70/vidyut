@@ -41,6 +41,7 @@ import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
 import 'src/shared/relay_connection.dart';
 import 'src/transfer/phone_transfer_sender.dart';
+import 'src/transfer/transfer_file_actions.dart';
 import 'src/transfer/transfer_files_screen.dart';
 import 'src/transfer/transfer_history.dart';
 import 'src/update/github_update_checker.dart';
@@ -218,6 +219,7 @@ class _PairingScreenState extends State<PairingScreen>
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
   late final TransferHistoryRepository _transferHistory =
       TransferHistoryRepository(SharedPreferencesTransferHistoryStorage());
+  final _transferFileActions = const AndroidTransferFileActions();
   late final PhoneTransferSender _transferSender = PhoneTransferSender(
     pairingRepository: widget.pairingRepository,
     connectionFactory: widget.relayConnectionFactory,
@@ -660,6 +662,12 @@ class _PairingScreenState extends State<PairingScreen>
           history: _transferHistory,
           sender: _transferSender,
           onOpenSettings: _openSettings,
+          onOpenFile: _transferFileActions.open,
+          onShowFolder: _transferFileActions.showFolder,
+          onShareFile: _transferFileActions.share,
+          onSendAgain: (file) async {
+            await _transferSender.sendAgain(file);
+          },
         ),
       ),
     );

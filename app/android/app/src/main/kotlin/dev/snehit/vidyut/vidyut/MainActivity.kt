@@ -1,6 +1,7 @@
 package dev.snehit.vidyut.vidyut
 
 import android.content.Context
+import android.content.ClipData
 import android.net.wifi.WifiManager
 import android.content.Intent
 import android.net.Uri
@@ -77,6 +78,48 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "vidyut/transfer_files")
+            .setMethodCallHandler { call, result ->
+                try {
+                    val path = call.argument<String>("path")
+                    val uri = call.argument<String>("uri")
+                    val mime = call.argument<String>("mime") ?: "*/*"
+                    when (call.method) {
+                        "open" -> {
+                            launchFileIntent(Intent.ACTION_VIEW, path, uri, mime)
+                            result.success(null)
+                        }
+                        "showFolder" -> {
+                            val folder = path?.let { File(it).parentFile?.path }
+                            launchFileIntent(
+                                Intent.ACTION_VIEW,
+                                folder,
+                                null,
+                                "resource/folder",
+                            )
+                            result.success(null)
+                        }
+                        "share" -> {
+                            val contentUri = resolveFileUri(path, uri)
+                            startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = mime
+                                        putExtra(Intent.EXTRA_STREAM, contentUri)
+                                        clipData = ClipData.newRawUri("Vidyut file", contentUri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    },
+                                    "Share file",
+                                ),
+                            )
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (error: Exception) {
+                    result.error("transfer-file-action", error.message, null)
+                }
+            }
     }
 
     override fun onDestroy() {
@@ -98,5 +141,30 @@ class MainActivity : FlutterActivity() {
 
     private fun releaseMulticastLock() {
         multicastLock?.takeIf { it.isHeld }?.release()
+    }
+
+    private fun launchFileIntent(
+        action: String,
+        path: String?,
+        uri: String?,
+        mime: String,
+    ) {
+        val contentUri = resolveFileUri(path, uri)
+        startActivity(
+            Intent(action).apply {
+                setDataAndType(contentUri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            },
+        )
+    }
+
+    private fun resolveFileUri(path: String?, uri: String?): Uri {
+        if (uri != null) return Uri.parse(uri)
+        require(!path.isNullOrBlank()) { "A file path or document URI is required." }
+        return FileProvider.getUriForFile(
+            this,
+            "$packageName.fileprovider",
+            File(path),
+        )
     }
 }
