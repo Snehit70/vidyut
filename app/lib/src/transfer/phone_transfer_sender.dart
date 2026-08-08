@@ -896,18 +896,19 @@ class PhoneTransferSender {
   Future<List<String>> _retainHistorySources(
     List<PhoneTransferSource> sources,
   ) async {
-    final retained = <String>[];
+    final historyOwned = <String>[];
     try {
       for (final source in sources) {
-        if (_isPersistedDocumentSource(source) &&
-            !source.grantAlreadyRetained) {
-          await sourceReader.retain(source.uri!);
-          retained.add(source.uri!);
+        if (_isPersistedDocumentSource(source)) {
+          if (!source.grantAlreadyRetained) {
+            await sourceReader.retain(source.uri!);
+          }
+          historyOwned.add(source.uri!);
         }
       }
-      return retained;
+      return historyOwned;
     } catch (_) {
-      for (final uri in retained) {
+      for (final uri in historyOwned) {
         await sourceReader.release(uri);
       }
       rethrow;

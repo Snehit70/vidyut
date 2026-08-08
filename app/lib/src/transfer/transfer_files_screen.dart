@@ -283,11 +283,11 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                       sliver: SliverToBoxAdapter(
                         child: _LiveTransferCard(
                           progress: _liveProgress!,
-                          onCancel: _liveProgress!.transferId == null
-                              ? null
-                              : () => widget.sender.cancelBatch(
+                          onCancel: _canCancelLive(_liveProgress!)
+                              ? () => widget.sender.cancelBatch(
                                   _liveProgress!.transferId!,
-                                ),
+                                )
+                              : null,
                         ),
                       ),
                     ),
@@ -673,6 +673,15 @@ bool _isActiveBatch(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.paused => true,
   _ => false,
 };
+
+bool _canCancelLive(PhoneTransferProgress progress) {
+  if (progress.transferId == null) return false;
+  return switch (progress.stage) {
+    PhoneTransferProgressStage.completed ||
+    PhoneTransferProgressStage.failed => false,
+    _ => true,
+  };
+}
 
 bool _needsAttention(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.failed ||
@@ -1112,11 +1121,7 @@ class _BatchDetailsSheet extends StatelessWidget {
                   foregroundColor: Palette.ink,
                   child: Icon(Icons.laptop_mac_outlined),
                 ),
-                title: Text(
-                  batch.direction == PhoneTransferDirection.received
-                      ? 'Saved on your device'
-                      : 'Saved on your laptop',
-                ),
+                title: Text(_savedLocationLabel(batch)),
               ),
             ),
             const SizedBox(height: 12),
@@ -1353,6 +1358,25 @@ String _directionLabel(PhoneTransferDirection direction) =>
     direction == PhoneTransferDirection.sent
     ? 'Sent to your laptop'
     : 'Received from your laptop';
+
+String _savedLocationLabel(PhoneTransferBatch batch) {
+  final destination = batch.direction == PhoneTransferDirection.received
+      ? 'your device'
+      : 'your laptop';
+  return switch (batch.status) {
+    PhoneTransferStatus.completed => 'Saved on $destination',
+    PhoneTransferStatus.completedWithIssues =>
+      'Some files saved on $destination',
+    PhoneTransferStatus.preparing ||
+    PhoneTransferStatus.queued ||
+    PhoneTransferStatus.active ||
+    PhoneTransferStatus.paused => 'Saving to $destination',
+    PhoneTransferStatus.waitingForSource => 'Waiting for source',
+    PhoneTransferStatus.failed => 'Nothing was saved',
+    PhoneTransferStatus.cancelled => 'Transfer cancelled',
+    PhoneTransferStatus.expired => 'Transfer expired',
+  };
+}
 
 class _LiveTransferCard extends StatelessWidget {
   const _LiveTransferCard({required this.progress, this.onCancel});

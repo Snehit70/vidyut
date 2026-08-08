@@ -75,6 +75,41 @@ void main() {
     expect(reader.released, [uri, uri, uri, uri]);
   });
 
+  test('releases pre-owned grants when the durable queue card fails', () async {
+    const preOwned = 'content://provider/item/pre-owned';
+    const freshlyRetained = 'content://provider/item/fresh';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(_FailingWriteStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    await expectLater(
+      sender.enqueue([
+        const PhoneTransferSource(
+          uri: preOwned,
+          filename: 'pre-owned.pdf',
+          mime: 'application/pdf',
+          persisted: true,
+          grantAlreadyRetained: true,
+        ),
+        const PhoneTransferSource(
+          uri: freshlyRetained,
+          filename: 'fresh.pdf',
+          mime: 'application/pdf',
+          persisted: true,
+        ),
+      ]),
+      throwsA(isA<Object>()),
+    );
+
+    expect(reader.retained, [freshlyRetained]);
+    expect(reader.released, [preOwned, freshlyRetained]);
+  });
+
   test(
     'records ordered queue-card and publication timing with an injected clock',
     () async {
@@ -635,4 +670,19 @@ class _GrantTrackingSourceReader implements PhoneTransferSourceReader {
     required int offset,
     required int length,
   }) => throw UnimplementedError();
+}
+
+class _FailingWriteStorage implements TransferHistoryStorage {
+  @override
+  Future<Map<String, String>> readAll() async => const {};
+
+  @override
+  Future<void> writeBatch(String transferId, String value) =>
+      throw StateError('storage unavailable');
+
+  @override
+  Future<void> removeBatch(String transferId) async {}
+
+  @override
+  Future<void> clear() async {}
 }
