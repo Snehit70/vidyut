@@ -810,7 +810,7 @@ class _FilterButton extends StatelessWidget {
       minimumSize: const Size(0, 48),
       padding: const EdgeInsets.symmetric(horizontal: 18),
       backgroundColor: selected ? Palette.petal : Colors.transparent,
-      foregroundColor: selected ? Palette.ink : Palette.ink,
+      foregroundColor: Palette.ink,
       side: BorderSide(
         color: selected ? Palette.petal : Palette.hairline,
         width: 1.5,
