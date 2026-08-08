@@ -1199,6 +1199,30 @@ class PhoneTransferSender {
 
   PhoneTransferSource _sourceForFile(PhoneTransferFile file) {
     final reference = file.sourceReference;
+    final destination = file.destinationPath;
+    final destinationUri = destination == null
+        ? null
+        : Uri.tryParse(destination);
+    if (destinationUri?.scheme == 'content') {
+      return PhoneTransferSource(
+        uri: destination,
+        filename: file.filename,
+        mime: file.mime,
+        size: file.size,
+        lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
+        kind: PhoneTransferSourceKind.androidDocumentUri,
+      );
+    }
+    if (destination != null) {
+      return PhoneTransferSource(
+        path: destination,
+        filename: file.filename,
+        mime: file.mime,
+        size: file.size,
+        lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
+        kind: PhoneTransferSourceKind.externalPath,
+      );
+    }
     final path =
         file.sourcePath ??
         (reference?.kind == PhoneTransferSourceKind.externalPath
@@ -1272,8 +1296,9 @@ class PhoneTransferSender {
     return reset;
   }
 
-  /// Creates a fresh batch from a completed file's non-owning source hint.
-  /// Managed stages and revoked document sources fail clearly during enqueue.
+  /// Creates a fresh batch from a completed file's history-owned source.
+  /// Revoked document sources and deleted destinations fail clearly during
+  /// enqueue.
   Future<PhoneTransferBatch> sendAgain(PhoneTransferFile file) {
     return enqueue([_sourceForFile(file)]);
   }
@@ -1685,17 +1710,9 @@ class PhoneTransferSender {
           end: true,
         );
         transferFile = batch.files[index];
-        final reference = transferFile.sourceReference;
-        if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
-          await sourceReader.release(reference!.reference);
-          transferFile = transferFile.copyWith(clearSourceReference: true);
-          batch = await _replaceFile(batch, index, transferFile);
-        } else if (reference?.kind ==
-            PhoneTransferSourceKind.androidDocumentUri) {
-          await sourceReader.release(reference!.reference);
-          transferFile = transferFile.copyWith(clearSourceReference: true);
-          batch = await _replaceFile(batch, index, transferFile);
-        }
+        // Keep the source reference while the history row exists. Managed
+        // stages and persisted document grants are released by history
+        // deletion, which keeps Send again valid after completion.
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.transferring,
