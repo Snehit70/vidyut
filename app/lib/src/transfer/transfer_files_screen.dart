@@ -977,10 +977,6 @@ class _TransferRow extends StatelessWidget {
                   if (value == 'retry') onRetry?.call();
                   if (value == 'remove') onRemove();
                   if (value == 'settings') onOpenSettings?.call();
-                  if (value == 'cancel') {
-                    // The parent supplies cancellation through the current
-                    // transfer action in the live surface.
-                  }
                 },
                 itemBuilder: (_) => [
                   if (onRetry != null)
