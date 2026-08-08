@@ -17,6 +17,13 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private companion object {
+        const val SHARED_STAGE_DIRECTORY = "vidyut_updates/shared"
+        const val MAX_SHARED_STAGE_FILES = 8
+        const val MAX_SHARED_STAGE_BYTES = 512L * 1024 * 1024
+        const val SHARED_STAGE_MAX_AGE_MS = 24L * 60 * 60 * 1000
+    }
+
     private var multicastLock: WifiManager.MulticastLock? = null
     private val fileActionExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -183,14 +190,48 @@ class MainActivity : FlutterActivity() {
         return try {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
         } catch (_: IllegalArgumentException) {
+            pruneSharedStages()
             val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
             val staged = File(
-                File(cacheDir, "vidyut_updates/shared"),
+                File(cacheDir, SHARED_STAGE_DIRECTORY),
                 "${file.absolutePath.hashCode().toUInt().toString(16)}-$safeName",
             )
             staged.parentFile?.mkdirs()
-            file.copyTo(staged, overwrite = true)
+            try {
+                file.copyTo(staged, overwrite = true)
+                staged.setLastModified(System.currentTimeMillis())
+            } catch (error: Exception) {
+                staged.delete()
+                throw error
+            }
+            pruneSharedStages(protected = staged)
             FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
+        }
+    }
+
+    private fun pruneSharedStages(protected: File? = null) {
+        val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
+        val files = directory.listFiles()?.filter { it.isFile && it != protected }
+            ?: return
+        val staleBefore = System.currentTimeMillis() - SHARED_STAGE_MAX_AGE_MS
+        files.filter { it.lastModified() < staleBefore }.forEach { it.delete() }
+
+        val remaining = directory.listFiles()
+            ?.filter { it.isFile && it != protected }
+            ?.sortedBy { it.lastModified() }
+            ?: return
+        var count = remaining.size
+        var totalBytes = remaining.sumOf { it.length() }
+        for (file in remaining) {
+            if (count <= MAX_SHARED_STAGE_FILES &&
+                totalBytes <= MAX_SHARED_STAGE_BYTES) {
+                break
+            }
+            val size = file.length()
+            if (file.delete()) {
+                count--
+                totalBytes -= size
+            }
         }
     }
 }
