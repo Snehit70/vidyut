@@ -26,6 +26,7 @@ class PhoneTransferSource {
     this.persisted = false,
     this.kind,
     this.ownership = PhoneTransferSourceOwnership.external,
+    this.grantAlreadyRetained = false,
   }) : assert(path != null || uri != null);
 
   final String? path;
@@ -37,6 +38,10 @@ class PhoneTransferSource {
   final bool persisted;
   final PhoneTransferSourceKind? kind;
   final PhoneTransferSourceOwnership ownership;
+
+  /// Whether the picker/native source layer already owns one persisted grant
+  /// that this history row is taking ownership of.
+  final bool grantAlreadyRetained;
 
   PhoneTransferSourceReference get reference => PhoneTransferSourceReference(
     kind:
@@ -530,6 +535,7 @@ class PhoneTransferSender {
     if (sources.isEmpty) {
       throw const FormatException('Select at least one file.');
     }
+    final retainedHistoryUris = await _retainHistorySources(sources);
     final now = _wallNow();
     var batch = PhoneTransferBatch(
       transferId: _id('transfer'),
@@ -575,7 +581,14 @@ class PhoneTransferSender {
     }
     // Persist before provider metadata, probing, hashing, policy, pairing, or
     // relay work. This is the durable boundary used by restart recovery.
-    await history.upsert(batch);
+    try {
+      await history.upsert(batch);
+    } catch (_) {
+      for (final uri in retainedHistoryUris) {
+        await sourceReader.release(uri);
+      }
+      rethrow;
+    }
     _registerSendTurn(batch.transferId);
     for (var index = 0; index < batch.files.length; index++) {
       batch = _markTimingValue(
@@ -654,9 +667,7 @@ class PhoneTransferSender {
     _TransferSession? handedOffSession;
     try {
       for (final source in sources) {
-        if (source.uri != null &&
-            source.persisted &&
-            source.kind == PhoneTransferSourceKind.androidDocumentUri) {
+        if (_isPersistedDocumentSource(source)) {
           await sourceReader.retain(source.uri!);
           retainedUris.add(source.uri!);
         }
@@ -670,7 +681,7 @@ class PhoneTransferSender {
           'File transfers are disabled on this metered network.',
         );
       }
-      if (sources.any((source) => source.uri != null && source.persisted)) {
+      if (sources.any(_isPersistedDocumentSource)) {
         // Authentication and relay setup do not depend on the source digest.
         // Keep the offer itself behind the preparation barrier.
         setupFuture = _prepareRelaySession(
@@ -751,7 +762,7 @@ class PhoneTransferSender {
             ),
           );
           if (uncommittedStage != null) {
-            if (sources[sourceIndex].persisted) {
+            if (_isPersistedDocumentSource(sources[sourceIndex])) {
               try {
                 await sourceReader.release(sources[sourceIndex].uri!);
               } catch (_) {
@@ -874,6 +885,33 @@ class PhoneTransferSender {
         await sourceReader.release(uri);
       }
       _completeSendTurn(initial.transferId);
+    }
+  }
+
+  bool _isPersistedDocumentSource(PhoneTransferSource source) =>
+      source.uri != null &&
+      source.persisted &&
+      source.reference.kind == PhoneTransferSourceKind.androidDocumentUri;
+
+  Future<List<String>> _retainHistorySources(
+    List<PhoneTransferSource> sources,
+  ) async {
+    final historyOwned = <String>[];
+    try {
+      for (final source in sources) {
+        if (_isPersistedDocumentSource(source)) {
+          if (!source.grantAlreadyRetained) {
+            await sourceReader.retain(source.uri!);
+          }
+          historyOwned.add(source.uri!);
+        }
+      }
+      return historyOwned;
+    } catch (_) {
+      for (final uri in historyOwned) {
+        await sourceReader.release(uri);
+      }
+      rethrow;
     }
   }
 
@@ -1199,6 +1237,34 @@ class PhoneTransferSender {
 
   PhoneTransferSource _sourceForFile(PhoneTransferFile file) {
     final reference = file.sourceReference;
+    final destination = file.destinationPath;
+    final destinationUri = destination == null
+        ? null
+        : Uri.tryParse(destination);
+    if (destinationUri?.scheme == 'content') {
+      return PhoneTransferSource(
+        uri: destination,
+        filename: file.filename,
+        mime: file.mime,
+        size: file.size,
+        lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
+        kind: PhoneTransferSourceKind.androidDocumentUri,
+        // Received destinations are published into MediaStore or a configured
+        // document tree, so the app owns durable read access. Marking them
+        // persisted keeps the URI on the completed row instead of staging it.
+        persisted: true,
+      );
+    }
+    if (destination != null) {
+      return PhoneTransferSource(
+        path: destination,
+        filename: file.filename,
+        mime: file.mime,
+        size: file.size,
+        lastModifiedMs: file.lastModifiedKnown ? file.lastModifiedMs : null,
+        kind: PhoneTransferSourceKind.externalPath,
+      );
+    }
     final path =
         file.sourcePath ??
         (reference?.kind == PhoneTransferSourceKind.externalPath
@@ -1270,6 +1336,22 @@ class PhoneTransferSender {
     }
     unawaited(_schedulePreparation(reset, sources));
     return reset;
+  }
+
+  /// Creates a fresh batch from a completed file's history-owned source.
+  /// Revoked document sources and deleted destinations fail clearly during
+  /// enqueue.
+  Future<PhoneTransferBatch> sendAgain(PhoneTransferFile file) {
+    return enqueue([_sourceForFile(file)]);
+  }
+
+  bool canSendAgain(PhoneTransferFile file) {
+    try {
+      _sourceForFile(file);
+      return true;
+    } on StateError {
+      return false;
+    }
   }
 
   Future<PhoneTransferBatch> _send(
@@ -1680,16 +1762,22 @@ class PhoneTransferSender {
         );
         transferFile = batch.files[index];
         final reference = transferFile.sourceReference;
-        if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
-          await sourceReader.release(reference!.reference);
-          transferFile = transferFile.copyWith(clearSourceReference: true);
-          batch = await _replaceFile(batch, index, transferFile);
-        } else if (reference?.kind ==
-            PhoneTransferSourceKind.androidDocumentUri) {
-          await sourceReader.release(reference!.reference);
+        final transientDocument = reference?.kind ==
+                PhoneTransferSourceKind.androidDocumentUri &&
+            reference!.persisted == false;
+        if (reference?.ownership == PhoneTransferSourceOwnership.managed ||
+            transientDocument) {
+          if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
+            await sourceReader.release(reference!.reference);
+          }
           transferFile = transferFile.copyWith(clearSourceReference: true);
           batch = await _replaceFile(batch, index, transferFile);
         }
+        // Persisted document grants stay with the history row so Send again
+        // remains available until the user removes the row. Transient grants
+        // are dropped because the temporary URI permission is revoked on
+        // reboot, which would leave Open, Share, and Send again exposed but
+        // failing.
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.transferring,

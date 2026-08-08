@@ -41,6 +41,7 @@ import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
 import 'src/shared/relay_connection.dart';
 import 'src/transfer/phone_transfer_sender.dart';
+import 'src/transfer/transfer_file_actions.dart';
 import 'src/transfer/transfer_files_screen.dart';
 import 'src/transfer/transfer_history.dart';
 import 'src/update/github_update_checker.dart';
@@ -218,6 +219,7 @@ class _PairingScreenState extends State<PairingScreen>
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
   late final TransferHistoryRepository _transferHistory =
       TransferHistoryRepository(SharedPreferencesTransferHistoryStorage());
+  final _transferFileActions = const AndroidTransferFileActions();
   late final PhoneTransferSender _transferSender = PhoneTransferSender(
     pairingRepository: widget.pairingRepository,
     connectionFactory: widget.relayConnectionFactory,
@@ -660,9 +662,34 @@ class _PairingScreenState extends State<PairingScreen>
           history: _transferHistory,
           sender: _transferSender,
           onOpenSettings: _openSettings,
+          onOpenFile: (file) => _runTransferFileAction(
+            'Open file',
+            () => _transferFileActions.open(file),
+          ),
+          onShareFile: (file) => _runTransferFileAction(
+            'Share file',
+            () => _transferFileActions.share(file),
+          ),
+          canUseFileAction: _transferFileActions.canUse,
+          onSendAgain: (file) => _runTransferFileAction(
+            'Send again',
+            () => _transferSender.sendAgain(file),
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _runTransferFileAction(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (error) {
+      _debugLog.add('transfer', '$label failed: $error', isError: true);
+      if (mounted) _showSnack('$label failed.');
+    }
   }
 
   Future<void> _updateSettings(AppSettings settings) async {

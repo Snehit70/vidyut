@@ -121,3 +121,21 @@ _Avoid_: failed transfer, deleted transfer
 The phone and laptop surface for active batches and local transfer history.
 History stores metadata only; completed files remain owned by the filesystem.
 _Avoid_: library, file manager
+
+**Transfer history**:
+The local metadata record of past file batches, including their filenames,
+direction, status, progress outcome, and available follow-up actions. It does
+not own or delete completed files.
+_Avoid_: file library, activity feed, file browser
+
+**Completed with issues**:
+A terminal batch outcome in which at least one file completed and at least one
+file did not. The completed files remain available, while unsuccessful files
+retain an actionable retry or repair path.
+_Avoid_: partially failed, mixed success, incomplete transfer
+
+**Needs attention**:
+A Files-surface grouping for transfer states that require user action:
+failed, waiting for source, completed with issues, or expired. It is not a
+transfer status and does not include ordinary queued, active, or paused work.
+_Avoid_: problem transfers, errors only, incomplete
