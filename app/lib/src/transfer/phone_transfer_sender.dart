@@ -530,6 +530,7 @@ class PhoneTransferSender {
     if (sources.isEmpty) {
       throw const FormatException('Select at least one file.');
     }
+    final retainedHistoryUris = await _retainHistorySources(sources);
     final now = _wallNow();
     var batch = PhoneTransferBatch(
       transferId: _id('transfer'),
@@ -575,7 +576,14 @@ class PhoneTransferSender {
     }
     // Persist before provider metadata, probing, hashing, policy, pairing, or
     // relay work. This is the durable boundary used by restart recovery.
-    await history.upsert(batch);
+    try {
+      await history.upsert(batch);
+    } catch (_) {
+      for (final uri in retainedHistoryUris) {
+        await sourceReader.release(uri);
+      }
+      rethrow;
+    }
     _registerSendTurn(batch.transferId);
     for (var index = 0; index < batch.files.length; index++) {
       batch = _markTimingValue(
@@ -654,9 +662,7 @@ class PhoneTransferSender {
     _TransferSession? handedOffSession;
     try {
       for (final source in sources) {
-        if (source.uri != null &&
-            source.persisted &&
-            source.kind == PhoneTransferSourceKind.androidDocumentUri) {
+        if (_isPersistedDocumentSource(source)) {
           await sourceReader.retain(source.uri!);
           retainedUris.add(source.uri!);
         }
@@ -670,7 +676,7 @@ class PhoneTransferSender {
           'File transfers are disabled on this metered network.',
         );
       }
-      if (sources.any((source) => source.uri != null && source.persisted)) {
+      if (sources.any(_isPersistedDocumentSource)) {
         // Authentication and relay setup do not depend on the source digest.
         // Keep the offer itself behind the preparation barrier.
         setupFuture = _prepareRelaySession(
@@ -751,7 +757,7 @@ class PhoneTransferSender {
             ),
           );
           if (uncommittedStage != null) {
-            if (sources[sourceIndex].persisted) {
+            if (_isPersistedDocumentSource(sources[sourceIndex])) {
               try {
                 await sourceReader.release(sources[sourceIndex].uri!);
               } catch (_) {
@@ -874,6 +880,31 @@ class PhoneTransferSender {
         await sourceReader.release(uri);
       }
       _completeSendTurn(initial.transferId);
+    }
+  }
+
+  bool _isPersistedDocumentSource(PhoneTransferSource source) =>
+      source.uri != null &&
+      source.persisted &&
+      source.reference.kind == PhoneTransferSourceKind.androidDocumentUri;
+
+  Future<List<String>> _retainHistorySources(
+    List<PhoneTransferSource> sources,
+  ) async {
+    final retained = <String>[];
+    try {
+      for (final source in sources) {
+        if (_isPersistedDocumentSource(source)) {
+          await sourceReader.retain(source.uri!);
+          retained.add(source.uri!);
+        }
+      }
+      return retained;
+    } catch (_) {
+      for (final uri in retained) {
+        await sourceReader.release(uri);
+      }
+      rethrow;
     }
   }
 

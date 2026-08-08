@@ -42,6 +42,38 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   });
 
+  test('retains a persisted document grant for each history row', () async {
+    const uri = 'content://provider/item/resend';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    final first = await sender.enqueue([
+      const PhoneTransferSource(
+        uri: uri,
+        filename: 'resend.pdf',
+        mime: 'application/pdf',
+        persisted: true,
+      ),
+    ]);
+    await sender.waitForTerminal(first.transferId);
+    final firstFile = (await history.load()).single.files.single;
+
+    final second = await sender.sendAgain(firstFile);
+    await sender.waitForTerminal(second.transferId);
+
+    expect(reader.retained, [uri, uri, uri, uri]);
+    expect(reader.released, [uri, uri]);
+
+    await sender.clearHistory();
+    expect(reader.released, [uri, uri, uri, uri]);
+  });
+
   test(
     'records ordered queue-card and publication timing with an injected clock',
     () async {
@@ -543,6 +575,44 @@ class _ImmediateSourceReader implements PhoneTransferSourceReader {
 
   @override
   Future<void> retain(String reference) async {}
+
+  @override
+  Future<VidyutSourceProbe> probe(String uri) async =>
+      const VidyutSourceProbe(seekable: true, size: 42, sizeKnown: true);
+
+  @override
+  Future<String> hashSha256(String uri) async => List.filled(64, 'b').join();
+
+  @override
+  Future<VidyutStagedSource> stage(
+    String uri, {
+    required int maximumBytes,
+    String? operationId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<List<int>> readAt(
+    String uri, {
+    required int offset,
+    required int length,
+  }) => throw UnimplementedError();
+}
+
+class _GrantTrackingSourceReader implements PhoneTransferSourceReader {
+  final retained = <String>[];
+  final released = <String>[];
+
+  @override
+  Future<void> cancelStage(String operationId) async {}
+
+  @override
+  Future<void> discard(String reference) async {}
+
+  @override
+  Future<void> release(String reference) async => released.add(reference);
+
+  @override
+  Future<void> retain(String reference) async => retained.add(reference);
 
   @override
   Future<VidyutSourceProbe> probe(String uri) async =>
