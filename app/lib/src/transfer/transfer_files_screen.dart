@@ -297,6 +297,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                           child: _TransferRow(
                             batch: active[index],
                             onRetry: null,
+                            onCancel: _cancelCallback(active[index]),
                             onRemove: () => _remove(active[index]),
                             onTap: () => _showBatchDetails(active[index]),
                           ),
@@ -319,6 +320,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                             child: _TransferRow(
                               batch: batch,
                               onRetry: _retryCallback(batch),
+                              onCancel: _cancelCallback(batch),
                               onRemove: () => _remove(batch),
                               onOpenSettings: widget.onOpenSettings,
                               onTap: selectionMode
@@ -636,6 +638,12 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     return retryable ? () => _retry(batch) : null;
   }
 
+  VoidCallback? _cancelCallback(PhoneTransferBatch batch) {
+    return _isActiveBatch(batch)
+        ? () => widget.sender.cancelBatch(batch.transferId)
+        : null;
+  }
+
   SliverToBoxAdapter _sectionHeader(String title) => SliverToBoxAdapter(
     child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
@@ -863,6 +871,7 @@ class _TransferRow extends StatelessWidget {
     required this.onRemove,
     required this.onTap,
     this.onRetry,
+    this.onCancel,
     this.onOpenSettings,
     this.onLongPress,
     this.selected = false,
@@ -873,6 +882,7 @@ class _TransferRow extends StatelessWidget {
   final VoidCallback onRemove;
   final VoidCallback onTap;
   final VoidCallback? onRetry;
+  final VoidCallback? onCancel;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onLongPress;
   final bool selected;
@@ -977,12 +987,18 @@ class _TransferRow extends StatelessWidget {
                 tooltip: 'Transfer actions',
                 onSelected: (value) {
                   if (value == 'retry') onRetry?.call();
+                  if (value == 'cancel') onCancel?.call();
                   if (value == 'remove') onRemove();
                   if (value == 'settings') onOpenSettings?.call();
                 },
                 itemBuilder: (_) => [
                   if (onRetry != null)
                     const PopupMenuItem(value: 'retry', child: Text('Retry')),
+                  if (onCancel != null)
+                    const PopupMenuItem(
+                      value: 'cancel',
+                      child: Text('Cancel transfer'),
+                    ),
                   if (failure?.errorCode == 'file_too_large' &&
                       onOpenSettings != null)
                     const PopupMenuItem(

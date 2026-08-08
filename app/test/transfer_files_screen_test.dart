@@ -65,6 +65,29 @@ void main() {
       expect(find.text('missing-source.zip'), findsNothing);
     });
 
+    testWidgets('offers cancellation for active history rows', (tester) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'queued.zip',
+          status: PhoneTransferStatus.queued,
+          createdAtMs: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Transfer actions'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cancel transfer'), findsOneWidget);
+      await tester.tap(find.text('Cancel transfer'));
+      await tester.pumpAndSettle();
+
+      final rows = await TransferHistoryRepository(history).load();
+      expect(rows.single.status, PhoneTransferStatus.cancelled);
+    });
+
     testWidgets('opens completed batch details from its history row', (
       tester,
     ) async {
