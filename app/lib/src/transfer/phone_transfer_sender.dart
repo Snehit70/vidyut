@@ -1719,9 +1719,14 @@ class PhoneTransferSender {
           end: true,
         );
         transferFile = batch.files[index];
-        // Keep the source reference while the history row exists. Managed
-        // stages and persisted document grants are released by history
-        // deletion, which keeps Send again valid after completion.
+        final reference = transferFile.sourceReference;
+        if (reference?.ownership == PhoneTransferSourceOwnership.managed) {
+          await sourceReader.release(reference!.reference);
+          transferFile = transferFile.copyWith(clearSourceReference: true);
+          batch = await _replaceFile(batch, index, transferFile);
+        }
+        // Persisted document grants stay with the history row so Send again
+        // remains available until the user removes the row.
         _publishBatch(
           batch,
           stage: PhoneTransferProgressStage.transferring,
