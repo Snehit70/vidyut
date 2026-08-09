@@ -385,6 +385,61 @@ void main() {
       expect(find.text('Send again'), findsOneWidget);
     });
 
+    testWidgets('includes mixed-result batches in bulk history cleanup', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [_mixedBatch()]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('2 files'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 selected'), findsOneWidget);
+      await tester.tap(find.text('Remove from history (1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 files'), findsNothing);
+    });
+
+    testWidgets('hides ETA and speed after live transfer completion', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      final sender = _ProgressControlledSender(
+        history: TransferHistoryRepository(history),
+      );
+      final live = _batch(
+        filename: 'live.pdf',
+        status: PhoneTransferStatus.queued,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await _seed(history, [live]);
+
+      await tester.pumpWidget(_screen(history, sender: sender));
+      await tester.pumpAndSettle();
+      sender.emitBatch(live);
+      await tester.pump();
+      sender.emit(
+        const PhoneTransferProgress(
+          stage: PhoneTransferProgressStage.completed,
+          fileCount: 1,
+          totalBytes: 1024,
+          transferredBytes: 1024,
+          currentFilename: 'live.pdf',
+          transferId: 'transfer-live.pdf',
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Transfer complete'), findsOneWidget);
+      expect(find.text('Calculating time left'), findsNothing);
+      expect(find.text('Measuring speed'), findsNothing);
+    });
+
     testWidgets('hides live progress that does not match the active filter', (
       tester,
     ) async {

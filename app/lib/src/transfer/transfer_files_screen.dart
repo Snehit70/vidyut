@@ -698,6 +698,7 @@ bool _canCancelBatch(PhoneTransferBatch batch) => switch (batch.status) {
 
 bool _canRemoveFromHistory(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.completed ||
+  PhoneTransferStatus.completedWithIssues ||
   PhoneTransferStatus.failed ||
   PhoneTransferStatus.cancelled ||
   PhoneTransferStatus.expired => true,
@@ -1419,6 +1420,8 @@ class _LiveTransferCard extends StatelessWidget {
     final isTransferring =
         progress.stage == PhoneTransferProgressStage.transferring;
     final isCompleted = progress.stage == PhoneTransferProgressStage.completed;
+    final isTerminal =
+        isCompleted || progress.stage == PhoneTransferProgressStage.failed;
     final isPreparing = {
       PhoneTransferProgressStage.preparing,
       PhoneTransferProgressStage.readingSelection,
@@ -1515,12 +1518,13 @@ class _LiveTransferCard extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                Text(
-                  _remaining(progress.remaining),
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Palette.muted),
-                ),
+                if (!isTerminal)
+                  Text(
+                    _remaining(progress.remaining),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -1544,15 +1548,17 @@ class _LiveTransferCard extends StatelessWidget {
                     align: TextAlign.start,
                   ),
                 ),
-                _ProgressDetail(_rate(progress.bytesPerSecond)),
-                Expanded(
-                  child: _ProgressDetail(
-                    isPreparing
-                        ? _elapsed(progress.preparationElapsed)
-                        : _remaining(progress.remaining),
-                    align: TextAlign.end,
+                if (!isTerminal) ...[
+                  _ProgressDetail(_rate(progress.bytesPerSecond)),
+                  Expanded(
+                    child: _ProgressDetail(
+                      isPreparing
+                          ? _elapsed(progress.preparationElapsed)
+                          : _remaining(progress.remaining),
+                      align: TextAlign.end,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
             const SizedBox(height: 14),
