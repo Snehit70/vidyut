@@ -250,7 +250,8 @@ void main() {
 
     testWidgets('opens completed batch details from its history row', (
       tester,
-    ) async {      final history = MemoryTransferHistoryStorage();
+    ) async {
+      final history = MemoryTransferHistoryStorage();
       final opened = <PhoneTransferFile>[];
       final shared = <PhoneTransferFile>[];
       final resent = <PhoneTransferFile>[];
@@ -259,7 +260,7 @@ void main() {
           filename: 'report.pdf',
           status: PhoneTransferStatus.completed,
           createdAtMs: 1,
-          sourcePath: '/source',
+          destinationPathPrefix: 'content://provider/report',
         ),
       ]);
 
@@ -356,7 +357,7 @@ void main() {
           additionalFilenames: const ['two.pdf'],
           status: PhoneTransferStatus.completed,
           createdAtMs: 1,
-          sourcePath: '/source',
+          destinationPathPrefix: 'content://provider/report',
         ),
       ]);
 
@@ -618,6 +619,7 @@ PhoneTransferBatch _batch({
   PhoneTransferDirection direction = PhoneTransferDirection.sent,
   String? sourcePath,
   List<String> additionalFilenames = const [],
+  String? destinationPathPrefix,
 }) {
   final filenames = [filename, ...additionalFilenames];
   return PhoneTransferBatch(
@@ -639,6 +641,9 @@ PhoneTransferBatch _batch({
             status: status,
             confirmedOffset: status == PhoneTransferStatus.completed ? 1024 : 0,
             sourcePath: sourcePath == null ? null : '$sourcePath/$name',
+            destinationPath: destinationPathPrefix == null
+                ? null
+                : '$destinationPathPrefix/$name',
           ),
         )
         .toList(),
@@ -665,7 +670,7 @@ PhoneTransferBatch _mixedBatch() {
             'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         status: PhoneTransferStatus.completed,
         confirmedOffset: 1024,
-        sourcePath: '/source/complete.pdf',
+        destinationPath: 'content://provider/complete.pdf',
       ),
       PhoneTransferFile(
         fileId: 'file-failed',

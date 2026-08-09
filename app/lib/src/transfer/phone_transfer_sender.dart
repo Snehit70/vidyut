@@ -1256,6 +1256,7 @@ class PhoneTransferSender {
       );
     }
     if (destination != null) {
+      _ensureReadableFilesystemSource(destination, file.filename);
       return PhoneTransferSource(
         path: destination,
         filename: file.filename,
@@ -1278,6 +1279,9 @@ class PhoneTransferSender {
     if (path == null && uri == null) {
       throw StateError('${file.filename} is no longer available.');
     }
+    if (path != null && uri == null) {
+      _ensureReadableFilesystemSource(path, file.filename);
+    }
     return PhoneTransferSource(
       path: path,
       uri: uri,
@@ -1291,6 +1295,15 @@ class PhoneTransferSender {
       kind: reference?.kind,
       ownership: reference?.ownership ?? PhoneTransferSourceOwnership.external,
     );
+  }
+
+  void _ensureReadableFilesystemSource(String path, String filename) {
+    try {
+      final handle = File(path).openSync(mode: FileMode.read);
+      handle.closeSync();
+    } on FileSystemException {
+      throw StateError('$filename is no longer available.');
+    }
   }
 
   Future<PhoneTransferBatch> retry(PhoneTransferBatch batch) async {

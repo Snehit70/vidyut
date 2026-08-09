@@ -117,6 +117,39 @@ void main() {
     );
   });
 
+  test('rejects Send again when a filesystem source is missing', () async {
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: _GrantTrackingSourceReader(),
+    );
+    final completed = PhoneTransferFile(
+      fileId: 'missing-source',
+      filename: 'missing.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 1,
+      sha256: 'a' * 64,
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 42,
+      sourcePath: '/definitely/missing/vidyut-source.pdf',
+    );
+
+    await expectLater(
+      () => sender.sendAgain(completed),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'missing.pdf is no longer available.',
+        ),
+      ),
+    );
+    expect(await history.load(), isEmpty);
+  });
+
   test('releases pre-owned grants when the durable queue card fails', () async {
     const preOwned = 'content://provider/item/pre-owned';
     const freshlyRetained = 'content://provider/item/fresh';
