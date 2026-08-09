@@ -330,6 +330,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                         itemCount: entry.value.length,
                         itemBuilder: (_, index) {
                           final batch = entry.value[index];
+                          final canSelect = _canRemoveFromHistory(batch);
                           return Padding(
                             padding: EdgeInsets.only(
                               bottom: index == entry.value.length - 1 ? 0 : 10,
@@ -340,10 +341,12 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                               onCancel: _cancelCallback(batch),
                               onRemove: () => _remove(batch),
                               onOpenSettings: widget.onOpenSettings,
-                              onTap: selectionMode
+                              onTap: selectionMode && canSelect
                                   ? () => _toggleSelection(batch)
                                   : () => _showBatchDetails(batch),
-                              onLongPress: () => _toggleSelection(batch),
+                              onLongPress: canSelect
+                                  ? () => _toggleSelection(batch)
+                                  : null,
                               selected: _selectedTransferIds.contains(
                                 batch.transferId,
                               ),
@@ -691,6 +694,14 @@ bool _canCancelBatch(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.cancelled ||
   PhoneTransferStatus.expired => false,
   _ => true,
+};
+
+bool _canRemoveFromHistory(PhoneTransferBatch batch) => switch (batch.status) {
+  PhoneTransferStatus.completed ||
+  PhoneTransferStatus.failed ||
+  PhoneTransferStatus.cancelled ||
+  PhoneTransferStatus.expired => true,
+  _ => false,
 };
 
 bool _canCancelLive(PhoneTransferProgress progress) {

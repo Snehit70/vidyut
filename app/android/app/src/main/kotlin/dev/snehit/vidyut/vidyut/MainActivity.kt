@@ -23,7 +23,6 @@ class MainActivity : FlutterActivity() {
         const val MAX_STAGE_COMPONENT_BYTES = 255
         const val MAX_SHARED_STAGE_FILES = 8
         const val MAX_SHARED_STAGE_BYTES = 512L * 1024 * 1024
-        const val SHARED_STAGE_MAX_AGE_MS = 24L * 60 * 60 * 1000
         const val SHARED_STAGE_GRANT_GRACE_MS = 30L * 60 * 1000
     }
 
@@ -258,7 +257,6 @@ class MainActivity : FlutterActivity() {
     private fun pruneSharedStages(protected: File? = null) {
         val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
         val now = System.currentTimeMillis()
-        val staleBefore = now - SHARED_STAGE_MAX_AGE_MS
         val grantGraceBefore = now - SHARED_STAGE_GRANT_GRACE_MS
 
         grantedStageFiles.entries.removeIf { it.value < grantGraceBefore }
@@ -270,7 +268,7 @@ class MainActivity : FlutterActivity() {
 
         allFiles
             .filter {
-                it.lastModified() < staleBefore &&
+                it.lastModified() < grantGraceBefore &&
                     it != protected &&
                     !isGrantedRecently(it)
             }

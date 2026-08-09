@@ -116,6 +116,27 @@ void main() {
       expect(rows.single.status, PhoneTransferStatus.cancelled);
     });
 
+    testWidgets('does not select waiting-for-source rows for bulk removal', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'blocked.zip',
+          status: PhoneTransferStatus.waitingForSource,
+          createdAtMs: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('blocked.zip'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 selected'), findsNothing);
+      expect(find.text('Remove from history (1)'), findsNothing);
+    });
+
     testWidgets('does not offer cancellation for mixed-result batches', (
       tester,
     ) async {
