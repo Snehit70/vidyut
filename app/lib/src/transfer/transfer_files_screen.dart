@@ -50,7 +50,17 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     super.initState();
     _search.addListener(_refreshView);
     _progressSubscription = widget.sender.progress.listen((progress) {
-      if (mounted) setState(() => _liveProgress = progress);
+      if (!mounted) return;
+      setState(() {
+        final historyPublished = _batches.any(
+          (batch) =>
+              batch.transferId == progress.transferId &&
+              _canRemoveFromHistory(batch),
+        );
+        _liveProgress = historyPublished && _isTerminalProgress(progress)
+            ? null
+            : progress;
+      });
     });
     _batchSubscription = widget.sender.batchesCreated.listen((batch) {
       if (!mounted) return;
@@ -64,6 +74,10 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     _snapshotSubscription = widget.sender.snapshots.listen((batch) {
       if (!mounted) return;
       setState(() {
+        if (_liveProgress?.transferId == batch.transferId &&
+            _canRemoveFromHistory(batch)) {
+          _liveProgress = null;
+        }
         _batches = [
           batch,
           ..._batches.where((item) => item.transferId != batch.transferId),
@@ -714,6 +728,10 @@ bool _canCancelLive(PhoneTransferProgress progress) {
   };
 }
 
+bool _isTerminalProgress(PhoneTransferProgress progress) =>
+    progress.stage == PhoneTransferProgressStage.completed ||
+    progress.stage == PhoneTransferProgressStage.failed;
+
 bool _needsAttention(PhoneTransferBatch batch) => switch (batch.status) {
   PhoneTransferStatus.failed ||
   PhoneTransferStatus.completedWithIssues ||
@@ -1218,20 +1236,22 @@ class _BatchDetailsSheet extends StatelessWidget {
                   onOpenSettings!();
                 },
               ),
-            const Divider(height: 24),
-            _DetailAction(
-              icon: Icons.delete_outline,
-              label: 'Remove from history',
-              color: Palette.error,
-              onTap: onRemove,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Removing history does not delete the file.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Palette.muted),
-            ),
+            if (_canRemoveFromHistory(batch)) ...[
+              const Divider(height: 24),
+              _DetailAction(
+                icon: Icons.delete_outline,
+                label: 'Remove from history',
+                color: Palette.error,
+                onTap: onRemove,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Removing history does not delete the file.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+              ),
+            ],
           ],
         ),
       ),

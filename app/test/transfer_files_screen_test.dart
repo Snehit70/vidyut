@@ -118,6 +118,24 @@ void main() {
       expect(rows.single.status, PhoneTransferStatus.cancelled);
     });
 
+    testWidgets('hides removal from nonterminal batch details', (tester) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'blocked.zip',
+          status: PhoneTransferStatus.waitingForSource,
+          createdAtMs: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('blocked.zip'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remove from history'), findsNothing);
+    });
+
     testWidgets('does not select waiting-for-source rows for bulk removal', (
       tester,
     ) async {
