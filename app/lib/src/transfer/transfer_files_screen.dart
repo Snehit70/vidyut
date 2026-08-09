@@ -1055,10 +1055,11 @@ class _TransferRow extends StatelessWidget {
                       value: 'settings',
                       child: Text('Open transfer settings'),
                     ),
-                  const PopupMenuItem(
-                    value: 'remove',
-                    child: Text('Remove from history'),
-                  ),
+                  if (_canRemoveFromHistory(batch))
+                    const PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove from history'),
+                    ),
                 ],
               ),
             ],

@@ -84,6 +84,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Cancel transfer'), findsOneWidget);
+      expect(find.text('Remove from history'), findsNothing);
       await tester.tap(find.text('Cancel transfer'));
       await tester.pumpAndSettle();
 
@@ -109,6 +110,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Cancel transfer'), findsOneWidget);
+      expect(find.text('Remove from history'), findsNothing);
       await tester.tap(find.text('Cancel transfer'));
       await tester.pumpAndSettle();
 
