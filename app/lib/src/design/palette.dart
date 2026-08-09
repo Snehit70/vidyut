@@ -10,4 +10,10 @@ abstract final class Palette {
   static const muted = Color(0xFFA88794);
   static const hairline = Color(0xFFF4DBE4);
   static const error = Color(0xFFB3283E);
+  static const active = Color(0xFFA85B00);
+  static const activeMist = Color(0xFFFFF7ED);
+  static const success = Color(0xFF2D8A4A);
+  static const successMist = Color(0xFFEDF8F0);
+  static const warning = Color(0xFFA05A00);
+  static const warningMist = Color(0xFFFFF7E8);
 }

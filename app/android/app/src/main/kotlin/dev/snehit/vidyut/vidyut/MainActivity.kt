@@ -1,18 +1,40 @@
 package dev.snehit.vidyut.vidyut
 
 import android.content.Context
+import android.content.ClipData
 import android.net.wifi.WifiManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private data class ResolvedFileUri(
+        val uri: Uri,
+        val stagedFile: File? = null,
+    )
+
+    private companion object {
+        const val SHARED_STAGE_DIRECTORY = "vidyut_updates/shared"
+        const val MAX_STAGE_COMPONENT_BYTES = 255
+        const val MAX_SHARED_STAGE_FILES = 8
+        const val MAX_SHARED_STAGE_BYTES = 512L * 1024 * 1024
+        const val SHARED_STAGE_GRANT_GRACE_MS = 30L * 60 * 1000
+    }
+
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val fileActionExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val grantedStageFiles = ConcurrentHashMap<String, Long>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -77,9 +99,14 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "vidyut/transfer_files")
+            .setMethodCallHandler { call, result ->
+                handleTransferFileAction(call, result)
+            }
     }
 
     override fun onDestroy() {
+        fileActionExecutor.shutdownNow()
         releaseMulticastLock()
         multicastLock = null
         super.onDestroy()
@@ -98,5 +125,188 @@ class MainActivity : FlutterActivity() {
 
     private fun releaseMulticastLock() {
         multicastLock?.takeIf { it.isHeld }?.release()
+    }
+
+    private fun handleTransferFileAction(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val path = call.argument<String>("path")
+        val uri = call.argument<String>("uri")
+        val mime = call.argument<String>("mime") ?: "*/*"
+        if (call.method != "open" && call.method != "share") {
+            result.notImplemented()
+            return
+        }
+        try {
+            fileActionExecutor.execute {
+                try {
+                    val resolved = resolveFileUri(path, uri)
+                    mainHandler.post {
+                        try {
+                            when (call.method) {
+                                "open" -> launchFileIntent(Intent.ACTION_VIEW, resolved.uri, mime)
+                                "share" -> launchShareIntent(resolved.uri, mime)
+                            }
+                            result.success(null)
+                        } catch (error: Exception) {
+                            discardStagedFile(resolved.stagedFile)
+                            result.error("transfer-file-action", error.message, null)
+                        }
+                    }
+                } catch (error: Exception) {
+                    mainHandler.post {
+                        result.error("transfer-file-action", error.message, null)
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            result.error("transfer-file-action", error.message, null)
+        }
+    }
+
+    private fun launchFileIntent(
+        action: String,
+        contentUri: Uri,
+        mime: String,
+    ) {
+        startActivity(
+            Intent(action).apply {
+                setDataAndType(contentUri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            },
+        )
+    }
+
+    private fun launchShareIntent(contentUri: Uri, mime: String) {
+        startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, contentUri)
+                    clipData = ClipData.newRawUri("Vidyut file", contentUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "Share file",
+            ),
+        )
+    }
+
+    private fun resolveFileUri(path: String?, uri: String?): ResolvedFileUri {
+        if (uri != null) return ResolvedFileUri(Uri.parse(uri))
+        require(!path.isNullOrBlank()) { "A file path or document URI is required." }
+        val file = File(path)
+        return try {
+            ResolvedFileUri(
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", file),
+            )
+        } catch (_: IllegalArgumentException) {
+            val staged = stageSourceForSharing(file)
+            ResolvedFileUri(
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", staged),
+                staged,
+            )
+        }
+    }
+
+    private fun stageSourceForSharing(file: File): File {
+        val sourceSize = file.length()
+        if (sourceSize > MAX_SHARED_STAGE_BYTES) {
+            throw IllegalStateException("File is too large to stage for sharing.")
+        }
+        pruneSharedStages()
+        val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
+        directory.mkdirs()
+        val existing = directory.listFiles()?.filter { it.isFile }.orEmpty()
+        // Recently-granted stages survive pruning for their grace period, so
+        // the count can exceed MAX_SHARED_STAGE_FILES. Reject rather than
+        // accumulate a ninth copy that cannot be reduced safely.
+        if (existing.size >= MAX_SHARED_STAGE_FILES) {
+            throw IllegalStateException("Too many files are currently staged for sharing.")
+        }
+        val usedBytes = existing.sumOf { it.length() }
+        if (sourceSize > MAX_SHARED_STAGE_BYTES - usedBytes) {
+            throw IllegalStateException("Not enough space to stage this file for sharing.")
+        }
+        val safeName = file.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val staged = File(directory, nextStageName(safeName))
+        try {
+            file.copyTo(staged, overwrite = false)
+            staged.setLastModified(System.currentTimeMillis())
+        } catch (error: Exception) {
+            staged.delete()
+            throw error
+        }
+        grantedStageFiles[staged.absolutePath] = System.currentTimeMillis()
+        pruneSharedStages(protected = staged)
+        return staged
+    }
+
+    private fun discardStagedFile(file: File?) {
+        if (file == null) return
+        grantedStageFiles.remove(file.absolutePath)
+        file.delete()
+    }
+
+    private var stageSequence = 0L
+
+    private fun nextStageName(safeName: String): String {
+        stageSequence++
+        val prefix = "${System.currentTimeMillis()}-$stageSequence-"
+        val available = MAX_STAGE_COMPONENT_BYTES - prefix.length
+        if (available <= 0) return prefix.dropLast(1)
+        val bounded = if (safeName.length > available) {
+            val extension = safeName.substringAfterLast('.', "")
+            val extensionLimit = (available / 2).coerceAtLeast(1)
+            val cappedExtension = extension.take(extensionLimit)
+            val stemLimit = (available - cappedExtension.length - 1).coerceAtLeast(0)
+            val truncated = safeName.take(stemLimit)
+            if (cappedExtension.isEmpty()) {
+                truncated
+            } else {
+                "$truncated.$cappedExtension"
+            }
+        } else {
+            safeName
+        }
+        return "$prefix$bounded"
+    }
+
+    private fun pruneSharedStages(protected: File? = null) {
+        val directory = File(cacheDir, SHARED_STAGE_DIRECTORY)
+        val now = System.currentTimeMillis()
+        val grantGraceBefore = now - SHARED_STAGE_GRANT_GRACE_MS
+
+        grantedStageFiles.entries.removeIf { it.value < grantGraceBefore }
+
+        fun isGrantedRecently(file: File): Boolean =
+            (grantedStageFiles[file.absolutePath] ?: 0L) >= grantGraceBefore
+
+        val allFiles = directory.listFiles()?.filter { it.isFile } ?: return
+
+        allFiles
+            .filter {
+                it.lastModified() < grantGraceBefore &&
+                    it != protected &&
+                    !isGrantedRecently(it)
+            }
+            .forEach { it.delete() }
+
+        val remaining = allFiles.filter { it.exists() }.sortedBy { it.lastModified() }
+        var count = remaining.size
+        var totalBytes = remaining.sumOf { it.length() }
+        for (file in remaining) {
+            if (count <= MAX_SHARED_STAGE_FILES &&
+                totalBytes <= MAX_SHARED_STAGE_BYTES) {
+                break
+            }
+            if (file == protected || isGrantedRecently(file)) continue
+            val size = file.length()
+            if (file.delete()) {
+                count--
+                totalBytes -= size
+                grantedStageFiles.remove(file.absolutePath)
+            }
+        }
     }
 }

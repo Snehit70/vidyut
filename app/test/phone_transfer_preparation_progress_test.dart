@@ -42,6 +42,155 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   });
 
+  test('retains a persisted document grant for each history row', () async {
+    const uri = 'content://provider/item/resend';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    final first = await sender.enqueue([
+      const PhoneTransferSource(
+        uri: uri,
+        filename: 'resend.pdf',
+        mime: 'application/pdf',
+        persisted: true,
+        grantAlreadyRetained: true,
+      ),
+    ]);
+    await sender.waitForTerminal(first.transferId);
+    final firstFile = (await history.load()).single.files.single;
+
+    final second = await sender.sendAgain(firstFile);
+    await sender.waitForTerminal(second.transferId);
+
+    expect(reader.retained, [uri, uri, uri]);
+    expect(reader.released, [uri, uri]);
+
+    await sender.clearHistory();
+    expect(reader.released, [uri, uri, uri, uri]);
+  });
+
+  test('keeps a durable received destination through Send again', () async {
+    const destination = 'content://media/external/downloads/42';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    final received = PhoneTransferFile(
+      fileId: 'received-1',
+      filename: 'received.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 1,
+      sha256: List.filled(64, 'a').join(),
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 42,
+      destinationPath: destination,
+    );
+
+    final resent = await sender.sendAgain(received);
+    await sender.waitForTerminal(resent.transferId);
+
+    // The durable received URI is read directly rather than staged as a
+    // managed stage, and it survives the send attempt on the completed row.
+    expect(reader.stageCalls, isEmpty);
+    final attempted = (await history.load()).single.files.single;
+    expect(
+      attempted.sourceReference?.kind,
+      PhoneTransferSourceKind.androidDocumentUri,
+    );
+    expect(attempted.sourceReference?.reference, destination);
+    expect(attempted.sourceReference?.persisted, isTrue);
+    expect(
+      attempted.sourceReference?.ownership,
+      PhoneTransferSourceOwnership.external,
+    );
+  });
+
+  test('rejects Send again when a filesystem source is missing', () async {
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: _GrantTrackingSourceReader(),
+    );
+    final completed = PhoneTransferFile(
+      fileId: 'missing-source',
+      filename: 'missing.pdf',
+      mime: 'application/pdf',
+      size: 42,
+      lastModifiedMs: 1,
+      sha256: 'a' * 64,
+      status: PhoneTransferStatus.completed,
+      confirmedOffset: 42,
+      sourcePath: '/definitely/missing/vidyut-source.pdf',
+    );
+
+    await expectLater(
+      () => sender.sendAgain(completed),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'missing.pdf is no longer available.',
+        ),
+      ),
+    );
+    expect(await history.load(), isEmpty);
+  });
+
+  test('releases pre-owned grants when the durable queue card fails', () async {
+    const preOwned = 'content://provider/item/pre-owned';
+    const freshlyRetained = 'content://provider/item/fresh';
+    final reader = _GrantTrackingSourceReader();
+    final history = TransferHistoryRepository(_FailingWriteStorage());
+    final sender = PhoneTransferSender(
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+      connectionFactory: (_) => throw UnimplementedError(),
+      history: history,
+      sourceReader: reader,
+    );
+
+    await expectLater(
+      sender.enqueue([
+        const PhoneTransferSource(
+          uri: preOwned,
+          filename: 'pre-owned.pdf',
+          mime: 'application/pdf',
+          persisted: true,
+          grantAlreadyRetained: true,
+        ),
+        const PhoneTransferSource(
+          uri: freshlyRetained,
+          filename: 'fresh.pdf',
+          mime: 'application/pdf',
+          persisted: true,
+        ),
+      ]),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'storage unavailable',
+        ),
+      ),
+    );
+
+    expect(reader.retained, [freshlyRetained]);
+    expect(reader.released, [preOwned, freshlyRetained]);
+  });
+
   test(
     'records ordered queue-card and publication timing with an injected clock',
     () async {
@@ -564,4 +713,61 @@ class _ImmediateSourceReader implements PhoneTransferSourceReader {
     required int offset,
     required int length,
   }) => throw UnimplementedError();
+}
+
+class _GrantTrackingSourceReader implements PhoneTransferSourceReader {
+  final retained = <String>[];
+  final released = <String>[];
+  final stageCalls = <String>[];
+
+  @override
+  Future<void> cancelStage(String operationId) async {}
+
+  @override
+  Future<void> discard(String reference) async {}
+
+  @override
+  Future<void> release(String reference) async => released.add(reference);
+
+  @override
+  Future<void> retain(String reference) async => retained.add(reference);
+
+  @override
+  Future<VidyutSourceProbe> probe(String uri) async =>
+      const VidyutSourceProbe(seekable: true, size: 42, sizeKnown: true);
+
+  @override
+  Future<String> hashSha256(String uri) async => List.filled(64, 'b').join();
+
+  @override
+  Future<VidyutStagedSource> stage(
+    String uri, {
+    required int maximumBytes,
+    String? operationId,
+  }) {
+    stageCalls.add(uri);
+    return throw UnimplementedError();
+  }
+
+  @override
+  Future<List<int>> readAt(
+    String uri, {
+    required int offset,
+    required int length,
+  }) => throw UnimplementedError();
+}
+
+class _FailingWriteStorage implements TransferHistoryStorage {
+  @override
+  Future<Map<String, String>> readAll() async => const {};
+
+  @override
+  Future<void> writeBatch(String transferId, String value) =>
+      throw StateError('storage unavailable');
+
+  @override
+  Future<void> removeBatch(String transferId) async {}
+
+  @override
+  Future<void> clear() async {}
 }
