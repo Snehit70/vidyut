@@ -18,6 +18,11 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private data class ResolvedFileUri(
+        val uri: Uri,
+        val stagedFile: File? = null,
+    )
+
     private companion object {
         const val SHARED_STAGE_DIRECTORY = "vidyut_updates/shared"
         const val MAX_STAGE_COMPONENT_BYTES = 255
@@ -136,15 +141,16 @@ class MainActivity : FlutterActivity() {
         try {
             fileActionExecutor.execute {
                 try {
-                    val contentUri = resolveFileUri(path, uri)
+                    val resolved = resolveFileUri(path, uri)
                     mainHandler.post {
                         try {
                             when (call.method) {
-                                "open" -> launchFileIntent(Intent.ACTION_VIEW, contentUri, mime)
-                                "share" -> launchShareIntent(contentUri, mime)
+                                "open" -> launchFileIntent(Intent.ACTION_VIEW, resolved.uri, mime)
+                                "share" -> launchShareIntent(resolved.uri, mime)
                             }
                             result.success(null)
                         } catch (error: Exception) {
+                            discardStagedFile(resolved.stagedFile)
                             result.error("transfer-file-action", error.message, null)
                         }
                     }
@@ -186,18 +192,24 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun resolveFileUri(path: String?, uri: String?): Uri {
-        if (uri != null) return Uri.parse(uri)
+    private fun resolveFileUri(path: String?, uri: String?): ResolvedFileUri {
+        if (uri != null) return ResolvedFileUri(Uri.parse(uri))
         require(!path.isNullOrBlank()) { "A file path or document URI is required." }
         val file = File(path)
         return try {
-            FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            ResolvedFileUri(
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", file),
+            )
         } catch (_: IllegalArgumentException) {
-            stageSourceForSharing(file)
+            val staged = stageSourceForSharing(file)
+            ResolvedFileUri(
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", staged),
+                staged,
+            )
         }
     }
 
-    private fun stageSourceForSharing(file: File): Uri {
+    private fun stageSourceForSharing(file: File): File {
         val sourceSize = file.length()
         if (sourceSize > MAX_SHARED_STAGE_BYTES) {
             throw IllegalStateException("File is too large to stage for sharing.")
@@ -227,7 +239,13 @@ class MainActivity : FlutterActivity() {
         }
         grantedStageFiles[staged.absolutePath] = System.currentTimeMillis()
         pruneSharedStages(protected = staged)
-        return FileProvider.getUriForFile(this, "$packageName.fileprovider", staged)
+        return staged
+    }
+
+    private fun discardStagedFile(file: File?) {
+        if (file == null) return
+        grantedStageFiles.remove(file.absolutePath)
+        file.delete()
     }
 
     private var stageSequence = 0L
