@@ -90,6 +90,7 @@ void main() {
 
       final rows = await TransferHistoryRepository(history).load();
       expect(rows.single.status, PhoneTransferStatus.cancelled);
+      expect(find.byIcon(Icons.cancel_outlined), findsOneWidget);
     });
 
     testWidgets('offers cancellation for waiting-for-source history rows', (
@@ -539,6 +540,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('1 selected'), findsOneWidget);
+      expect(find.byTooltip('Transfer actions'), findsNothing);
       expect(find.text('Remove from history (1)'), findsOneWidget);
 
       await tester.tap(find.text('Remove from history (1)'));

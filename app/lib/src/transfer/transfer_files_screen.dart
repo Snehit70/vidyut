@@ -1051,35 +1051,36 @@ class _TransferRow extends StatelessWidget {
                   Icon(status.icon, color: status.color, size: 22),
                 ],
               ),
-              PopupMenuButton<String>(
-                tooltip: 'Transfer actions',
-                onSelected: (value) {
-                  if (value == 'retry') onRetry?.call();
-                  if (value == 'cancel') onCancel?.call();
-                  if (value == 'remove') onRemove();
-                  if (value == 'settings') onOpenSettings?.call();
-                },
-                itemBuilder: (_) => [
-                  if (onRetry != null)
-                    const PopupMenuItem(value: 'retry', child: Text('Retry')),
-                  if (onCancel != null)
-                    const PopupMenuItem(
-                      value: 'cancel',
-                      child: Text('Cancel transfer'),
-                    ),
-                  if (failure?.errorCode == 'file_too_large' &&
-                      onOpenSettings != null)
-                    const PopupMenuItem(
-                      value: 'settings',
-                      child: Text('Open transfer settings'),
-                    ),
-                  if (_canRemoveFromHistory(batch))
-                    const PopupMenuItem(
-                      value: 'remove',
-                      child: Text('Remove from history'),
-                    ),
-                ],
-              ),
+              if (!selectionMode)
+                PopupMenuButton<String>(
+                  tooltip: 'Transfer actions',
+                  onSelected: (value) {
+                    if (value == 'retry') onRetry?.call();
+                    if (value == 'cancel') onCancel?.call();
+                    if (value == 'remove') onRemove();
+                    if (value == 'settings') onOpenSettings?.call();
+                  },
+                  itemBuilder: (_) => [
+                    if (onRetry != null)
+                      const PopupMenuItem(value: 'retry', child: Text('Retry')),
+                    if (onCancel != null)
+                      const PopupMenuItem(
+                        value: 'cancel',
+                        child: Text('Cancel transfer'),
+                      ),
+                    if (failure?.errorCode == 'file_too_large' &&
+                        onOpenSettings != null)
+                      const PopupMenuItem(
+                        value: 'settings',
+                        child: Text('Open transfer settings'),
+                      ),
+                    if (_canRemoveFromHistory(batch))
+                      const PopupMenuItem(
+                        value: 'remove',
+                        child: Text('Remove from history'),
+                      ),
+                  ],
+                ),
             ],
           ),
         ),
@@ -1385,6 +1386,11 @@ _StatusVisual _statusVisual(PhoneTransferStatus status) => switch (status) {
     Icons.error_outline,
     Palette.warning,
     Palette.warningMist,
+  ),
+  PhoneTransferStatus.cancelled => const _StatusVisual(
+    Icons.cancel_outlined,
+    Palette.muted,
+    Palette.mist,
   ),
   _ => const _StatusVisual(
     Icons.timelapse_outlined,
