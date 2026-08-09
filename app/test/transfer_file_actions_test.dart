@@ -54,13 +54,13 @@ void main() {
     });
   });
 
-  test('accepts arbitrary shared-intake paths for provider staging', () {
+  test('rejects missing filesystem paths for Android actions', () {
     final file = _file(
       filename: 'shared.pdf',
       sourcePath: '/storage/emulated/0/Download/shared.pdf',
     );
 
-    expect(transferFileActionAvailable(file), isTrue);
+    expect(transferFileActionAvailable(file), isFalse);
   });
 }
 

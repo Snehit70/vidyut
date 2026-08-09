@@ -1,5 +1,7 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 import 'transfer_history.dart';
@@ -28,6 +30,9 @@ class AndroidTransferFileActions implements TransferFileActions {
   bool canUse(PhoneTransferFile file) => transferFileActionAvailable(file);
 
   Future<void> _invoke(String method, PhoneTransferFile file) {
+    if (!transferFileActionAvailable(file)) {
+      throw StateError('The file is no longer available.');
+    }
     final target = transferFileActionTarget(file);
     return _channel.invokeMethod<void>(method, target);
   }
@@ -63,5 +68,12 @@ bool transferFileActionAvailable(PhoneTransferFile file) {
   final target = transferFileActionTarget(file);
   if (target['uri'] is String) return true;
   final path = target['path'];
-  return path is String && path.isNotEmpty;
+  if (path is! String || path.isEmpty) return false;
+  try {
+    final fileHandle = File(path).openSync(mode: FileMode.read);
+    fileHandle.closeSync();
+    return true;
+  } on FileSystemException {
+    return false;
+  }
 }
