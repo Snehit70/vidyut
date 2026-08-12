@@ -102,6 +102,8 @@ relay = await createRelay({
   clipboardHealth: () => clipboardHealth,
   transferControl: (message, sourceDeviceId) =>
     transferCoordinator.handleControl(message, sourceDeviceId),
+  deviceDisconnected: (deviceId) =>
+    transferCoordinator.handleDeviceDisconnected(deviceId),
   transferHttp: transferDataPlane.handle.bind(transferDataPlane),
 });
 await transferCoordinator.start();

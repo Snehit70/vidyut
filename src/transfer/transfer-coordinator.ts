@@ -37,6 +37,42 @@ export class TransferCoordinator {
     await this.activateNext();
   }
 
+  async handleDeviceDisconnected(_deviceId: string): Promise<void> {
+    const activeFiles = this.options.queue
+      .snapshot()
+      .batches.flatMap((batch) =>
+        batch.files
+          .filter((file) =>
+            file.status === "active" ||
+            file.status === "verifying" ||
+            file.status === "finalizing",
+          )
+          .map((file) => ({ batch, file })),
+      );
+
+    for (const { batch, file } of activeFiles) {
+      await this.options.queue.fail(
+        batch.transferId,
+        file.fileId,
+        "peer_disconnected",
+      );
+      if (file.destinationPath) {
+        await unlink(
+          partialPathFor(file.destinationPath, file.fileId),
+        ).catch(() => undefined);
+      }
+      this.options.progressSessions?.clear(batch.transferId, file.fileId);
+      this.options.publishControl({
+        v: 1,
+        kind: "transfer_file_failed",
+        transferId: batch.transferId,
+        fileId: file.fileId,
+        code: "peer_disconnected",
+      });
+    }
+    if (activeFiles.length > 0) await this.activateNext();
+  }
+
   async enqueueLaptopFiles(paths: string[]): Promise<TransferOffer> {
     if (paths.length === 0) throw new RangeError("Select at least one file.");
     const files: EnqueueTransferFile[] = [];

@@ -397,7 +397,12 @@ describe("durable transfer queue", () => {
 
     const accepted = await queue.acceptOffer(offer, destinations);
     const duplicate = await queue.acceptOffer(
-      { ...offer, files: [...offer.files].reverse() },
+      {
+        ...offer,
+        batchId: "batch_remote_resumed",
+        createdAtMs: offer.createdAtMs + 1000,
+        files: [...offer.files].reverse(),
+      },
       destinations,
     );
 

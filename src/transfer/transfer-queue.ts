@@ -678,10 +678,8 @@ export class TransferQueue {
 function offersMatch(left: TransferOffer, right: TransferOffer): boolean {
   const normalize = (offer: TransferOffer) => ({
     transferId: offer.transferId,
-    batchId: offer.batchId,
     origin: offer.origin,
     direction: offer.direction,
-    createdAtMs: offer.createdAtMs,
     files: [...offer.files]
       .map(({ senderTiming: _senderTiming, ...file }) => file)
       .sort((a, b) => a.fileId.localeCompare(b.fileId)),

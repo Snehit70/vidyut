@@ -27,6 +27,7 @@ interface RelayOptions {
     message: TransferControlMessage,
     sourceDeviceId: string,
   ) => void | Promise<void>;
+  deviceDisconnected?: (deviceId: string) => void | Promise<void>;
   transferHttp?: (
     request: Request,
     context: { isLoopback: boolean },
@@ -88,6 +89,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           idleMs,
           staleAfterMs,
         });
+        notifyDeviceDisconnected(options.deviceDisconnected, socket.data.deviceId);
         socket.terminate();
         continue;
       }
@@ -243,6 +245,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           wsCode,
           wsReason,
         });
+        notifyDeviceDisconnected(options.deviceDisconnected, socket.data.deviceId);
       },
     },
   });
@@ -283,6 +286,14 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       devices.clear();
     },
   };
+}
+
+function notifyDeviceDisconnected(
+  callback: RelayOptions["deviceDisconnected"],
+  deviceId: string | undefined,
+): void {
+  if (!callback || !deviceId) return;
+  void Promise.resolve(callback(deviceId)).catch(() => undefined);
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {

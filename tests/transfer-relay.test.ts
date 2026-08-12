@@ -123,4 +123,23 @@ describe("relay transfer control", () => {
     expect(calls).toBe(0);
     phone.close();
   });
+
+  test("notifies the transfer module when an authenticated device disconnects", async () => {
+    let resolveDisconnected!: (deviceId: string) => void;
+    const disconnected = new Promise<string>((resolve) => {
+      resolveDisconnected = resolve;
+    });
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceDisconnected: resolveDisconnected,
+    });
+    const phone = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(phone, secret, "phone");
+    phone.close();
+
+    await expect(disconnected).resolves.toBe("phone");
+  });
 });
