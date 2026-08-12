@@ -172,7 +172,7 @@ describe("relay transfer control", () => {
     expect(calls).toBe(1);
   });
 
-  test("notifies connect only for the first socket of a device", async () => {
+  test("notifies connect for each socket so recovery targets that socket", async () => {
     let calls = 0;
     relay = await createRelay({
       hostname: "127.0.0.1",
@@ -191,7 +191,7 @@ describe("relay transfer control", () => {
     const second = await connectRawWebSocket(relay.url);
     await authenticateRawClient(second, secret, "phone");
     await Bun.sleep(10);
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
     first.close();
     second.close();
   });

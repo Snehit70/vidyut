@@ -140,4 +140,13 @@ void main() {
     expect(await repo.loadById('new'), largeText);
     expect(await repo.loadById('old'), isNull);
   });
+
+  test('does not retain one text payload larger than the byte limit', () async {
+    final repo = ReceivedTextRepository(MemoryReceivedPayloadStorage());
+    final oversizedText = 'x' * (32 * 1024 * 1024);
+
+    await repo.saveLatest(oversizedText, id: 'oversized');
+
+    expect(await repo.loadById('oversized'), isNull);
+  });
 }

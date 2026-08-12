@@ -96,6 +96,7 @@ const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
 export class TransferQueue {
   private readonly monotonicAnchors = new Map<string, number>();
+  private persistTail: Promise<void> = Promise.resolve();
   private constructor(
     private readonly storage: TransferQueueStorage,
     private state: TransferQueueSnapshot,
@@ -655,8 +656,11 @@ export class TransferQueue {
     return { batch, file };
   }
 
-  private async persist(): Promise<void> {
-    await this.storage.save(this.snapshot());
+  private persist(): Promise<void> {
+    const snapshot = this.snapshot();
+    const next = this.persistTail.then(() => this.storage.save(snapshot));
+    this.persistTail = next.catch(() => undefined);
+    return next;
   }
 
   private newTiming(): TransferTimingSummary {

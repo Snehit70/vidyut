@@ -37,7 +37,10 @@ export class TransferCoordinator {
     await this.activateNext();
   }
 
-  async handleDeviceConnected(_deviceId: string): Promise<void> {
+  async handleDeviceConnected(
+    _deviceId: string,
+    publishControl = this.options.publishControl,
+  ): Promise<void> {
     const activeOffer = this.options.queue
       .snapshot()
       .batches.find(
@@ -47,7 +50,7 @@ export class TransferCoordinator {
           batch.files.some((file) => file.status === "active"),
       );
     if (activeOffer) {
-      this.options.publishControl({
+      publishControl({
         v: 1,
         kind: "transfer_offer",
         offer: this.options.queue.offer(activeOffer.transferId),
@@ -71,24 +74,36 @@ export class TransferCoordinator {
       );
 
     for (const { batch, file } of activeFiles) {
-      await this.options.queue.fail(
-        batch.transferId,
-        file.fileId,
-        "peer_disconnected",
-      );
-      if (file.destinationPath) {
-        await unlink(
-          partialPathFor(file.destinationPath, file.fileId),
-        ).catch(() => undefined);
+      const cleanup = async () => {
+        await this.options.queue.fail(
+          batch.transferId,
+          file.fileId,
+          "peer_disconnected",
+        );
+        if (file.destinationPath) {
+          await unlink(
+            partialPathFor(file.destinationPath, file.fileId),
+          ).catch(() => undefined);
+        }
+        this.options.progressSessions?.clear(batch.transferId, file.fileId);
+        this.options.publishControl({
+          v: 1,
+          kind: "transfer_file_failed",
+          transferId: batch.transferId,
+          fileId: file.fileId,
+          code: "peer_disconnected",
+        });
+      };
+      if (this.options.progressSessions) {
+        await this.options.progressSessions.checkpointAnd(
+          this.options.queue,
+          batch.transferId,
+          file.fileId,
+          cleanup,
+        );
+      } else {
+        await cleanup();
       }
-      this.options.progressSessions?.clear(batch.transferId, file.fileId);
-      this.options.publishControl({
-        v: 1,
-        kind: "transfer_file_failed",
-        transferId: batch.transferId,
-        fileId: file.fileId,
-        code: "peer_disconnected",
-      });
     }
   }
 

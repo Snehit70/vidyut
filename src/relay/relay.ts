@@ -28,7 +28,10 @@ interface RelayOptions {
     sourceDeviceId: string,
   ) => void | Promise<void>;
   deviceDisconnected?: (deviceId: string) => void | Promise<void>;
-  deviceConnected?: (deviceId: string) => void | Promise<void>;
+  deviceConnected?: (
+    deviceId: string,
+    publishControl: (message: TransferControlMessage) => void,
+  ) => void | Promise<void>;
   transferHttp?: (
     request: Request,
     context: { isLoopback: boolean },
@@ -169,9 +172,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           );
           if (socket.data.authenticated) {
             notifyDeviceConnected(
-              devices,
               options.deviceConnected,
               socket.data.deviceId,
+              (message) => send(socket, message),
             );
           }
           return;
@@ -322,21 +325,13 @@ function notifyDeviceDisconnected(
 }
 
 function notifyDeviceConnected(
-  devices: Set<RelaySocket>,
   callback: RelayOptions["deviceConnected"],
   deviceId: string | undefined,
+  publishControl: (message: TransferControlMessage) => void,
 ): void {
   if (!callback || !deviceId) return;
-  if (
-    [...devices].filter(
-      (socket) =>
-        socket.data.authenticated && socket.data.deviceId === deviceId,
-    ).length !== 1
-  ) {
-    return;
-  }
   void Promise.resolve()
-    .then(() => callback(deviceId))
+    .then(() => callback(deviceId, publishControl))
     .catch(() => undefined);
 }
 

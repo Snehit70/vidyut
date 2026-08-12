@@ -57,15 +57,12 @@ class ReceivedTextRepository {
       history.removeWhere((entry) => entry['id'] == id);
       history.insert(0, {'id': id, 'text': text});
       final retained = <Map<String, String>>[];
-      var retainedBytes = 0;
       for (final entry in history) {
-        final entryBytes = utf8.encode(jsonEncode(entry)).length;
-        if (retained.isNotEmpty &&
-            retainedBytes + entryBytes > _maxHistoryBytes) {
+        final candidate = [...retained, entry];
+        if (utf8.encode(jsonEncode(candidate)).length > _maxHistoryBytes) {
           break;
         }
         retained.add(entry);
-        retainedBytes += entryBytes;
         if (retained.length == 30) break;
       }
       await _storage.write(_historyKey, jsonEncode(retained));
