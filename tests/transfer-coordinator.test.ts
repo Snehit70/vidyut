@@ -45,6 +45,74 @@ describe("transfer coordinator", () => {
     expect(queue.snapshot().batches[0]!.files[0]!.maxChunkBytes).toBe(
       1024 * 1024,
     );
+    expect(queue.snapshot().batches[0]!.sourceDeviceId).toBe("phone");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("fails only the disconnected peer's active transfer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-peers-"));
+    const firstPath = join(dir, "first.bin");
+    const secondPath = join(dir, "second.bin");
+    await writeFile(firstPath, new Uint8Array([1]));
+    await writeFile(secondPath, new Uint8Array([2]));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: join(dir, "downloads"),
+      maxFileBytes: 1024,
+      publishControl: (message) => controls.push(message),
+    });
+
+    const first = await coordinator.enqueueLaptopFiles([firstPath]);
+    const second = await coordinator.enqueueLaptopFiles([secondPath]);
+    await coordinator.handleControl(
+      {
+        v: 1,
+        kind: "transfer_accept",
+        transferId: first.transferId,
+        fileId: first.files[0]!.fileId,
+        confirmedOffset: 0,
+      },
+      "phone-a",
+    );
+    await queue.associateSourceDevice(second.transferId, "phone-b");
+
+    await coordinator.handleDeviceDisconnected("phone-b");
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("active");
+    expect(controls).not.toContainEqual(
+      expect.objectContaining({
+        kind: "transfer_file_failed",
+        transferId: first.transferId,
+      }),
+    );
+
+    await coordinator.handleDeviceDisconnected("phone-a");
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    expect(queue.snapshot().batches[1]!.files[0]!.status).toBe("queued");
+    await coordinator.handleDeviceConnected("phone-b");
+    expect(queue.snapshot().batches[1]!.files[0]!.status).toBe("active");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("republishes an unaccepted laptop offer after reconnect", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-reconnect-"));
+    const path = join(dir, "report.pdf");
+    await writeFile(path, new Uint8Array([1]));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: join(dir, "downloads"),
+      maxFileBytes: 1024,
+      publishControl: (message) => controls.push(message),
+    });
+
+    const offer = await coordinator.enqueueLaptopFiles([path]);
+    controls.length = 0;
+    await coordinator.handleDeviceConnected("phone");
+
+    expect(controls).toEqual([{ v: 1, kind: "transfer_offer", offer }]);
     await rm(dir, { recursive: true, force: true });
   });
 

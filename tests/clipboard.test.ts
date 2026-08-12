@@ -10,6 +10,7 @@ class FakeRunner implements ProcessRunner {
   calls: Array<{ command: string; args: string[]; input?: Uint8Array; options?: RunOptions }> = [];
   watches: Array<{ command: string; args: string[] }> = [];
   outputs = new Map<string, Uint8Array>();
+  errors = new Map<string, string>();
   exitCodes = new Map<string, number>();
   onWatchChange: (() => void | Promise<void>) | undefined;
   onWatchExit: ((result: { exitCode: number; stdout: Uint8Array; stderr: string }) => void) | undefined;
@@ -20,7 +21,7 @@ class FakeRunner implements ProcessRunner {
     return {
       exitCode: this.exitCodes.get(key) ?? 0,
       stdout: this.outputs.get(key) ?? new Uint8Array(),
-      stderr: "",
+      stderr: this.errors.get(key) ?? "",
     };
   }
 
@@ -128,6 +129,16 @@ describe("Wayland clipboard adapter", () => {
     // The read must pass -n so wl-paste emits exact bytes and never appends a
     // trailing newline to text payloads.
     expect(runner.calls.at(-1)?.args).toEqual(["--type", "image/png", "-n"]);
+  });
+
+  test("treats an empty clipboard as no payload", async () => {
+    const runner = new FakeRunner();
+    runner.exitCodes.set("wl-paste --list-types", 1);
+    runner.errors.set("wl-paste --list-types", "Nothing is copied\n");
+    const clipboard = createWaylandClipboardAdapter(runner);
+
+    await expect(clipboard.read()).resolves.toBeUndefined();
+    expect(runner.calls).toHaveLength(1);
   });
 
   test("watches clipboard changes with wl-paste, swallowing the startup fire", async () => {

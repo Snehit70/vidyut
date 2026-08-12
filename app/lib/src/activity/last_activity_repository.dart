@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'last_activity.dart';
@@ -40,17 +42,57 @@ class MemoryLastActivityStorage implements LastActivityStorage {
 /// dashboard (ADR 0004). Persisted so "last activity" survives an app
 /// restart; only ever holds one entry.
 class LastActivityRepository {
-  const LastActivityRepository(this._storage);
+  LastActivityRepository(this._storage);
 
   static const _key = 'vidyut.activity.last';
+  static const _historyKey = 'vidyut.activity.history';
+  static const _maxEntries = 30;
 
   final LastActivityStorage _storage;
+  Future<void> _writeTail = Future<void>.value();
 
   Future<LastActivity?> load() async {
-    return LastActivity.decode(await _storage.read(_key));
+    return (await loadAll()).firstOrNull;
+  }
+
+  Future<List<LastActivity>> loadAll() async {
+    final raw = await _storage.read(_historyKey);
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded
+              .whereType<String>()
+              .map(LastActivity.decode)
+              .whereType<LastActivity>()
+              .toList(growable: false);
+        }
+      } on FormatException {
+        // Fall through to the legacy single-entry value.
+      }
+    }
+    final legacy = LastActivity.decode(await _storage.read(_key));
+    return legacy == null ? const [] : [legacy];
   }
 
   Future<void> record(LastActivity activity) {
-    return _storage.write(_key, activity.encode());
+    final next = _writeTail.then((_) async {
+      final history = await loadAll();
+      final updated = [
+        activity,
+        ...history.where(
+          (entry) =>
+              activity.payloadId == null ||
+              entry.payloadId != activity.payloadId,
+        ),
+      ].take(_maxEntries);
+      await _storage.write(
+        _historyKey,
+        jsonEncode(updated.map((entry) => entry.encode()).toList()),
+      );
+      await _storage.write(_key, activity.encode());
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
   }
 }

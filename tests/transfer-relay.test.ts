@@ -123,4 +123,76 @@ describe("relay transfer control", () => {
     expect(calls).toBe(0);
     phone.close();
   });
+
+  test("notifies the transfer module when an authenticated device disconnects", async () => {
+    let resolveDisconnected!: (deviceId: string) => void;
+    const disconnected = new Promise<string>((resolve) => {
+      resolveDisconnected = resolve;
+    });
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceDisconnected: resolveDisconnected,
+    });
+    const phone = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(phone, secret, "phone");
+    phone.close();
+
+    await expect(disconnected).resolves.toBe("phone");
+  });
+
+  test("waits for the last socket of a device before notifying disconnect", async () => {
+    let calls = 0;
+    let resolveDisconnected!: () => void;
+    const disconnected = new Promise<void>((resolve) => {
+      resolveDisconnected = resolve;
+    });
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceDisconnected: () => {
+        calls++;
+        resolveDisconnected();
+      },
+    });
+    const first = await connectRawWebSocket(relay.url);
+    const second = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(first, secret, "phone");
+    await authenticateRawClient(second, secret, "phone");
+
+    first.close();
+    await Bun.sleep(20);
+    expect(calls).toBe(0);
+    second.close();
+    await disconnected;
+    expect(calls).toBe(1);
+  });
+
+  test("notifies connect for each socket so recovery targets that socket", async () => {
+    let calls = 0;
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceConnected: () => {
+        calls++;
+      },
+    });
+    const first = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(first, secret, "phone");
+    await Bun.sleep(10);
+    expect(calls).toBe(1);
+
+    const second = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(second, secret, "phone");
+    await Bun.sleep(10);
+    expect(calls).toBe(2);
+    first.close();
+    second.close();
+  });
 });

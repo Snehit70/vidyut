@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 abstract interface class ReceivedPayloadStorage {
@@ -38,15 +40,57 @@ class MemoryReceivedPayloadStorage implements ReceivedPayloadStorage {
 /// laptop, shared between the foreground service isolate (writer) and the
 /// UI isolate (reader, on notification tap).
 class ReceivedTextRepository {
-  const ReceivedTextRepository(this._storage);
+  ReceivedTextRepository(this._storage);
 
   static const _latestTextKey = 'vidyut.receive.latestText';
+  static const _historyKey = 'vidyut.receive.textHistory';
+  static const _maxHistoryBytes = 32 * 1024 * 1024;
 
   final ReceivedPayloadStorage _storage;
+  Future<void> _writeTail = Future<void>.value();
 
-  Future<void> saveLatest(String text) {
-    return _storage.write(_latestTextKey, text);
+  Future<void> saveLatest(String text, {String? id}) {
+    final next = _writeTail.then((_) async {
+      await _storage.write(_latestTextKey, text);
+      if (id == null) return;
+      final history = _decodeHistory(await _storage.read(_historyKey));
+      history.removeWhere((entry) => entry['id'] == id);
+      history.insert(0, {'id': id, 'text': text});
+      final retained = <Map<String, String>>[];
+      for (final entry in history) {
+        final candidate = [...retained, entry];
+        if (utf8.encode(jsonEncode(candidate)).length > _maxHistoryBytes) {
+          break;
+        }
+        retained.add(entry);
+        if (retained.length == 30) break;
+      }
+      await _storage.write(_historyKey, jsonEncode(retained));
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
   }
 
   Future<String?> loadLatest() => _storage.read(_latestTextKey);
+
+  Future<String?> loadById(String id) async {
+    for (final entry in _decodeHistory(await _storage.read(_historyKey))) {
+      if (entry['id'] == id) return entry['text'];
+    }
+    return null;
+  }
+
+  List<Map<String, String>> _decodeHistory(String? raw) {
+    if (raw == null) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((entry) => {'id': '${entry['id']}', 'text': '${entry['text']}'})
+          .toList();
+    } on FormatException {
+      return [];
+    }
+  }
 }

@@ -119,7 +119,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
           controller.recordReceivedClipboardText,
         ),
         imageClipboard: const ChannelAndroidImageClipboard(),
-        receivedTextRepository: const ReceivedTextRepository(
+        receivedTextRepository: ReceivedTextRepository(
           SecureReceivedPayloadStorage(),
         ),
         receivedImageRepository: ReceivedImageRepository(

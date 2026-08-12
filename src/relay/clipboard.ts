@@ -55,7 +55,13 @@ export function createWaylandClipboardAdapter(runner: ProcessRunner = new BunPro
   return {
     async read() {
       const typeList = await runner.run("wl-paste", ["--list-types"]);
-      ensureProcessOk(typeList, "wl-paste --list-types");
+      // wl-paste reports an empty selection as a non-zero exit. An empty
+      // clipboard is normal while the relay is running and must not take the
+      // relay down with an unhandled read rejection.
+      if (typeList.exitCode !== 0) {
+        if (isEmptyClipboardError(typeList.stderr)) return undefined;
+        ensureProcessOk(typeList, "wl-paste --list-types");
+      }
       const availableTypes = new Set(new TextDecoder().decode(typeList.stdout).split(/\r?\n/).filter(Boolean));
       const selected = supportedMimeTypes.find((candidate) => availableTypes.has(candidate.mime));
       if (!selected) return undefined;
@@ -222,4 +228,8 @@ function ensureProcessOk(result: ProcessResult, description: string): void {
   if (result.exitCode !== 0) {
     throw new Error(`${description} failed: ${result.stderr || `exit ${result.exitCode}`}`);
   }
+}
+
+function isEmptyClipboardError(stderr: string): boolean {
+  return /nothing is copied|clipboard is empty/i.test(stderr);
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
+import '../activity/last_activity.dart';
 import 'payload_receiver.dart';
 import 'received_image_repository.dart';
 import 'received_text_repository.dart';
@@ -85,6 +86,39 @@ class ReceiveNotificationTapHandler {
 
   Future<void> copyLatest({required bool image}) {
     return image ? _copyLatestImage() : _copyLatestText();
+  }
+
+  Future<void> copyActivity(LastActivity activity) async {
+    final id = activity.payloadId;
+    if (id == null) {
+      onCopied?.call('This older item is no longer available.');
+      return;
+    }
+    if (activity.summary.startsWith('image')) {
+      final image = await imageRepository.loadById(id);
+      if (image == null) {
+        onCopied?.call('This image is no longer available.');
+        return;
+      }
+      try {
+        await imageClipboard.writeImage(image);
+        onCopied?.call('Image copied from laptop.');
+      } on Object catch (error) {
+        onCopied?.call('Image clipboard write failed: $error');
+      }
+      return;
+    }
+    final text = await repository.loadById(id);
+    if (text == null) {
+      onCopied?.call('This text is no longer available.');
+      return;
+    }
+    try {
+      await clipboard.writeText(text);
+      onCopied?.call('Text copied from laptop.');
+    } on Object catch (error) {
+      onCopied?.call('Text clipboard write failed: $error');
+    }
   }
 
   Future<void> _openClipboardPermissionSettings() async {

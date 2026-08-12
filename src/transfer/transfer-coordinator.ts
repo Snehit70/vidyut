@@ -37,6 +37,76 @@ export class TransferCoordinator {
     await this.activateNext();
   }
 
+  async handleDeviceConnected(
+    _deviceId: string,
+    publishControl = this.options.publishControl,
+  ): Promise<void> {
+    const activeOffer = this.options.queue
+      .snapshot()
+      .batches.find(
+        (batch) =>
+          batch.direction === "laptop_to_phone" &&
+          batch.sourceDeviceId === undefined &&
+          batch.files.some((file) => file.status === "active"),
+      );
+    if (activeOffer) {
+      publishControl({
+        v: 1,
+        kind: "transfer_offer",
+        offer: this.options.queue.offer(activeOffer.transferId),
+      });
+      return;
+    }
+    await this.activateNext();
+  }
+
+  async handleDeviceDisconnected(deviceId: string): Promise<void> {
+    const activeFiles = this.options.queue
+      .snapshot()
+      .batches.flatMap((batch) =>
+        batch.files
+          .filter(
+            (file) =>
+              batch.sourceDeviceId === deviceId &&
+              file.status === "active",
+          )
+          .map((file) => ({ batch, file })),
+      );
+
+    for (const { batch, file } of activeFiles) {
+      const cleanup = async () => {
+        await this.options.queue.fail(
+          batch.transferId,
+          file.fileId,
+          "peer_disconnected",
+        );
+        if (file.destinationPath) {
+          await unlink(
+            partialPathFor(file.destinationPath, file.fileId),
+          ).catch(() => undefined);
+        }
+        this.options.progressSessions?.clear(batch.transferId, file.fileId);
+        this.options.publishControl({
+          v: 1,
+          kind: "transfer_file_failed",
+          transferId: batch.transferId,
+          fileId: file.fileId,
+          code: "peer_disconnected",
+        });
+      };
+      if (this.options.progressSessions) {
+        await this.options.progressSessions.checkpointAnd(
+          this.options.queue,
+          batch.transferId,
+          file.fileId,
+          cleanup,
+        );
+      } else {
+        await cleanup();
+      }
+    }
+  }
+
   async enqueueLaptopFiles(paths: string[]): Promise<TransferOffer> {
     if (paths.length === 0) throw new RangeError("Select at least one file.");
     const files: EnqueueTransferFile[] = [];
@@ -68,12 +138,15 @@ export class TransferCoordinator {
 
   async handleControl(
     message: TransferControlMessage,
-    _sourceDeviceId: string,
+    sourceDeviceId: string,
   ): Promise<void> {
     switch (message.kind) {
       case "transfer_offer":
         {
-          const result = await this.acceptPhoneOffer(message.offer);
+          const result = await this.acceptPhoneOffer(
+            message.offer,
+            sourceDeviceId,
+          );
           if (result === "rejected") return;
           const activated = await this.activateNext();
           if (result === "existing") {
@@ -85,6 +158,10 @@ export class TransferCoordinator {
         }
         return;
       case "transfer_accept":
+        await this.options.queue.associateSourceDevice(
+          message.transferId,
+          sourceDeviceId,
+        );
         await this.acceptReceiverOffset(
           message.transferId,
           message.fileId,
@@ -234,6 +311,7 @@ export class TransferCoordinator {
 
   private async acceptPhoneOffer(
     offer: TransferOffer,
+    sourceDeviceId: string,
   ): Promise<"new" | "existing" | "rejected"> {
     if (!isTransferOffer(offer)) {
       throw new Error("Invalid phone transfer offer.");
@@ -251,7 +329,11 @@ export class TransferCoordinator {
       ]),
     );
     if (existingBatch) {
-      await this.options.queue.acceptOffer(offer, destinationPaths);
+      await this.options.queue.acceptOffer(
+        offer,
+        destinationPaths,
+        sourceDeviceId,
+      );
     } else {
       const tooLarge = offer.files.find(
         (file) => file.size > this.options.maxFileBytes,
@@ -340,7 +422,11 @@ export class TransferCoordinator {
         }
       }
     } else {
-      await this.options.queue.acceptOffer(offer, destinationPaths);
+      await this.options.queue.acceptOffer(
+        offer,
+        destinationPaths,
+        sourceDeviceId,
+      );
     }
     return existingBatch ? "existing" : "new";
   }
