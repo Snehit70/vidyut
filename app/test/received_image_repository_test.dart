@@ -72,4 +72,14 @@ void main() {
     final saved = await repo.saveLatest([1], 'image/x-obscure');
     expect(saved.path, endsWith('latest.img'));
   });
+
+  test('encodes payload IDs before using them as filenames', () async {
+    final repo = repository(MemoryReceivedPayloadStorage());
+
+    final saved = await repo.save([1, 2], 'image/png', id: 'nonce/with/slash');
+
+    expect(saved.path, isNot(contains('/nonce/')));
+    expect(await repo.loadById('nonce/with/slash'), isNotNull);
+    expect(await File(saved.path).readAsBytes(), [1, 2]);
+  });
 }
