@@ -91,7 +91,7 @@ class ReceiveNotificationTapHandler {
   Future<void> copyActivity(LastActivity activity) async {
     final id = activity.payloadId;
     if (id == null) {
-      await copyLatest(image: activity.summary.startsWith('image'));
+      onCopied?.call('This older item is no longer available.');
       return;
     }
     if (activity.summary.startsWith('image')) {

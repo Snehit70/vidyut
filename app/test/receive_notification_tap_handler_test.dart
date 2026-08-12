@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/receive/payload_receiver.dart';
 import 'package:vidyut/src/receive/receive_notification_tap_handler.dart';
 import 'package:vidyut/src/receive/received_image_repository.dart';
@@ -151,6 +152,28 @@ void main() {
 
     expect(imageClipboard.images, isEmpty);
     expect(messages.single, 'No received image to copy.');
+  });
+
+  test('does not copy a newer payload for a legacy activity', () async {
+    final storage = MemoryReceivedPayloadStorage();
+    await ReceivedTextRepository(storage).saveLatest('newer text', id: 'new');
+    final messages = <String>[];
+    final tapHandler = handler(
+      storage,
+      clipboard: _FakeClipboard(),
+      imageClipboard: _FakeImageClipboard(),
+    )..onCopied = messages.add;
+
+    await tapHandler.copyActivity(
+      LastActivity(
+        direction: ActivityDirection.received,
+        summary: 'text (11 B)',
+        counterpart: 'laptop',
+        timestamp: DateTime(2026),
+      ),
+    );
+
+    expect(messages.single, 'This older item is no longer available.');
   });
 
   test(

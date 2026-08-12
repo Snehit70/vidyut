@@ -38,6 +38,22 @@ export class TransferCoordinator {
   }
 
   async handleDeviceConnected(_deviceId: string): Promise<void> {
+    const activeOffer = this.options.queue
+      .snapshot()
+      .batches.find(
+        (batch) =>
+          batch.direction === "laptop_to_phone" &&
+          batch.sourceDeviceId === undefined &&
+          batch.files.some((file) => file.status === "active"),
+      );
+    if (activeOffer) {
+      this.options.publishControl({
+        v: 1,
+        kind: "transfer_offer",
+        offer: this.options.queue.offer(activeOffer.transferId),
+      });
+      return;
+    }
     await this.activateNext();
   }
 

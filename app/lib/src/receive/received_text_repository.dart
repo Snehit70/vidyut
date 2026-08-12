@@ -44,6 +44,7 @@ class ReceivedTextRepository {
 
   static const _latestTextKey = 'vidyut.receive.latestText';
   static const _historyKey = 'vidyut.receive.textHistory';
+  static const _maxHistoryBytes = 32 * 1024 * 1024;
 
   final ReceivedPayloadStorage _storage;
   Future<void> _writeTail = Future<void>.value();
@@ -55,7 +56,19 @@ class ReceivedTextRepository {
       final history = _decodeHistory(await _storage.read(_historyKey));
       history.removeWhere((entry) => entry['id'] == id);
       history.insert(0, {'id': id, 'text': text});
-      await _storage.write(_historyKey, jsonEncode(history.take(30).toList()));
+      final retained = <Map<String, String>>[];
+      var retainedBytes = 0;
+      for (final entry in history) {
+        final entryBytes = utf8.encode(jsonEncode(entry)).length;
+        if (retained.isNotEmpty &&
+            retainedBytes + entryBytes > _maxHistoryBytes) {
+          break;
+        }
+        retained.add(entry);
+        retainedBytes += entryBytes;
+        if (retained.length == 30) break;
+      }
+      await _storage.write(_historyKey, jsonEncode(retained));
     });
     _writeTail = next.catchError((_) {});
     return next;

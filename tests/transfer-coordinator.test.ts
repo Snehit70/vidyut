@@ -95,6 +95,27 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("republishes an unaccepted laptop offer after reconnect", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-reconnect-"));
+    const path = join(dir, "report.pdf");
+    await writeFile(path, new Uint8Array([1]));
+    const queue = await memoryQueue();
+    const controls: TransferControlMessage[] = [];
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: join(dir, "downloads"),
+      maxFileBytes: 1024,
+      publishControl: (message) => controls.push(message),
+    });
+
+    const offer = await coordinator.enqueueLaptopFiles([path]);
+    controls.length = 0;
+    await coordinator.handleDeviceConnected("phone");
+
+    expect(controls).toEqual([{ v: 1, kind: "transfer_offer", offer }]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("accepts a phone offer after size and storage checks", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-receive-"));
     const queue = await memoryQueue();

@@ -129,4 +129,15 @@ void main() {
     expect(await repo.loadById('id-one'), 'one');
     expect(await repo.loadById('id-two'), 'two');
   });
+
+  test('bounds received text history by total payload bytes', () async {
+    final repo = ReceivedTextRepository(MemoryReceivedPayloadStorage());
+    final largeText = 'x' * (16 * 1024 * 1024);
+
+    await repo.saveLatest(largeText, id: 'old');
+    await repo.saveLatest(largeText, id: 'new');
+
+    expect(await repo.loadById('new'), largeText);
+    expect(await repo.loadById('old'), isNull);
+  });
 }
