@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -51,14 +52,10 @@ class ReceivedImageRepository {
     final directory = await _directoryProvider();
     await directory.create(recursive: true);
     final file = File(
-      '${directory.path}/${id ?? 'latest'}.${_extensionFor(mime)}',
+      '${directory.path}/${id == null ? 'latest' : _storageId(id)}.${_extensionFor(mime)}',
     );
     await file.writeAsBytes(bytes, flush: true);
-    if (id == null) {
-      await for (final entry in directory.list()) {
-        if (entry is File && entry.path != file.path) await entry.delete();
-      }
-    }
+    await _prune(directory, keep: id == null ? {file.path} : null);
     await _storage.write(_latestImagePathKey, file.path);
     await _storage.write(_latestImageMimeKey, mime);
     return ReceivedImage(path: file.path, mime: mime);
@@ -70,7 +67,10 @@ class ReceivedImageRepository {
     final file = directory
         .listSync()
         .whereType<File>()
-        .where((entry) => entry.path.split('/').last.startsWith('$id.'))
+        .where(
+          (entry) =>
+              entry.path.split('/').last.startsWith('${_storageId(id)}.'),
+        )
         .firstOrNull;
     if (file == null) return null;
     return ReceivedImage(path: file.path, mime: _mimeFor(file.path));
@@ -101,4 +101,19 @@ class ReceivedImageRepository {
     'webp' => 'image/webp',
     _ => 'image/*',
   };
+
+  Future<void> _prune(Directory directory, {Set<String>? keep}) async {
+    final files = directory.listSync().whereType<File>().toList()
+      ..sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+    final retained = <String>{...(keep ?? const <String>{})};
+    final payloadFiles = files.where(
+      (file) => !file.path.split('/').last.startsWith('latest.'),
+    );
+    retained.addAll(payloadFiles.take(30).map((file) => file.path));
+    for (final file in files) {
+      if (!retained.contains(file.path)) await file.delete();
+    }
+  }
+
+  String _storageId(String id) => base64Url.encode(utf8.encode(id));
 }

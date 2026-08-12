@@ -436,7 +436,9 @@ class _PairingScreenState extends State<PairingScreen>
         _activities = [
           activity,
           ..._activities.where(
-            (entry) => entry.payloadId != activity.payloadId,
+            (entry) =>
+                activity.payloadId == null ||
+                entry.payloadId != activity.payloadId,
           ),
         ].take(30).toList();
       });

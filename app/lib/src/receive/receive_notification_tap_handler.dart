@@ -100,8 +100,12 @@ class ReceiveNotificationTapHandler {
         onCopied?.call('This image is no longer available.');
         return;
       }
-      await imageClipboard.writeImage(image);
-      onCopied?.call('Image copied from laptop.');
+      try {
+        await imageClipboard.writeImage(image);
+        onCopied?.call('Image copied from laptop.');
+      } on Object catch (error) {
+        onCopied?.call('Image clipboard write failed: $error');
+      }
       return;
     }
     final text = await repository.loadById(id);
@@ -109,8 +113,12 @@ class ReceiveNotificationTapHandler {
       onCopied?.call('This text is no longer available.');
       return;
     }
-    await clipboard.writeText(text);
-    onCopied?.call('Text copied from laptop.');
+    try {
+      await clipboard.writeText(text);
+      onCopied?.call('Text copied from laptop.');
+    } on Object catch (error) {
+      onCopied?.call('Text clipboard write failed: $error');
+    }
   }
 
   Future<void> _openClipboardPermissionSettings() async {

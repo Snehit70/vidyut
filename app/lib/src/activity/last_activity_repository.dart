@@ -78,7 +78,10 @@ class LastActivityRepository {
     final history = await loadAll();
     final updated = [
       activity,
-      ...history.where((entry) => entry.payloadId != activity.payloadId),
+      ...history.where(
+        (entry) =>
+            activity.payloadId == null || entry.payloadId != activity.payloadId,
+      ),
     ].take(_maxEntries);
     await _storage.write(
       _historyKey,
