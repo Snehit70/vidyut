@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/activity/last_activity_repository.dart';
+import 'package:vidyut/src/receive/received_text_repository.dart';
 
 void main() {
   group('LastActivity', () {
@@ -92,5 +93,40 @@ void main() {
       expect(loaded!.direction, ActivityDirection.received);
       expect(loaded.summary, 'image');
     });
+
+    test('serializes concurrent history writes', () async {
+      final repo = LastActivityRepository(MemoryLastActivityStorage());
+      await Future.wait([
+        repo.record(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (1 char)',
+            counterpart: 'laptop',
+            timestamp: DateTime.fromMillisecondsSinceEpoch(1),
+          ),
+        ),
+        repo.record(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (2 chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.fromMillisecondsSinceEpoch(2),
+          ),
+        ),
+      ]);
+
+      expect((await repo.loadAll()).length, 2);
+    });
+  });
+
+  test('serializes concurrent received text history writes', () async {
+    final repo = ReceivedTextRepository(MemoryReceivedPayloadStorage());
+    await Future.wait([
+      repo.saveLatest('one', id: 'id-one'),
+      repo.saveLatest('two', id: 'id-two'),
+    ]);
+
+    expect(await repo.loadById('id-one'), 'one');
+    expect(await repo.loadById('id-two'), 'two');
   });
 }

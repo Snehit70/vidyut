@@ -61,7 +61,7 @@ Future<void> main() async {
       appSettingsRepository: AppSettingsRepository(
         const SecureAppSettingsStorage(),
       ),
-      lastActivityRepository: const LastActivityRepository(
+      lastActivityRepository: LastActivityRepository(
         SecureLastActivityStorage(),
       ),
       foregroundServiceClient: VidyutForegroundServiceClient(),
@@ -69,9 +69,7 @@ Future<void> main() async {
       relayDiscovery: RelayDiscovery(lock: const ChannelMulticastLock()),
       shareSource: const ReceiveSharingIntentSource(),
       receiveNotificationTapHandler: ReceiveNotificationTapHandler(
-        repository: const ReceivedTextRepository(
-          SecureReceivedPayloadStorage(),
-        ),
+        repository: ReceivedTextRepository(SecureReceivedPayloadStorage()),
         imageRepository: ReceivedImageRepository(
           const SecureReceivedPayloadStorage(),
         ),

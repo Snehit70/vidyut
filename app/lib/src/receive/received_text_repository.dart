@@ -40,20 +40,25 @@ class MemoryReceivedPayloadStorage implements ReceivedPayloadStorage {
 /// laptop, shared between the foreground service isolate (writer) and the
 /// UI isolate (reader, on notification tap).
 class ReceivedTextRepository {
-  const ReceivedTextRepository(this._storage);
+  ReceivedTextRepository(this._storage);
 
   static const _latestTextKey = 'vidyut.receive.latestText';
   static const _historyKey = 'vidyut.receive.textHistory';
 
   final ReceivedPayloadStorage _storage;
+  Future<void> _writeTail = Future<void>.value();
 
-  Future<void> saveLatest(String text, {String? id}) async {
-    await _storage.write(_latestTextKey, text);
-    if (id == null) return;
-    final history = _decodeHistory(await _storage.read(_historyKey));
-    history.removeWhere((entry) => entry['id'] == id);
-    history.insert(0, {'id': id, 'text': text});
-    await _storage.write(_historyKey, jsonEncode(history.take(30).toList()));
+  Future<void> saveLatest(String text, {String? id}) {
+    final next = _writeTail.then((_) async {
+      await _storage.write(_latestTextKey, text);
+      if (id == null) return;
+      final history = _decodeHistory(await _storage.read(_historyKey));
+      history.removeWhere((entry) => entry['id'] == id);
+      history.insert(0, {'id': id, 'text': text});
+      await _storage.write(_historyKey, jsonEncode(history.take(30).toList()));
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
   }
 
   Future<String?> loadLatest() => _storage.read(_latestTextKey);

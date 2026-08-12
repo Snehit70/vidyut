@@ -37,6 +37,10 @@ export class TransferCoordinator {
     await this.activateNext();
   }
 
+  async handleDeviceConnected(_deviceId: string): Promise<void> {
+    await this.activateNext();
+  }
+
   async handleDeviceDisconnected(deviceId: string): Promise<void> {
     const activeFiles = this.options.queue
       .snapshot()
@@ -72,7 +76,6 @@ export class TransferCoordinator {
         code: "peer_disconnected",
       });
     }
-    if (activeFiles.length > 0) await this.activateNext();
   }
 
   async enqueueLaptopFiles(paths: string[]): Promise<TransferOffer> {

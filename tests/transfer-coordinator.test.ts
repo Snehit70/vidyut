@@ -89,6 +89,9 @@ describe("transfer coordinator", () => {
 
     await coordinator.handleDeviceDisconnected("phone-a");
     expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
+    expect(queue.snapshot().batches[1]!.files[0]!.status).toBe("queued");
+    await coordinator.handleDeviceConnected("phone-b");
+    expect(queue.snapshot().batches[1]!.files[0]!.status).toBe("active");
     await rm(dir, { recursive: true, force: true });
   });
 

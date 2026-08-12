@@ -42,13 +42,14 @@ class MemoryLastActivityStorage implements LastActivityStorage {
 /// dashboard (ADR 0004). Persisted so "last activity" survives an app
 /// restart; only ever holds one entry.
 class LastActivityRepository {
-  const LastActivityRepository(this._storage);
+  LastActivityRepository(this._storage);
 
   static const _key = 'vidyut.activity.last';
   static const _historyKey = 'vidyut.activity.history';
   static const _maxEntries = 30;
 
   final LastActivityStorage _storage;
+  Future<void> _writeTail = Future<void>.value();
 
   Future<LastActivity?> load() async {
     return (await loadAll()).firstOrNull;
@@ -74,19 +75,24 @@ class LastActivityRepository {
     return legacy == null ? const [] : [legacy];
   }
 
-  Future<void> record(LastActivity activity) async {
-    final history = await loadAll();
-    final updated = [
-      activity,
-      ...history.where(
-        (entry) =>
-            activity.payloadId == null || entry.payloadId != activity.payloadId,
-      ),
-    ].take(_maxEntries);
-    await _storage.write(
-      _historyKey,
-      jsonEncode(updated.map((entry) => entry.encode()).toList()),
-    );
-    await _storage.write(_key, activity.encode());
+  Future<void> record(LastActivity activity) {
+    final next = _writeTail.then((_) async {
+      final history = await loadAll();
+      final updated = [
+        activity,
+        ...history.where(
+          (entry) =>
+              activity.payloadId == null ||
+              entry.payloadId != activity.payloadId,
+        ),
+      ].take(_maxEntries);
+      await _storage.write(
+        _historyKey,
+        jsonEncode(updated.map((entry) => entry.encode()).toList()),
+      );
+      await _storage.write(_key, activity.encode());
+    });
+    _writeTail = next.catchError((_) {});
+    return next;
   }
 }

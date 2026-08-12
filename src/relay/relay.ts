@@ -28,6 +28,7 @@ interface RelayOptions {
     sourceDeviceId: string,
   ) => void | Promise<void>;
   deviceDisconnected?: (deviceId: string) => void | Promise<void>;
+  deviceConnected?: (deviceId: string) => void | Promise<void>;
   transferHttp?: (
     request: Request,
     context: { isLoopback: boolean },
@@ -166,6 +167,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             pool.current,
             relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
           );
+          if (socket.data.authenticated) {
+            notifyDeviceConnected(options.deviceConnected, socket.data.deviceId);
+          }
           return;
         }
 
@@ -308,6 +312,16 @@ function notifyDeviceDisconnected(
   )) {
     return;
   }
+  void Promise.resolve()
+    .then(() => callback(deviceId))
+    .catch(() => undefined);
+}
+
+function notifyDeviceConnected(
+  callback: RelayOptions["deviceConnected"],
+  deviceId: string | undefined,
+): void {
+  if (!callback || !deviceId) return;
   void Promise.resolve()
     .then(() => callback(deviceId))
     .catch(() => undefined);

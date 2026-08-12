@@ -104,6 +104,8 @@ relay = await createRelay({
     transferCoordinator.handleControl(message, sourceDeviceId),
   deviceDisconnected: (deviceId) =>
     transferCoordinator.handleDeviceDisconnected(deviceId),
+  deviceConnected: (deviceId) =>
+    transferCoordinator.handleDeviceConnected(deviceId),
   transferHttp: transferDataPlane.handle.bind(transferDataPlane),
 });
 await transferCoordinator.start();
