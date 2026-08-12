@@ -37,15 +37,17 @@ export class TransferCoordinator {
     await this.activateNext();
   }
 
-  async handleDeviceDisconnected(_deviceId: string): Promise<void> {
+  async handleDeviceDisconnected(deviceId: string): Promise<void> {
     const activeFiles = this.options.queue
       .snapshot()
       .batches.flatMap((batch) =>
         batch.files
-          .filter((file) =>
-            file.status === "active" ||
-            file.status === "verifying" ||
-            file.status === "finalizing",
+          .filter(
+            (file) =>
+              batch.sourceDeviceId === deviceId &&
+              (file.status === "active" ||
+                file.status === "verifying" ||
+                file.status === "finalizing"),
           )
           .map((file) => ({ batch, file })),
       );
@@ -104,12 +106,15 @@ export class TransferCoordinator {
 
   async handleControl(
     message: TransferControlMessage,
-    _sourceDeviceId: string,
+    sourceDeviceId: string,
   ): Promise<void> {
     switch (message.kind) {
       case "transfer_offer":
         {
-          const result = await this.acceptPhoneOffer(message.offer);
+          const result = await this.acceptPhoneOffer(
+            message.offer,
+            sourceDeviceId,
+          );
           if (result === "rejected") return;
           const activated = await this.activateNext();
           if (result === "existing") {
@@ -121,6 +126,10 @@ export class TransferCoordinator {
         }
         return;
       case "transfer_accept":
+        await this.options.queue.associateSourceDevice(
+          message.transferId,
+          sourceDeviceId,
+        );
         await this.acceptReceiverOffset(
           message.transferId,
           message.fileId,
@@ -270,6 +279,7 @@ export class TransferCoordinator {
 
   private async acceptPhoneOffer(
     offer: TransferOffer,
+    sourceDeviceId: string,
   ): Promise<"new" | "existing" | "rejected"> {
     if (!isTransferOffer(offer)) {
       throw new Error("Invalid phone transfer offer.");
@@ -287,7 +297,11 @@ export class TransferCoordinator {
       ]),
     );
     if (existingBatch) {
-      await this.options.queue.acceptOffer(offer, destinationPaths);
+      await this.options.queue.acceptOffer(
+        offer,
+        destinationPaths,
+        sourceDeviceId,
+      );
     } else {
       const tooLarge = offer.files.find(
         (file) => file.size > this.options.maxFileBytes,
@@ -376,7 +390,11 @@ export class TransferCoordinator {
         }
       }
     } else {
-      await this.options.queue.acceptOffer(offer, destinationPaths);
+      await this.options.queue.acceptOffer(
+        offer,
+        destinationPaths,
+        sourceDeviceId,
+      );
     }
     return existingBatch ? "existing" : "new";
   }

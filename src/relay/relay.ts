@@ -89,7 +89,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           idleMs,
           staleAfterMs,
         });
-        notifyDeviceDisconnected(options.deviceDisconnected, socket.data.deviceId);
+        notifyDeviceDisconnected(
+          devices,
+          options.deviceDisconnected,
+          socket.data.deviceId,
+        );
         socket.terminate();
         continue;
       }
@@ -245,7 +249,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           wsCode,
           wsReason,
         });
-        notifyDeviceDisconnected(options.deviceDisconnected, socket.data.deviceId);
+        notifyDeviceDisconnected(
+          devices,
+          options.deviceDisconnected,
+          socket.data.deviceId,
+        );
       },
     },
   });
@@ -289,11 +297,20 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
 }
 
 function notifyDeviceDisconnected(
+  devices: Set<RelaySocket>,
   callback: RelayOptions["deviceDisconnected"],
   deviceId: string | undefined,
 ): void {
   if (!callback || !deviceId) return;
-  void Promise.resolve(callback(deviceId)).catch(() => undefined);
+  if ([...devices].some(
+    (socket) =>
+      socket.data.authenticated && socket.data.deviceId === deviceId,
+  )) {
+    return;
+  }
+  void Promise.resolve()
+    .then(() => callback(deviceId))
+    .catch(() => undefined);
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {

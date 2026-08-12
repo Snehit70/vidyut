@@ -59,6 +59,7 @@ export interface TransferBatchRecord {
   batchId: string;
   origin: string;
   direction: TransferDirection;
+  sourceDeviceId?: string;
   createdAtMs: number;
   updatedAtMs: number;
   expiresAtMs: number;
@@ -130,10 +131,12 @@ export class TransferQueue {
     direction,
     origin,
     files,
+    sourceDeviceId,
   }: {
     direction: TransferDirection;
     origin: string;
     files: EnqueueTransferFile[];
+    sourceDeviceId?: string;
   }): Promise<TransferBatchRecord> {
     if (files.length === 0) throw new RangeError("A batch needs at least one file.");
     const timestamp = this.now();
@@ -144,6 +147,7 @@ export class TransferQueue {
       batchId,
       origin,
       direction,
+      ...(sourceDeviceId === undefined ? {} : { sourceDeviceId }),
       createdAtMs: timestamp,
       updatedAtMs: timestamp,
       expiresAtMs: timestamp + sevenDaysMs,
@@ -165,6 +169,7 @@ export class TransferQueue {
   async acceptOffer(
     offer: TransferOffer,
     destinationPaths: ReadonlyMap<string, string>,
+    sourceDeviceId?: string,
   ): Promise<TransferBatchRecord> {
     if (!isTransferOffer(offer)) throw new Error("Invalid transfer offer.");
     if (offer.files.some((file) => !destinationPaths.get(file.fileId))) {
@@ -177,11 +182,16 @@ export class TransferQueue {
       if (!offersMatch(this.offer(existing.transferId), offer)) {
         throw new Error("Transfer identity conflicts with an existing offer.");
       }
+      if (sourceDeviceId !== undefined && existing.sourceDeviceId === undefined) {
+        existing.sourceDeviceId = sourceDeviceId;
+        await this.persist();
+      }
       return structuredClone(existing);
     }
     const timestamp = this.now();
     const batch: TransferBatchRecord = {
       ...offer,
+      ...(sourceDeviceId === undefined ? {} : { sourceDeviceId }),
       updatedAtMs: timestamp,
       expiresAtMs: timestamp + sevenDaysMs,
       status: "queued",
@@ -197,6 +207,17 @@ export class TransferQueue {
     this.state.batches.push(batch);
     await this.persist();
     return structuredClone(batch);
+  }
+
+  async associateSourceDevice(
+    transferId: string,
+    sourceDeviceId: string,
+  ): Promise<void> {
+    const batch = this.findBatch(transferId);
+    if (batch.sourceDeviceId !== undefined) return;
+    batch.sourceDeviceId = sourceDeviceId;
+    this.touch(batch);
+    await this.persist();
   }
 
   offer(transferId: string): TransferOffer {

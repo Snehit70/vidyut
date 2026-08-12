@@ -142,4 +142,33 @@ describe("relay transfer control", () => {
 
     await expect(disconnected).resolves.toBe("phone");
   });
+
+  test("waits for the last socket of a device before notifying disconnect", async () => {
+    let calls = 0;
+    let resolveDisconnected!: () => void;
+    const disconnected = new Promise<void>((resolve) => {
+      resolveDisconnected = resolve;
+    });
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceDisconnected: () => {
+        calls++;
+        resolveDisconnected();
+      },
+    });
+    const first = await connectRawWebSocket(relay.url);
+    const second = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(first, secret, "phone");
+    await authenticateRawClient(second, secret, "phone");
+
+    first.close();
+    await Bun.sleep(20);
+    expect(calls).toBe(0);
+    second.close();
+    await disconnected;
+    expect(calls).toBe(1);
+  });
 });
