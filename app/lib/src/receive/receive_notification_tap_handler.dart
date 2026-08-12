@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
+import '../activity/last_activity.dart';
 import 'payload_receiver.dart';
 import 'received_image_repository.dart';
 import 'received_text_repository.dart';
@@ -85,6 +86,31 @@ class ReceiveNotificationTapHandler {
 
   Future<void> copyLatest({required bool image}) {
     return image ? _copyLatestImage() : _copyLatestText();
+  }
+
+  Future<void> copyActivity(LastActivity activity) async {
+    final id = activity.payloadId;
+    if (id == null) {
+      await copyLatest(image: activity.summary.startsWith('image'));
+      return;
+    }
+    if (activity.summary.startsWith('image')) {
+      final image = await imageRepository.loadById(id);
+      if (image == null) {
+        onCopied?.call('This image is no longer available.');
+        return;
+      }
+      await imageClipboard.writeImage(image);
+      onCopied?.call('Image copied from laptop.');
+      return;
+    }
+    final text = await repository.loadById(id);
+    if (text == null) {
+      onCopied?.call('This text is no longer available.');
+      return;
+    }
+    await clipboard.writeText(text);
+    onCopied?.call('Text copied from laptop.');
   }
 
   Future<void> _openClipboardPermissionSettings() async {

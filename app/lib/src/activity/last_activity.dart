@@ -12,6 +12,7 @@ class LastActivity {
     required this.summary,
     required this.counterpart,
     required this.timestamp,
+    this.payloadId,
   });
 
   /// Whether the phone sent this payload or received it.
@@ -24,6 +25,8 @@ class LastActivity {
   final String counterpart;
 
   final DateTime timestamp;
+
+  final String? payloadId;
 
   /// One line for the dashboard row, e.g. "text (14 chars) to laptop · 2m ago".
   String describe({DateTime? now}) {
@@ -44,6 +47,7 @@ class LastActivity {
     'summary': summary,
     'counterpart': counterpart,
     'ts': timestamp.millisecondsSinceEpoch,
+    if (payloadId != null) 'payloadId': payloadId,
   };
 
   static LastActivity? fromJson(Map<String, Object?> json) {
@@ -53,6 +57,7 @@ class LastActivity {
     final summary = json['summary'];
     final counterpart = json['counterpart'];
     final ts = json['ts'];
+    final payloadId = json['payloadId'];
     if (direction == null ||
         summary is! String ||
         counterpart is! String ||
@@ -64,6 +69,7 @@ class LastActivity {
       summary: summary,
       counterpart: counterpart,
       timestamp: DateTime.fromMillisecondsSinceEpoch(ts),
+      payloadId: payloadId is String ? payloadId : null,
     );
   }
 

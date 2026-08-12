@@ -470,6 +470,7 @@ class ServiceRelayController {
           'type': frame.type.wireName,
           'size': _payloadSizeBytes(frame.payload),
           'origin': frame.origin,
+          'payloadId': frame.nonce,
         });
       },
     )..start();

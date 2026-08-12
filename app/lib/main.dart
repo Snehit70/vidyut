@@ -11,6 +11,7 @@ import 'package:vidyut_files/vidyut_files.dart';
 
 import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
+import 'src/activity/recent_activity_screen.dart';
 import 'src/debug/debug_log.dart';
 import 'src/design/palette.dart';
 import 'src/design/theme.dart';
@@ -214,7 +215,7 @@ class _PairingScreenState extends State<PairingScreen>
       ForegroundServiceCoordinator(widget.foregroundServiceClient);
   ConnectionStatus _connectionStatus = ConnectionStatus.offline;
   String? _error;
-  LastActivity? _lastActivity;
+  List<LastActivity> _activities = const [];
   bool _loading = true;
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
   late final TransferHistoryRepository _transferHistory =
@@ -371,19 +372,25 @@ class _PairingScreenState extends State<PairingScreen>
   }
 
   Future<void> _loadLastActivity() async {
-    final activity = await widget.lastActivityRepository.load();
-    if (mounted) setState(() => _lastActivity = activity);
+    final activities = await widget.lastActivityRepository.loadAll();
+    if (mounted) setState(() => _activities = activities);
   }
 
-  Future<void> _copyLastReceived() async {
-    final activity = _lastActivity;
-    final handler = widget.receiveNotificationTapHandler;
-    if (activity == null ||
-        activity.direction != ActivityDirection.received ||
-        handler == null) {
-      return;
-    }
-    await handler.copyLatest(image: activity.summary.startsWith('image'));
+  LastActivity? get _lastActivity => _activities.firstOrNull;
+
+  Future<void> _openRecentActivity() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RecentActivityScreen(
+          activities: _activities,
+          onCopy: (activity) async {
+            if (activity.direction != ActivityDirection.received) return;
+            await widget.receiveNotificationTapHandler?.copyActivity(activity);
+          },
+        ),
+      ),
+    );
+    await _loadLastActivity();
   }
 
   Future<void> _recordReceived(Map<Object?, Object?> data, String message) {
@@ -399,6 +406,9 @@ class _PairingScreenState extends State<PairingScreen>
         summary: summary,
         counterpart: origin is String ? origin : 'laptop',
         timestamp: DateTime.now(),
+        payloadId: data['payloadId'] is String
+            ? data['payloadId'] as String
+            : null,
       ),
     );
   }
@@ -421,7 +431,16 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _record(LastActivity activity) async {
     await widget.lastActivityRepository.record(activity);
-    if (mounted) setState(() => _lastActivity = activity);
+    if (mounted) {
+      setState(() {
+        _activities = [
+          activity,
+          ..._activities.where(
+            (entry) => entry.payloadId != activity.payloadId,
+          ),
+        ].take(30).toList();
+      });
+    }
   }
 
   String _describeReceive(Map<Object?, Object?> data, String message) {
@@ -429,7 +448,7 @@ class _PairingScreenState extends State<PairingScreen>
     final size = data['size'];
     final origin = data['origin'];
     if (type is! String || size is! int || origin is! String) return message;
-    return '$type (${_formatBytes(size)}) from $origin — $message';
+    return '$type (${_formatBytes(size)}) from $origin: $message';
   }
 
   String _formatBytes(int bytes) {
@@ -722,7 +741,18 @@ class _PairingScreenState extends State<PairingScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Vidyut'),
+        title: Row(
+          children: [
+            Image.asset(
+              'assets/icon/icon-legacy.png',
+              width: 32,
+              height: 32,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(width: 10),
+            const Text('Vidyut'),
+          ],
+        ),
         actions: [
           if (paired)
             _AppBarAction(
@@ -772,9 +802,7 @@ class _PairingScreenState extends State<PairingScreen>
                   icon: Icons.history,
                   title: 'Last activity',
                   subtitle: _lastActivity!.describe(),
-                  onTap: _lastActivity!.direction == ActivityDirection.received
-                      ? () => unawaited(_copyLastReceived())
-                      : null,
+                  onTap: () => unawaited(_openRecentActivity()),
                 ).entrance(1),
               ],
               const SizedBox(height: 12),

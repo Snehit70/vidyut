@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'palette.dart';
 
 /// Flat Raspberry Pink theme: white grounds, flat mist/petal surfaces,
-/// 20px radii, pill buttons, Plus Jakarta Sans with weight-driven hierarchy.
+/// 20px radii, rounded-squircle controls, Plus Jakarta Sans with weight-driven hierarchy.
 ThemeData buildVidyutTheme() {
   const scheme = ColorScheme.light(
     primary: Palette.raspberry,
@@ -81,7 +81,7 @@ ThemeData buildVidyutTheme() {
         backgroundColor: Palette.raspberry,
         foregroundColor: Colors.white,
         minimumSize: const Size.fromHeight(54),
-        shape: const StadiumBorder(),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         textStyle: style(15, FontWeight.w600, color: Colors.white),
       ),
     ),
@@ -89,7 +89,7 @@ ThemeData buildVidyutTheme() {
       style: OutlinedButton.styleFrom(
         foregroundColor: Palette.raspberry,
         minimumSize: const Size.fromHeight(54),
-        shape: const StadiumBorder(),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         side: const BorderSide(color: Palette.petal, width: 1.5),
         textStyle: style(15, FontWeight.w600, color: Palette.raspberry),
       ),
@@ -122,6 +122,13 @@ ThemeData buildVidyutTheme() {
       labelStyle: style(14, FontWeight.w500, color: Palette.muted),
       floatingLabelStyle: style(12, FontWeight.w600, color: Palette.raspberry),
       prefixIconColor: Palette.muted,
+    ),
+    chipTheme: ChipThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      side: const BorderSide(color: Palette.petal, width: 1.5),
+      backgroundColor: Palette.ground,
+      selectedColor: Palette.petal,
+      labelStyle: style(14, FontWeight.w600),
     ),
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith(

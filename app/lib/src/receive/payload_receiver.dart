@@ -282,7 +282,7 @@ class PayloadReceiver {
       switch (frame.type) {
         case PayloadType.text:
           final text = utf8.decode(plaintext);
-          await receivedTextRepository.saveLatest(text);
+          await receivedTextRepository.saveLatest(text, id: frame.nonce);
           final outcome = await _tryWrite(() => clipboard.writeText(text));
           await notifier.showTextReceipt(
             _preview(text),
@@ -291,9 +291,10 @@ class PayloadReceiver {
           await _maybeShowMiuiHint(outcome);
           return PayloadReceiveResult.received(_message('Text', outcome));
         case PayloadType.image:
-          final image = await receivedImageRepository.saveLatest(
+          final image = await receivedImageRepository.save(
             plaintext,
             frame.mime,
+            id: frame.nonce,
           );
           final outcome = await _tryWrite(
             () => imageClipboard.writeImage(image),
