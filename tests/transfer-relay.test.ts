@@ -171,4 +171,28 @@ describe("relay transfer control", () => {
     await disconnected;
     expect(calls).toBe(1);
   });
+
+  test("notifies connect only for the first socket of a device", async () => {
+    let calls = 0;
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      deviceConnected: () => {
+        calls++;
+      },
+    });
+    const first = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(first, secret, "phone");
+    await Bun.sleep(10);
+    expect(calls).toBe(1);
+
+    const second = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(second, secret, "phone");
+    await Bun.sleep(10);
+    expect(calls).toBe(1);
+    first.close();
+    second.close();
+  });
 });

@@ -168,7 +168,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
           );
           if (socket.data.authenticated) {
-            notifyDeviceConnected(options.deviceConnected, socket.data.deviceId);
+            notifyDeviceConnected(
+              devices,
+              options.deviceConnected,
+              socket.data.deviceId,
+            );
           }
           return;
         }
@@ -318,10 +322,19 @@ function notifyDeviceDisconnected(
 }
 
 function notifyDeviceConnected(
+  devices: Set<RelaySocket>,
   callback: RelayOptions["deviceConnected"],
   deviceId: string | undefined,
 ): void {
   if (!callback || !deviceId) return;
+  if (
+    [...devices].filter(
+      (socket) =>
+        socket.data.authenticated && socket.data.deviceId === deviceId,
+    ).length !== 1
+  ) {
+    return;
+  }
   void Promise.resolve()
     .then(() => callback(deviceId))
     .catch(() => undefined);

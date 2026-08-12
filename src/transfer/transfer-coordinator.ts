@@ -65,9 +65,7 @@ export class TransferCoordinator {
           .filter(
             (file) =>
               batch.sourceDeviceId === deviceId &&
-              (file.status === "active" ||
-                file.status === "verifying" ||
-                file.status === "finalizing"),
+              file.status === "active",
           )
           .map((file) => ({ batch, file })),
       );
