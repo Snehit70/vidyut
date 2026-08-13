@@ -16,6 +16,8 @@ import 'clipboard_autosend_screen.dart';
 
 typedef AppSettingsChanged = Future<void> Function(AppSettings settings);
 
+const _rowPadding = EdgeInsets.fromLTRB(16, 8, 12, 8);
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -63,7 +65,13 @@ class SettingsScreen extends StatefulWidget {
   /// channels and network access.
   final ApkInstaller? apkInstaller;
   final VidyutFiles? files;
+
+  /// Display name for the paired laptop in the Connection section. The
+  /// section omits this row when [paired] is false.
   final String? pairedDeviceName;
+
+  /// Host and port for the paired laptop in the Connection section. The
+  /// section omits this row when [paired] is false.
   final String? pairedDeviceAddress;
 
   @override
@@ -408,7 +416,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final pairedDevice = widget.paired
         ? ListTile(
-            contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+            contentPadding: _rowPadding,
             leading: const Icon(Icons.laptop_mac_outlined),
             title: Text(widget.pairedDeviceName ?? 'Paired laptop'),
             subtitle: Text(widget.pairedDeviceAddress ?? 'Connected locally'),
@@ -424,7 +432,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Appearance',
             children: [
               ListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 leading: Icon(switch (_settings.themeMode) {
                   AppThemeMode.system => Icons.brightness_auto_outlined,
                   AppThemeMode.light => Icons.light_mode_outlined,
@@ -442,7 +450,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               // Master switch: it governs all syncing (ADR 0006).
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.showPersistentSendNotification,
                 title: const Text('Sync with laptop'),
                 subtitle: const Text(
@@ -459,7 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Clipboard & screenshots',
             children: [
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.autoPushScreenshots,
                 title: const Text('Auto-send screenshots'),
                 subtitle: const Text(
@@ -471,7 +479,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (widget.clipboardAutoSendWatcher != null)
                 ListTile(
-                  contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                  contentPadding: _rowPadding,
                   title: const Text('Clipboard auto-send'),
                   subtitle: const Text(
                     'Optional one-time computer setup for automatic text sharing.',
@@ -485,7 +493,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Files',
             children: [
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.receiveFiles,
                 title: const Text('Receive files'),
                 subtitle: const Text(
@@ -495,7 +503,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _updateSettings(_settings.copyWith(receiveFiles: value)),
               ),
               ListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 title: const Text('Save received files to'),
                 subtitle: Text(_filesDestination),
                 trailing: const Icon(Icons.folder_outlined),
@@ -504,14 +512,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     : () => unawaited(_chooseFilesDestination()),
               ),
               ListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 title: const Text('Maximum file size'),
                 subtitle: Text(_transferSize(_settings.maxTransferFileBytes)),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _chooseMaxTransferSize,
               ),
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.allowMeteredFileTransfers,
                 title: const Text('Allow metered Wi-Fi'),
                 subtitle: const Text(
@@ -522,7 +530,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.fileTransferAlerts,
                 title: const Text('File transfer alerts'),
                 subtitle: const Text(
@@ -538,7 +546,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: 'Notifications',
             children: [
               SwitchListTile(
-                contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                contentPadding: _rowPadding,
                 value: _settings.showReceiveNotifications,
                 title: const Text('Notify when laptop payloads arrive'),
                 subtitle: const Text(
@@ -555,7 +563,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               if (widget.setupLoader != null)
                 ListTile(
-                  contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                  contentPadding: _rowPadding,
                   title: const Text('Setup status'),
                   subtitle: const Text(
                     'Permissions, battery, and Xiaomi switches.',
@@ -565,7 +573,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               if (widget.debugLog != null)
                 ListTile(
-                  contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                  contentPadding: _rowPadding,
                   title: const Text('Debug log'),
                   subtitle: const Text(
                     'Timestamped connection and payload events.',
@@ -580,7 +588,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'About',
               children: [
                 ListTile(
-                  contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                  contentPadding: _rowPadding,
                   title: const Text('Check for updates'),
                   subtitle: Text(
                     _appVersion == null
@@ -605,7 +613,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Danger zone',
               children: [
                 ListTile(
-                  contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                  contentPadding: _rowPadding,
                   leading: Icon(
                     Icons.link_off,
                     color: Theme.of(context).colorScheme.error,
