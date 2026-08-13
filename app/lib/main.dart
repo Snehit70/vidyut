@@ -713,6 +713,7 @@ class _PairingScreenState extends State<PairingScreen>
         builder: (_) => TransferFilesScreen(
           history: _transferHistory,
           sender: _transferSender,
+          onOpenHome: () => Navigator.of(context).pop(),
           onOpenSettings: _openSettings,
           onOpenFile: (file) => _runTransferFileAction(
             'Open file',
