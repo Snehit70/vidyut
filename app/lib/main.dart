@@ -252,6 +252,8 @@ class _PairingScreenState extends State<PairingScreen>
   ConnectionStatus _connectionStatus = ConnectionStatus.offline;
   String? _error;
   List<LastActivity> _activities = const [];
+  var _activityRevision = 0;
+  var _activityLoadGeneration = 0;
   bool _loading = true;
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
   late final TransferHistoryRepository _transferHistory =
@@ -297,6 +299,8 @@ class _PairingScreenState extends State<PairingScreen>
     _activitySubscription = widget.lastActivityRepository.changes.listen((
       activities,
     ) {
+      _activityRevision++;
+      _activityLoadGeneration++;
       if (mounted) setState(() => _activities = activities);
     });
     _relativeTimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -433,8 +437,15 @@ class _PairingScreenState extends State<PairingScreen>
   }
 
   Future<void> _loadLastActivity() async {
+    final generation = ++_activityLoadGeneration;
+    final revision = _activityRevision;
     final activities = await widget.lastActivityRepository.loadAll();
-    if (mounted) setState(() => _activities = activities);
+    if (!mounted ||
+        generation != _activityLoadGeneration ||
+        revision != _activityRevision) {
+      return;
+    }
+    setState(() => _activities = activities);
   }
 
   LastActivity? get _lastActivity => _activities.firstOrNull;
@@ -498,6 +509,8 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _record(LastActivity activity) async {
     await widget.lastActivityRepository.record(activity);
+    _activityRevision++;
+    _activityLoadGeneration++;
     final activities = await widget.lastActivityRepository.loadAll();
     if (mounted) {
       setState(() => _activities = activities);
