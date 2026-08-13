@@ -117,6 +117,7 @@ class VidyutApp extends StatefulWidget {
 
 class _VidyutAppState extends State<VidyutApp> {
   AppThemeMode _themeMode = AppThemeMode.system;
+  var _themeModeRevision = 0;
 
   @override
   void initState() {
@@ -125,11 +126,15 @@ class _VidyutAppState extends State<VidyutApp> {
   }
 
   Future<void> _loadThemeMode() async {
+    final revision = _themeModeRevision;
     final settings = await widget.appSettingsRepository.load();
-    if (mounted) setState(() => _themeMode = settings.themeMode);
+    if (mounted && revision == _themeModeRevision) {
+      setState(() => _themeMode = settings.themeMode);
+    }
   }
 
   void _setThemeMode(AppThemeMode mode) {
+    _themeModeRevision++;
     if (mounted) setState(() => _themeMode = mode);
   }
 
@@ -768,6 +773,7 @@ class _PairingScreenState extends State<PairingScreen>
 
     final paired = _pairing != null;
     if (paired) {
+      final setupNeedsAttention = _setupStatus?.bannerNeeded(_settings) == true;
       return HomeScreen(
         connectionStatus: _connectionStatus,
         relayHealth: _relayHealth,
@@ -777,6 +783,16 @@ class _PairingScreenState extends State<PairingScreen>
         onOpenRecentActivity: () => unawaited(_openRecentActivity()),
         onOpenConnectionDetails: () => unawaited(_showConnectionHelp()),
         onSendFiles: () => unawaited(_openFiles()),
+        setupBannerLabel: setupNeedsAttention
+            ? _setupStatus!.bannerLabel(_settings)
+            : null,
+        onOpenSetup: setupNeedsAttention
+            ? () => unawaited(
+                _setupStatus!.onboardingComplete
+                    ? _openChecklist()
+                    : _openWizard(),
+              )
+            : null,
       );
     }
 
