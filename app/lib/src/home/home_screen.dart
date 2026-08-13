@@ -18,6 +18,8 @@ class HomeScreen extends StatelessWidget {
     required this.onOpenRecentActivity,
     required this.onOpenConnectionDetails,
     required this.onSendFiles,
+    this.setupBannerLabel,
+    this.onOpenSetup,
   });
 
   final ConnectionStatus connectionStatus;
@@ -28,6 +30,8 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onOpenRecentActivity;
   final VoidCallback onOpenConnectionDetails;
   final VoidCallback onSendFiles;
+  final String? setupBannerLabel;
+  final VoidCallback? onOpenSetup;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +91,13 @@ class HomeScreen extends StatelessWidget {
                   activity: lastActivity,
                   onTap: onOpenRecentActivity,
                 ),
+                if (setupBannerLabel != null && onOpenSetup != null) ...[
+                  const SizedBox(height: 20),
+                  _HomeSetupBanner(
+                    label: setupBannerLabel!,
+                    onTap: onOpenSetup!,
+                  ),
+                ],
                 if (constraints.maxWidth >= 600) const SizedBox(height: 16),
               ],
             );
@@ -247,7 +258,9 @@ class _SyncStatusPanel extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: 'Connection details',
+      container: true,
+      excludeSemantics: true,
+      label: '${state.label}. ${state.description}',
       child: Material(
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(16),
@@ -371,7 +384,9 @@ class _LatestActivitySection extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     return Semantics(
       button: true,
-      label: 'Latest activity',
+      container: true,
+      excludeSemantics: true,
+      label: 'Latest activity. ${activity?.describe() ?? 'Nothing shared yet'}',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -387,6 +402,37 @@ class _LatestActivitySection extends StatelessWidget {
                 _ActivityRow(activity: activity),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeSetupBanner extends StatelessWidget {
+  const _HomeSetupBanner({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.tune, size: 20, color: scheme.primary),
+              const SizedBox(width: 10),
+              Expanded(child: Text(label)),
+              Icon(Icons.chevron_right, size: 20, color: scheme.primary),
+            ],
           ),
         ),
       ),

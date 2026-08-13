@@ -133,4 +133,61 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('renders searching and offline states in both themes', (
+    tester,
+  ) async {
+    for (final theme in [buildVidyutTheme(), buildVidyutDarkTheme()]) {
+      for (final entry in {
+        ConnectionStatus.searching: 'Searching',
+        ConnectionStatus.offline: 'Offline',
+      }.entries) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: HomeScreen(
+              connectionStatus: entry.key,
+              onOpenFiles: () {},
+              onOpenSettings: () {},
+              onOpenRecentActivity: () {},
+              onOpenConnectionDetails: () {},
+              onSendFiles: () {},
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(find.text(entry.value), findsOneWidget);
+      }
+    }
+  });
+
+  testWidgets('keeps setup recovery visible when paired', (tester) async {
+    var setupOpened = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          setupBannerLabel: 'Notifications are off',
+          onOpenSetup: () => setupOpened = true,
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Notifications are off'), findsOneWidget);
+    await tester.tap(find.text('Notifications are off'));
+    expect(setupOpened, isTrue);
+  });
 }
