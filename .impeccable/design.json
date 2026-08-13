@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-13T00:00:00.000Z",
+  "title": "Design System: Vidyut",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Raspberry",
+        "canonical": "#D9486E",
+        "tonalRamp": ["#FFF7F9", "#FDF0F4", "#F8D3DE", "#D9486E", "#8F2949"]
+      },
+      "on-surface": {
+        "role": "neutral",
+        "displayName": "Plum Ink",
+        "canonical": "#33202B",
+        "tonalRamp": ["#FFFFFF", "#FDF0F4", "#E9CBD5", "#8F717E", "#33202B"]
+      },
+      "dark-surface": {
+        "role": "surface",
+        "displayName": "Deep Plum",
+        "canonical": "#171116",
+        "tonalRamp": ["#171116", "#241A20", "#34242C", "#D4B8C4", "#F8EAF0"]
+      }
+    },
+    "typographyMeta": {
+      "display": {"displayName": "Display", "purpose": "Primary operational statement, used sparingly."},
+      "body": {"displayName": "Body", "purpose": "Readable operational copy and metadata."}
+    },
+    "shadows": [
+      {"name": "standard-material", "value": "platform-defined", "purpose": "Dialogs, sheets, and genuinely floating controls only."}
+    ],
+    "motion": [
+      {"name": "standard-state", "value": "200ms Material standard easing", "purpose": "Ordinary state and component transitions."},
+      {"name": "status-transition", "value": "300ms Material emphasized easing", "purpose": "Connection, success, and status changes."},
+      {"name": "search-pulse", "value": "1400ms restrained repeat", "purpose": "Searching state only; disabled under reduced motion."}
+    ],
+    "breakpoints": [
+      {"name": "compact", "value": "phone width", "purpose": "App-bar Files route and no persistent bottom navigation."},
+      {"name": "expanded", "value": "large Android window", "purpose": "Material navigation rail and recomposed layout."}
+    ],
+    "narrative": {
+      "northStar": "The Quiet Bridge",
+      "overview": "A calm, precise Android utility that makes local sharing feel immediate and trustworthy. Material 3 governs structure; Vidyut expresses itself through disciplined raspberry color, Manrope typography, geometric softness, tonal depth, and purposeful motion.",
+      "keyCharacteristics": ["Operational clarity", "Geometric softness", "Tonal depth", "State-legible", "Android-native"],
+      "rules": [
+        {"name": "The Signal Clarity Rule", "body": "Important state is never communicated through color alone.", "section": "colors"},
+        {"name": "The One Family Rule", "body": "Manrope is the only product typeface.", "section": "typography"},
+        {"name": "The Tonal Depth Rule", "body": "Use tonal layering before shadow.", "section": "elevation"}
+      ],
+      "dos": ["Use shared tokens and state-aware primitives.", "Design light and dark states together.", "Honor text scaling and reduced motion."],
+      "donts": ["Do not add a persistent compact-phone bottom bar.", "Do not make every surface a large rounded card.", "Do not add undocumented visual values."]
+    }
+  }
+}

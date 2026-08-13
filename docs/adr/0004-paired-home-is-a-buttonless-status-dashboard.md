@@ -1,5 +1,7 @@
 # Paired home is a buttonless status dashboard
 
+> Status: superseded by ADR 0009
+
 Usage is notification-first: once paired, the app is driven from the persistent
 notification and the share sheet, and the app itself is opened mainly to answer
 "is it working?". So the paired home screen is a **dashboard, not an action
