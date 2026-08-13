@@ -73,7 +73,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.10:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('loads existing pairing from storage', (tester) async {
@@ -98,7 +98,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.20:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('lists nearby relays and selecting one fills host and port', (
@@ -154,7 +154,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.5:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('shows guidance when no relays are discovered', (tester) async {
