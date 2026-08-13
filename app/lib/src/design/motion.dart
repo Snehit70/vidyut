@@ -10,5 +10,5 @@ abstract final class Motion {
   static const stagger = Duration(milliseconds: 50);
   static const state = Duration(milliseconds: 250);
   static const pressDown = Duration(milliseconds: 100);
-  static const pressUp = Duration(milliseconds: 180);
+  static const pressUp = Duration(milliseconds: 150);
 }

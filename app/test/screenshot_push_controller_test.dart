@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
 import 'package:vidyut/src/pairing/pairing_code.dart';
+import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/push/screenshot_push_controller.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
@@ -131,6 +132,8 @@ void main() {
       () => harness.logs.contains('screenshot_skipped id=5 reason=read_failed'),
     );
     expect(harness.published, isEmpty);
+    expect(harness.activities, hasLength(1));
+    expect(harness.activities.single.outcome, ActivityOutcome.failed);
   });
 
   test('skips an oversized screenshot before reading it', () async {
@@ -150,6 +153,7 @@ void main() {
 
     expect(reads, 0);
     expect(harness.logs, contains('screenshot_skipped id=6 reason=too_large'));
+    expect(harness.activities.single.outcome, ActivityOutcome.failed);
   });
 
   test('re-checks the actual byte length against the hello cap', () async {
@@ -165,6 +169,7 @@ void main() {
       () => harness.logs.contains('screenshot_skipped id=8 reason=too_large'),
     );
     expect(harness.published, isEmpty);
+    expect(harness.activities.single.outcome, ActivityOutcome.failed);
   });
 
   test(
@@ -243,6 +248,7 @@ void main() {
     await harness.reconnect();
     await _drain();
     expect(harness.published, hasLength(1));
+    expect(harness.activities.single.outcome, ActivityOutcome.failed);
   });
 
   test('clearPending drops a held frame so toggle-off stays silent', () async {
@@ -314,6 +320,7 @@ class _Harness {
       emit: (message) {
         if (message['kind'] == 'log') logs.add(message['message'] as String);
       },
+      onActivity: activities.add,
       // Fast retries keep the read_failed test quick.
       readRetryDelay: const Duration(milliseconds: 5),
     );
@@ -327,6 +334,7 @@ class _Harness {
 
   late final ScreenshotPushController controller;
   final logs = <String>[];
+  final activities = <LastActivity>[];
 
   /// Frames that went out on the current transport, decoded.
   final published = <Map<String, Object?>>[];

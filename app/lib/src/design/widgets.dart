@@ -15,6 +15,7 @@ class PulsingDot extends StatefulWidget {
 
 class _PulsingDotState extends State<PulsingDot>
     with SingleTickerProviderStateMixin {
+  bool _animate = false;
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1400),
@@ -23,7 +24,19 @@ class _PulsingDotState extends State<PulsingDot>
   @override
   void initState() {
     super.initState();
-    if (Motion.loopsEnabled) _controller.repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final animate =
+        Motion.loopsEnabled && !MediaQuery.disableAnimationsOf(context);
+    _animate = animate;
+    if (animate) {
+      if (!_controller.isAnimating) _controller.repeat();
+    } else {
+      _controller.stop();
+    }
   }
 
   @override
@@ -34,14 +47,21 @@ class _PulsingDotState extends State<PulsingDot>
 
   @override
   Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (!_animate) {
+      final halo = widget.size * 2.6;
       return SizedBox(
-        width: widget.size,
-        height: widget.size,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: widget.color ?? Theme.of(context).colorScheme.primary,
-            shape: BoxShape.circle,
+        width: halo,
+        height: halo,
+        child: Center(
+          child: SizedBox(
+            width: widget.size,
+            height: widget.size,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: widget.color ?? Theme.of(context).colorScheme.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
           ),
         ),
       );

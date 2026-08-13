@@ -67,5 +67,13 @@ void main() {
     expect(find.text('Press content'), findsOneWidget);
     expect(find.byType(Entrance), findsOneWidget);
     expect(find.byType(AnimatedScale), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(PulsingDot),
+        matching: find.byType(AnimatedBuilder),
+      ),
+      findsNothing,
+    );
+    expect(tester.getSize(find.byType(PulsingDot)), const Size(26, 26));
   });
 }

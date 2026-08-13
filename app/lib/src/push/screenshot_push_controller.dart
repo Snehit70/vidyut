@@ -327,6 +327,25 @@ class ScreenshotPushController {
 
   void _skip(int id, String reason) {
     _event('screenshot_skipped', {'id': id, 'reason': reason});
+    if (reason != 'read_failed' && reason != 'too_large') return;
+    final recorder = onActivity;
+    if (recorder == null) return;
+    unawaited(
+      Future<void>.sync(
+        () => recorder(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: reason == 'too_large'
+                ? 'screenshot (too large)'
+                : 'screenshot (unavailable)',
+            counterpart: 'laptop',
+            timestamp: _clock(),
+            payloadId: 'screenshot:$id:$reason',
+            outcome: ActivityOutcome.failed,
+          ),
+        ),
+      ),
+    );
   }
 
   /// Instrumentation events (§8) ride the debug log as one greppable line:
