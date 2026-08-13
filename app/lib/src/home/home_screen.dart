@@ -31,6 +31,7 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final expanded = MediaQuery.sizeOf(context).width >= 600;
     final state = _HomeSyncState.from(
       connectionStatus: connectionStatus,
       relayHealth: relayHealth,
@@ -54,11 +55,12 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
         actions: [
-          _HomeAppBarAction(
-            tooltip: 'Files',
-            icon: Icons.folder_outlined,
-            onPressed: onOpenFiles,
-          ),
+          if (!expanded)
+            _HomeAppBarAction(
+              tooltip: 'Files',
+              icon: Icons.folder_outlined,
+              onPressed: onOpenFiles,
+            ),
           _HomeAppBarAction(
             tooltip: 'Settings',
             icon: Icons.settings_outlined,
@@ -88,12 +90,39 @@ class HomeScreen extends StatelessWidget {
                 if (constraints.maxWidth >= 600) const SizedBox(height: 16),
               ],
             );
-            return Align(
+            final constrainedContent = Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),
                 child: content,
               ),
+            );
+            if (!expanded) return constrainedContent;
+            return Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: 0,
+                  onDestinationSelected: (index) {
+                    if (index == 1) onOpenFiles();
+                  },
+                  labelType: NavigationRailLabelType.all,
+                  groupAlignment: -0.8,
+                  destinations: const [
+                    NavigationRailDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: Text('Home'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(Icons.folder_outlined),
+                      selectedIcon: Icon(Icons.folder),
+                      label: Text('Files'),
+                    ),
+                  ],
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: constrainedContent),
+              ],
             );
           },
         ),

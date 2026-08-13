@@ -10,6 +10,9 @@ void main() {
   testWidgets('prioritizes sync, sending files, and latest activity', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     var filesOpened = false;
     var settingsOpened = false;
     var activityOpened = false;
@@ -62,6 +65,41 @@ void main() {
     expect(settingsOpened, isTrue);
     expect(activityOpened, isTrue);
     expect(detailsOpened, isTrue);
+  });
+
+  testWidgets('uses a navigation rail on expanded widths', (tester) async {
+    tester.view.physicalSize = const Size(900, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var filesOpened = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          onOpenFiles: () => filesOpened = true,
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Files'), findsOneWidget);
+    expect(find.byTooltip('Files'), findsNothing);
+
+    await tester.tap(find.text('Files'));
+    expect(filesOpened, isTrue);
   });
 
   testWidgets('labels a connected but degraded clipboard path precisely', (
