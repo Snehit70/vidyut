@@ -879,6 +879,8 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _showConnectionHelp() async {
     final degraded = _relayHealth?.degraded == true;
+    final pairing = _pairing;
+    final relayName = _relayHealth?.relayName ?? pairing?.name;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -896,6 +898,23 @@ class _PairingScreenState extends State<PairingScreen>
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 12),
+              if (relayName != null || pairing != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer,
+                    foregroundColor: Theme.of(
+                      context,
+                    ).colorScheme.onPrimaryContainer,
+                    child: const Icon(Icons.laptop_mac_outlined),
+                  ),
+                  title: Text(relayName ?? 'Paired laptop'),
+                  subtitle: pairing == null
+                      ? null
+                      : Text('${pairing.host}:${pairing.port}'),
+                ),
               Text(
                 degraded
                     ? (_relayHealth?.clipboardError ??
