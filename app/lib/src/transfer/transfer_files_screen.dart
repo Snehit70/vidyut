@@ -13,6 +13,7 @@ class TransferFilesScreen extends StatefulWidget {
     required this.history,
     required this.sender,
     this.onOpenSettings,
+    this.onOpenHome,
     this.onOpenFile,
     this.onShareFile,
     this.onSendAgain,
@@ -22,6 +23,7 @@ class TransferFilesScreen extends StatefulWidget {
   final TransferHistoryRepository history;
   final PhoneTransferSender sender;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenHome;
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
@@ -254,6 +256,117 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     final showEmpty = !_loading && _batches.isEmpty;
     final showNoResults = !_loading && _batches.isNotEmpty && visible.isEmpty;
     final selectionMode = _selectedTransferIds.isNotEmpty;
+    final content = _loading
+        ? const Center(child: CircularProgressIndicator())
+        : CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _SummaryStrip(batches: _batches),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: TextField(
+                    controller: _search,
+                    decoration: const InputDecoration(
+                      hintText: 'Search filenames',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                sliver: SliverToBoxAdapter(child: _buildFilters()),
+              ),
+              if (showEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyFiles(onSend: _chooseFiles),
+                )
+              else if (showNoResults)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _NoResults(onClear: _clearFilters),
+                )
+              else ...[
+                if (_liveProgress != null && _liveProgressIsVisible)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: _LiveTransferCard(
+                        progress: _liveProgress!,
+                        onCancel: _canCancelLive(_liveProgress!)
+                            ? () => widget.sender.cancelBatch(
+                                _liveProgress!.transferId!,
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                if (active.isNotEmpty) ...[
+                  _sectionHeader('Active'),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    sliver: SliverList.builder(
+                      itemCount: active.length,
+                      itemBuilder: (_, index) => Padding(
+                        padding: EdgeInsets.only(
+                          bottom: index == active.length - 1 ? 0 : 10,
+                        ),
+                        child: _TransferRow(
+                          batch: active[index],
+                          onRetry: null,
+                          onCancel: _cancelCallback(active[index]),
+                          onRemove: () => _remove(active[index]),
+                          onTap: () => _showBatchDetails(active[index]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                for (final entry in groupedHistory.entries) ...[
+                  _sectionHeader(entry.key),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    sliver: SliverList.builder(
+                      itemCount: entry.value.length,
+                      itemBuilder: (_, index) {
+                        final batch = entry.value[index];
+                        final canSelect = _canRemoveFromHistory(batch);
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            bottom: index == entry.value.length - 1 ? 0 : 10,
+                          ),
+                          child: _TransferRow(
+                            batch: batch,
+                            onRetry: _retryCallback(batch),
+                            onCancel: _cancelCallback(batch),
+                            onRemove: () => _remove(batch),
+                            onOpenSettings: widget.onOpenSettings,
+                            onTap: selectionMode && canSelect
+                                ? () => _toggleSelection(batch)
+                                : () => _showBatchDetails(batch),
+                            onLongPress: canSelect
+                                ? () => _toggleSelection(batch)
+                                : null,
+                            selected: _selectedTransferIds.contains(
+                              batch.transferId,
+                            ),
+                            selectionMode: selectionMode,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                const SliverPadding(padding: EdgeInsets.only(bottom: 112)),
+              ],
+            ],
+          );
     return Scaffold(
       appBar: _buildAppBar(selectionMode),
       floatingActionButton: FloatingActionButton.extended(
@@ -262,117 +375,45 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         label: const Text('Send files'),
       ),
       bottomNavigationBar: selectionMode ? _buildSelectionBar() : null,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: _SummaryStrip(batches: _batches),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 600) return content;
+          return Row(
+            children: [
+              NavigationRail(
+                selectedIndex: 1,
+                onDestinationSelected: (index) {
+                  if (index == 0) widget.onOpenHome?.call();
+                },
+                labelType: NavigationRailLabelType.all,
+                groupAlignment: -0.8,
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home),
+                    label: Text('Home'),
                   ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: TextField(
-                      controller: _search,
-                      decoration: const InputDecoration(
-                        hintText: 'Search filenames',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                    ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.folder_outlined),
+                    selectedIcon: Icon(Icons.folder),
+                    label: Text('Files'),
                   ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  sliver: SliverToBoxAdapter(child: _buildFilters()),
-                ),
-                if (showEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _EmptyFiles(onSend: _chooseFiles),
-                  )
-                else if (showNoResults)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _NoResults(onClear: _clearFilters),
-                  )
-                else ...[
-                  if (_liveProgress != null && _liveProgressIsVisible)
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: _LiveTransferCard(
-                          progress: _liveProgress!,
-                          onCancel: _canCancelLive(_liveProgress!)
-                              ? () => widget.sender.cancelBatch(
-                                  _liveProgress!.transferId!,
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                  if (active.isNotEmpty) ...[
-                    _sectionHeader('Active'),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      sliver: SliverList.builder(
-                        itemCount: active.length,
-                        itemBuilder: (_, index) => Padding(
-                          padding: EdgeInsets.only(
-                            bottom: index == active.length - 1 ? 0 : 10,
-                          ),
-                          child: _TransferRow(
-                            batch: active[index],
-                            onRetry: null,
-                            onCancel: _cancelCallback(active[index]),
-                            onRemove: () => _remove(active[index]),
-                            onTap: () => _showBatchDetails(active[index]),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  for (final entry in groupedHistory.entries) ...[
-                    _sectionHeader(entry.key),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      sliver: SliverList.builder(
-                        itemCount: entry.value.length,
-                        itemBuilder: (_, index) {
-                          final batch = entry.value[index];
-                          final canSelect = _canRemoveFromHistory(batch);
-                          return Padding(
-                            padding: EdgeInsets.only(
-                              bottom: index == entry.value.length - 1 ? 0 : 10,
-                            ),
-                            child: _TransferRow(
-                              batch: batch,
-                              onRetry: _retryCallback(batch),
-                              onCancel: _cancelCallback(batch),
-                              onRemove: () => _remove(batch),
-                              onOpenSettings: widget.onOpenSettings,
-                              onTap: selectionMode && canSelect
-                                  ? () => _toggleSelection(batch)
-                                  : () => _showBatchDetails(batch),
-                              onLongPress: canSelect
-                                  ? () => _toggleSelection(batch)
-                                  : null,
-                              selected: _selectedTransferIds.contains(
-                                batch.transferId,
-                              ),
-                              selectionMode: selectionMode,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  const SliverPadding(padding: EdgeInsets.only(bottom: 112)),
                 ],
-              ],
-            ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 800),
+                    child: content,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
