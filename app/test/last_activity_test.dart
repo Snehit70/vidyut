@@ -143,6 +143,33 @@ void main() {
     });
   });
 
+  test('keeps concurrent repository-isolate writes in the timeline', () async {
+    final storage = MemoryLastActivityStorage();
+    final first = LastActivityRepository(storage);
+    final second = LastActivityRepository(storage);
+
+    await Future.wait([
+      first.record(
+        LastActivity(
+          direction: ActivityDirection.sent,
+          summary: 'text (1 chars)',
+          counterpart: 'laptop',
+          timestamp: DateTime(2026, 1, 1, 0, 0, 1),
+        ),
+      ),
+      second.record(
+        LastActivity(
+          direction: ActivityDirection.received,
+          summary: 'text (2 chars)',
+          counterpart: 'laptop',
+          timestamp: DateTime(2026, 1, 1, 0, 0, 2),
+        ),
+      ),
+    ]);
+
+    expect(await first.loadAll(), hasLength(2));
+  });
+
   test('serializes concurrent received text history writes', () async {
     final repo = ReceivedTextRepository(MemoryReceivedPayloadStorage());
     await Future.wait([

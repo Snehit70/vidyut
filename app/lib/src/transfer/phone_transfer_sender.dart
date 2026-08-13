@@ -627,6 +627,7 @@ class PhoneTransferSender {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     final deadline = DateTime.now().add(timeout);
+    var delay = const Duration(milliseconds: 100);
     while (true) {
       final batch = (await history.load())
           .where((item) => item.transferId == transferId)
@@ -641,7 +642,11 @@ class PhoneTransferSender {
       if (!DateTime.now().isBefore(deadline)) {
         throw TimeoutException('Timed out waiting for transfer $transferId.');
       }
-      await Future<void>.delayed(const Duration(milliseconds: 1));
+      await Future<void>.delayed(delay);
+      if (delay < const Duration(seconds: 2)) {
+        final nextMilliseconds = (delay.inMilliseconds * 2).clamp(100, 2000);
+        delay = Duration(milliseconds: nextMilliseconds);
+      }
     }
   }
 

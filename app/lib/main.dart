@@ -497,17 +497,9 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _record(LastActivity activity) async {
     await widget.lastActivityRepository.record(activity);
+    final activities = await widget.lastActivityRepository.loadAll();
     if (mounted) {
-      setState(() {
-        _activities = [
-          activity,
-          ..._activities.where(
-            (entry) =>
-                activity.payloadId == null ||
-                entry.payloadId != activity.payloadId,
-          ),
-        ].take(30).toList();
-      });
+      setState(() => _activities = activities);
     }
   }
 

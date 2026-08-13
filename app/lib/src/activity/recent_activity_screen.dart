@@ -77,6 +77,11 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
                 final received =
                     activity.direction == ActivityDirection.received;
                 final failed = activity.outcome == ActivityOutcome.failed;
+                final copyable =
+                    received &&
+                    !failed &&
+                    (activity.summary.startsWith('text') ||
+                        activity.summary.startsWith('image'));
                 final direction = failed
                     ? 'Failed'
                     : received
@@ -133,7 +138,7 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
                           ],
                         ),
                       ),
-                      if (received && !failed)
+                      if (copyable)
                         IconButton(
                           tooltip: 'Copy item',
                           onPressed: () => widget.onCopy(activity),
