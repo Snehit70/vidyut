@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'palette.dart';
 
@@ -55,7 +54,7 @@ ThemeData _buildVidyutTheme(Brightness brightness) {
     useMaterial3: true,
     brightness: brightness,
   );
-  final manrope = GoogleFonts.manropeTextTheme(base.textTheme);
+  final manrope = base.textTheme.apply(fontFamily: 'Manrope');
   final ink = dark ? Palette.darkInk : Palette.ink;
   final muted = dark ? Palette.darkMuted : Palette.muted;
 
@@ -64,7 +63,8 @@ ThemeData _buildVidyutTheme(Brightness brightness) {
     FontWeight weight, {
     Color? color,
     double? tracking,
-  }) => GoogleFonts.manrope(
+  }) => TextStyle(
+    fontFamily: 'Manrope',
     fontSize: size,
     fontWeight: weight,
     color: color ?? ink,
