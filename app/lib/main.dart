@@ -382,7 +382,7 @@ class _PairingScreenState extends State<PairingScreen>
           );
           if (failed) {
             _showSnack(message);
-          } else {
+          } else if (data['activityHandled'] != true) {
             unawaited(_recordReceived(data, message));
           }
         }
@@ -444,6 +444,7 @@ class _PairingScreenState extends State<PairingScreen>
         builder: (_) => RecentActivityScreen(
           activities: _activities,
           activityChanges: widget.lastActivityRepository.changes,
+          loadActivities: widget.lastActivityRepository.loadAll,
           onCopy: (activity) async {
             if (activity.direction != ActivityDirection.received) return;
             await widget.receiveNotificationTapHandler?.copyActivity(activity);
@@ -511,9 +512,20 @@ class _PairingScreenState extends State<PairingScreen>
   }
 
   Future<void> _recordTransferResult(PhoneTransferBatch initial) async {
-    final batch = await _transferSender.waitForTerminal(initial.transferId);
+    // File preparation and transfer can legitimately outlive the short UI
+    // interaction window. Activity follows the durable terminal snapshot and
+    // is allowed to wait for the transfer lifecycle to finish.
+    final batch = await _transferSender.waitForTerminal(
+      initial.transferId,
+      timeout: const Duration(hours: 24),
+    );
     final failed = batch.files.any(
-      (file) => file.status == PhoneTransferStatus.failed,
+      (file) => switch (file.status) {
+        PhoneTransferStatus.failed ||
+        PhoneTransferStatus.cancelled ||
+        PhoneTransferStatus.expired => true,
+        _ => false,
+      },
     );
     final noun = batch.files.length == 1 ? 'file' : 'files';
     await _record(

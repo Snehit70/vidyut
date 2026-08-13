@@ -10,17 +10,20 @@ class RecentActivityScreen extends StatefulWidget {
     required this.activities,
     required this.onCopy,
     this.activityChanges,
+    this.loadActivities,
   });
 
   final List<LastActivity> activities;
   final Future<void> Function(LastActivity activity) onCopy;
   final Stream<List<LastActivity>>? activityChanges;
+  final Future<List<LastActivity>> Function()? loadActivities;
 
   @override
   State<RecentActivityScreen> createState() => _RecentActivityScreenState();
 }
 
-class _RecentActivityScreenState extends State<RecentActivityScreen> {
+class _RecentActivityScreenState extends State<RecentActivityScreen>
+    with WidgetsBindingObserver {
   late List<LastActivity> _activities = widget.activities;
   StreamSubscription<List<LastActivity>>? _activitySubscription;
   Timer? _relativeTimeTimer;
@@ -28,6 +31,7 @@ class _RecentActivityScreenState extends State<RecentActivityScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _activitySubscription = widget.activityChanges?.listen((activities) {
       if (mounted) setState(() => _activities = activities);
     });
@@ -39,7 +43,20 @@ class _RecentActivityScreenState extends State<RecentActivityScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_reloadActivities());
+  }
+
+  Future<void> _reloadActivities() async {
+    final load = widget.loadActivities;
+    if (load == null) return;
+    final activities = await load();
+    if (mounted) setState(() => _activities = activities);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _activitySubscription?.cancel();
     _relativeTimeTimer?.cancel();
     super.dispose();
