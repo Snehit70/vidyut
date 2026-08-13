@@ -3,9 +3,12 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'palette.dart';
 
-ThemeData buildVidyutTheme() => _buildVidyutTheme(Brightness.light);
+final ThemeData _lightTheme = _buildVidyutTheme(Brightness.light);
+final ThemeData _darkTheme = _buildVidyutTheme(Brightness.dark);
 
-ThemeData buildVidyutDarkTheme() => _buildVidyutTheme(Brightness.dark);
+ThemeData buildVidyutTheme() => _lightTheme;
+
+ThemeData buildVidyutDarkTheme() => _darkTheme;
 
 ThemeData _buildVidyutTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
@@ -21,8 +24,10 @@ ThemeData _buildVidyutTheme(Brightness brightness) {
           onSecondaryContainer: Palette.darkInk,
           surface: Palette.darkGround,
           onSurface: Palette.darkInk,
+          onSurfaceVariant: Palette.darkMuted,
           error: Palette.darkError,
           onError: Palette.darkGround,
+          errorContainer: Palette.darkMist,
           outline: Palette.darkMuted,
           outlineVariant: Palette.darkHairline,
         )
@@ -37,8 +42,10 @@ ThemeData _buildVidyutTheme(Brightness brightness) {
           onSecondaryContainer: Palette.ink,
           surface: Palette.ground,
           onSurface: Palette.ink,
+          onSurfaceVariant: Palette.muted,
           error: Palette.error,
           onError: Colors.white,
+          errorContainer: Palette.mist,
           outline: Palette.muted,
           outlineVariant: Palette.hairline,
         );
