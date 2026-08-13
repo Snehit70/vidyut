@@ -703,6 +703,10 @@ class _PairingScreenState extends State<PairingScreen>
           clipboardAutoSendWatcher: ChannelClipboardAutoSendWatcher(),
           debugLog: _debugLog,
           paired: _pairing != null,
+          pairedDeviceName: _relayHealth?.relayName ?? _pairing?.name,
+          pairedDeviceAddress: _pairing == null
+              ? null
+              : '${_pairing!.host}:${_pairing!.port}',
           onForgetPairing: _forgetPairing,
           updateChecker: GithubUpdateChecker(owner: 'Snehit70', repo: 'vidyut'),
           files: const VidyutFiles(),
