@@ -104,7 +104,9 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
                     (activity.summary.startsWith('text') ||
                         activity.summary.startsWith('image'));
                 final direction = failed
-                    ? 'Failed'
+                    ? received
+                          ? 'Failed from'
+                          : 'Failed to'
                     : received
                     ? 'Received from'
                     : 'Sent to';

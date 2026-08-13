@@ -120,6 +120,29 @@ void main() {
       expect((await repo.loadAll()).length, 2);
     });
 
+    test('prunes persisted event keys to the retained timeline', () async {
+      final storage = MemoryLastActivityStorage();
+      final repo = LastActivityRepository(storage);
+
+      for (var index = 0; index < 35; index++) {
+        await repo.record(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text ($index chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime(2026, 1, 1).add(Duration(seconds: index)),
+            payloadId: 'payload-$index',
+          ),
+        );
+      }
+
+      final eventKeys = (await storage.readAll()).keys.where(
+        (key) => key.startsWith('vidyut.activity.event.'),
+      );
+      expect(eventKeys, hasLength(30));
+      expect(await repo.loadAll(), hasLength(30));
+    });
+
     test('emits the updated timeline after a record', () async {
       final repo = LastActivityRepository(MemoryLastActivityStorage());
       final changes = expectLater(

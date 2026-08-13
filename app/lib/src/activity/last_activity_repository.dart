@@ -11,6 +11,8 @@ abstract interface class LastActivityStorage {
   Future<Map<String, String>> readAll();
 
   Future<void> write(String key, String value);
+
+  Future<void> delete(String key);
 }
 
 class SecureLastActivityStorage implements LastActivityStorage {
@@ -30,6 +32,11 @@ class SecureLastActivityStorage implements LastActivityStorage {
   Future<void> write(String key, String value) {
     return _storage.write(key: key, value: value);
   }
+
+  @override
+  Future<void> delete(String key) {
+    return _storage.delete(key: key);
+  }
 }
 
 class MemoryLastActivityStorage implements LastActivityStorage {
@@ -44,6 +51,11 @@ class MemoryLastActivityStorage implements LastActivityStorage {
   @override
   Future<void> write(String key, String value) async {
     _values[key] = value;
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _values.remove(key);
   }
 }
 
@@ -101,10 +113,7 @@ class LastActivityRepository {
     final seen = <String>{};
     return activities
         .where((activity) {
-          final identity = activity.payloadId == null
-              ? '${activity.direction.name}|${activity.summary}|'
-                    '${activity.counterpart}|${activity.timestamp.microsecondsSinceEpoch}'
-              : 'payload:${activity.payloadId}';
+          final identity = _identityOf(activity);
           return seen.add(identity);
         })
         .take(_maxEntries)
@@ -117,9 +126,47 @@ class LastActivityRepository {
           '${DateTime.now().microsecondsSinceEpoch}-${identityHashCode(Object())}';
       await _storage.write('$_eventPrefix$eventId', activity.encode());
       await _storage.write(_key, activity.encode());
+      await _pruneEvents();
       if (!_changes.isClosed) _changes.add(await loadAll());
     });
     _writeTail = next.catchError((_) {});
     return next;
+  }
+
+  static String _identityOf(LastActivity activity) {
+    return activity.payloadId == null
+        ? '${activity.direction.name}|${activity.summary}|'
+              '${activity.counterpart}|${activity.timestamp.microsecondsSinceEpoch}'
+        : 'payload:${activity.payloadId}';
+  }
+
+  Future<void> _pruneEvents() async {
+    final values = await _storage.readAll();
+    final events =
+        values.entries
+            .where((entry) => entry.key.startsWith(_eventPrefix))
+            .map((entry) {
+              final activity = LastActivity.decode(entry.value);
+              return activity == null ? null : (entry.key, activity);
+            })
+            .whereType<(String, LastActivity)>()
+            .toList()
+          ..sort((a, b) => b.$2.timestamp.compareTo(a.$2.timestamp));
+
+    final retainedKeys = <String>{};
+    final seen = <String>{};
+    for (final (key, activity) in events) {
+      if (seen.add(_identityOf(activity)) &&
+          retainedKeys.length < _maxEntries) {
+        retainedKeys.add(key);
+      }
+    }
+
+    for (final entry in values.entries) {
+      if (entry.key.startsWith(_eventPrefix) &&
+          !retainedKeys.contains(entry.key)) {
+        await _storage.delete(entry.key);
+      }
+    }
   }
 }
