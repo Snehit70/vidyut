@@ -128,6 +128,21 @@ direction, status, progress outcome, and available follow-up actions. It does
 not own or delete completed files.
 _Avoid_: file library, activity feed, file browser
 
+**Activity**:
+A lightweight timeline of meaningful sharing outcomes across Vidyut. It may
+include clipboard Payloads, screenshots, and Transfer summaries. Activity is
+the quick answer to "what just happened?"; it is not the detailed source of
+truth for Transfer progress, recovery, or file actions, which remain in Files
+and Transfer history.
+_Avoid_: clipboard history, transfer history, debug log
+
+**Activity event**:
+One user-visible outcome in Activity, such as a Payload being published or
+received, a screenshot being sent, or a file Batch completing with or without
+issues. Activity events include meaningful failures when they explain why a
+share did not complete, but do not represent every progress update.
+_Avoid_: log line, progress tick, notification
+
 **Completed with issues**:
 A terminal batch outcome in which at least one file completed and at least one
 file did not. The completed files remain available, while unsuccessful files

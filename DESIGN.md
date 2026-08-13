@@ -176,7 +176,11 @@ targets.
 Home order is fixed: automatic sync status, **Send files**, and latest
 activity. Files is a first-class route from the app bar and the Home action;
 phones do not use a persistent bottom navigation bar. Settings remains a
-secondary route.
+secondary route. Settings is one continuous scroll surface organized as
+grouped list sections: Appearance, Connection, Clipboard & screenshots, Files,
+Notifications, Troubleshooting, About, and Danger zone. Use one tonal group
+container with internal dividers where helpful; do not stack an independent
+Card around every setting.
 
 On expanded Android widths, adapt to a compact Material navigation rail with
 Home and Files destinations. Do not stretch a phone layout across a tablet;
@@ -184,6 +188,19 @@ recompose the shell while keeping the same hierarchy and components.
 
 Respect system insets, predictive Back, keyboard/IME space, Android text
 scaling, and reduced-motion settings.
+
+## Motion
+
+Motion is operational feedback, not decoration. Use Material route transitions,
+100–150ms press feedback, and 150–300ms state transitions for connection,
+transfer, completion, and theme changes. Searching and active progress may use
+bounded loops. Long scrollable surfaces render immediately; do not stagger
+their rows into visibility. Honor Android reduced motion by replacing movement
+with instant or short opacity/color feedback while keeping state changes clear.
+
+Async settings values reserve their row from the first frame and show a compact
+loading or unavailable state inline. A screen must never look empty because a
+staggered entrance animation is still running.
 
 ## Elevation & Depth
 
