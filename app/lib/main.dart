@@ -20,6 +20,7 @@ import 'src/foreground/foreground_service_client.dart';
 import 'src/foreground/foreground_service_coordinator.dart';
 import 'src/foreground/vidyut_foreground_service.dart';
 import 'src/foreground/send_clipboard_screen.dart';
+import 'src/home/home_screen.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';
 import 'src/onboarding/setup_checklist_screen.dart';
@@ -116,6 +117,8 @@ class VidyutApp extends StatelessWidget {
     return MaterialApp(
       title: 'Vidyut',
       theme: buildVidyutTheme(),
+      darkTheme: buildVidyutDarkTheme(),
+      themeMode: ThemeMode.system,
       debugShowCheckedModeBanner: false,
       onGenerateRoute: (settings) {
         final connectionFactory =
@@ -732,12 +735,18 @@ class _PairingScreenState extends State<PairingScreen>
     }
 
     final paired = _pairing != null;
-    final statusLabel = switch (_connectionStatus) {
-      ConnectionStatus.connected =>
-        _relayHealth?.degraded == true ? 'Needs attention' : 'Ready',
-      ConnectionStatus.searching => 'Searching',
-      ConnectionStatus.offline => paired ? 'Offline' : 'Unpaired',
-    };
+    if (paired) {
+      return HomeScreen(
+        connectionStatus: _connectionStatus,
+        relayHealth: _relayHealth,
+        lastActivity: _lastActivity,
+        onOpenFiles: () => unawaited(_openFiles()),
+        onOpenSettings: () => unawaited(_openSettings()),
+        onOpenRecentActivity: () => unawaited(_openRecentActivity()),
+        onOpenConnectionDetails: () => unawaited(_showConnectionHelp()),
+        onSendFiles: () => unawaited(_openFiles()),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -754,15 +763,9 @@ class _PairingScreenState extends State<PairingScreen>
           ],
         ),
         actions: [
-          if (paired)
-            _AppBarAction(
-              tooltip: 'Files',
-              icon: Icons.folder_outlined,
-              onPressed: _openFiles,
-            ),
-          _AppBarAction(
+          IconButton(
             tooltip: 'Settings',
-            icon: Icons.settings_outlined,
+            icon: const Icon(Icons.settings_outlined),
             onPressed: _openSettings,
           ),
           const SizedBox(width: 12),
@@ -773,89 +776,43 @@ class _PairingScreenState extends State<PairingScreen>
           padding: const EdgeInsets.all(20),
           children: [
             _StatusHero(
-              label: statusLabel,
-              description: paired
-                  ? switch (_connectionStatus) {
-                      ConnectionStatus.connected =>
-                        _relayHealth?.degraded == true
-                            ? 'Connected, but the laptop clipboard watcher is not working.'
-                            : 'Your laptop and phone share one clipboard.',
-                      ConnectionStatus.searching =>
-                        'Looking for your laptop on the network.',
-                      ConnectionStatus.offline =>
-                        "Can't reach your laptop right now.",
-                    }
-                  : 'Pair with the laptop relay to join the clipboard pool.',
-              icon: switch (_connectionStatus) {
-                ConnectionStatus.connected => Icons.link,
-                ConnectionStatus.searching => Icons.wifi_find,
-                ConnectionStatus.offline =>
-                  paired ? Icons.cloud_off : Icons.qr_code_scanner,
-              },
-              searching: _connectionStatus == ConnectionStatus.searching,
-              onTap: paired ? _showConnectionHelp : null,
+              label: 'Unpaired',
+              description:
+                  'Pair with the laptop relay to join the clipboard pool.',
+              icon: Icons.qr_code_scanner,
+              searching: false,
             ).entrance(0),
-            if (paired) ...[
-              if (_lastActivity != null) ...[
-                const SizedBox(height: 24),
-                _DashboardRow(
-                  icon: Icons.history,
-                  title: 'Last activity',
-                  subtitle: _lastActivity!.describe(),
-                  onTap: () => unawaited(_openRecentActivity()),
-                ).entrance(1),
-              ],
-              const SizedBox(height: 12),
-              _DashboardRow(
-                icon: Icons.dns_outlined,
-                title: _relayHealth?.relayName ?? _pairing!.name ?? 'Laptop',
-                subtitle: '${_pairing!.host}:${_pairing!.port}',
-              ).entrance(2),
-              if (_setupStatus != null) ...[
-                const SizedBox(height: 12),
-                _SetupHealthRow(
-                  status: _setupStatus!,
-                  settings: _settings,
-                  onTap: () => unawaited(
-                    _setupStatus!.onboardingComplete
-                        ? _openChecklist()
-                        : _openWizard(),
-                  ),
-                ).entrance(3),
-              ],
-            ] else ...[
-              if (_setupStatus?.bannerNeeded(_settings) ?? false) ...[
-                const SizedBox(height: 16),
-                _SetupBanner(
-                  label: _setupStatus!.bannerLabel(_settings),
-                  onTap: () => unawaited(
-                    _setupStatus!.onboardingComplete
-                        ? _openChecklist()
-                        : _openWizard(),
-                  ),
-                ).entrance(1),
-              ],
-              const SizedBox(height: 28),
-              if (widget.relayDiscovery != null) ...[
-                NearbyRelaysCard(
-                  relays: _nearbyRelays,
-                  selected: _selectedRelay,
-                  discovering: _discovering,
-                  onRefresh: _discoverRelays,
-                  onSelect: _selectNearbyRelay,
-                  error: _discoveryError,
-                ).entrance(2),
-                const SizedBox(height: 28),
-              ],
-              ManualPairingForm(
-                hostController: _hostController,
-                portController: _portController,
-                secretController: _secretController,
-                error: _error,
-                onScanQr: _openQrScanner,
-                onPair: _saveManualPairing,
-              ).entrance(3),
+            if (_setupStatus?.bannerNeeded(_settings) ?? false) ...[
+              const SizedBox(height: 16),
+              _SetupBanner(
+                label: _setupStatus!.bannerLabel(_settings),
+                onTap: () => unawaited(
+                  _setupStatus!.onboardingComplete
+                      ? _openChecklist()
+                      : _openWizard(),
+                ),
+              ).entrance(1),
             ],
+            const SizedBox(height: 28),
+            if (widget.relayDiscovery != null) ...[
+              NearbyRelaysCard(
+                relays: _nearbyRelays,
+                selected: _selectedRelay,
+                discovering: _discovering,
+                onRefresh: _discoverRelays,
+                onSelect: _selectNearbyRelay,
+                error: _discoveryError,
+              ).entrance(2),
+              const SizedBox(height: 28),
+            ],
+            ManualPairingForm(
+              hostController: _hostController,
+              portController: _portController,
+              secretController: _secretController,
+              error: _error,
+              onScanQr: _openQrScanner,
+              onPair: _saveManualPairing,
+            ).entrance(3),
           ],
         ),
       ),
@@ -923,52 +880,18 @@ class _PairingScreenState extends State<PairingScreen>
   }
 }
 
-class _AppBarAction extends StatelessWidget {
-  const _AppBarAction({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: PressableScale(
-        child: IconButton(
-          tooltip: tooltip,
-          icon: Icon(icon, size: 20, color: Palette.ink),
-          style: IconButton.styleFrom(
-            backgroundColor: Palette.mist,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          onPressed: onPressed,
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusHero extends StatelessWidget {
   const _StatusHero({
     required this.label,
     required this.description,
     required this.icon,
     required this.searching,
-    this.onTap,
   });
 
   final String label;
   final String description;
   final IconData icon;
   final bool searching;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1008,129 +931,7 @@ class _StatusHero extends StatelessWidget {
         ),
       ],
     );
-    if (onTap == null) return content;
-    return Semantics(
-      button: true,
-      label: 'Connection details',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: content,
-      ),
-    );
-  }
-}
-
-/// A flat dashboard row: leading chip icon, title, muted subtitle, optional
-/// trailing chevron when tappable. Emphasis swaps the mist fill for petal to
-/// flag something that wants attention (ADR 0004).
-class _DashboardRow extends StatelessWidget {
-  const _DashboardRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.emphasis = false,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool emphasis;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final surface = emphasis ? Palette.petal : Palette.mist;
-    final chip = emphasis ? Palette.ground : Palette.petal;
-
-    final row = Padding(
-      padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: chip,
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(icon, size: 20, color: Palette.raspberry),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: textTheme.titleSmall),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: textTheme.bodySmall?.copyWith(color: Palette.muted),
-                ),
-              ],
-            ),
-          ),
-          if (onTap != null) ...[
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, size: 20, color: Palette.raspberry),
-          ],
-        ],
-      ),
-    );
-
-    if (onTap == null) {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          color: surface,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: row,
-      );
-    }
-    return PressableScale(
-      child: Material(
-        color: surface,
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: row,
-        ),
-      ),
-    );
-  }
-}
-
-/// The persistent setup-health row on the paired dashboard (ADR 0004):
-/// "All clear" with a check when healthy, "N issues" on petal otherwise.
-class _SetupHealthRow extends StatelessWidget {
-  const _SetupHealthRow({
-    required this.status,
-    required this.settings,
-    required this.onTap,
-  });
-
-  final SetupStatus status;
-  final AppSettings settings;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final issues = status.issueCount;
-    final healthy = issues == 0;
-    return _DashboardRow(
-      icon: healthy ? Icons.check_circle : Icons.tune,
-      title: 'Setup',
-      subtitle: healthy
-          ? 'All clear'
-          : issues == 1
-          ? '1 issue needs attention'
-          : '$issues issues need attention',
-      emphasis: !healthy,
-      onTap: onTap,
-    );
+    return content;
   }
 }
 
