@@ -324,7 +324,14 @@ class PhoneTransferReceiver {
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
     await history.upsert(batch);
-    await onBatchResult?.call(batch);
+    try {
+      await onBatchResult?.call(batch);
+    } catch (error) {
+      onEvent?.call(
+        'Activity recording failed after receiving the batch: $error',
+        isError: true,
+      );
+    }
     if (notifier != null && (alertsEnabled == null || await alertsEnabled!())) {
       _throwIfDisposed();
       await notifier!.showBatchResult(

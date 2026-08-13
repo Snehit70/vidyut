@@ -300,6 +300,7 @@ class PhoneTransferSender {
   final _lastPreparationPersist = <String, int>{};
   final _lastPreparationPublish = <String, int>{};
   final _timingAnchors = <String, int>{};
+  final _terminalWaiters = <String, Completer<PhoneTransferBatch>>{};
   final _defaultMonotonicClock = Stopwatch()..start();
   Future<void>? _resumeRun;
   Future<void> _sendTail = Future<void>.value();
@@ -461,6 +462,7 @@ class PhoneTransferSender {
 
   static bool _isTerminal(PhoneTransferStatus status) =>
       status == PhoneTransferStatus.completed ||
+      status == PhoneTransferStatus.completedWithIssues ||
       status == PhoneTransferStatus.failed ||
       status == PhoneTransferStatus.cancelled ||
       status == PhoneTransferStatus.expired;
@@ -625,22 +627,29 @@ class PhoneTransferSender {
     String transferId, {
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (true) {
-      final batch = (await history.load())
+    final waiter = _terminalWaiters.putIfAbsent(
+      transferId,
+      Completer<PhoneTransferBatch>.new,
+    );
+    try {
+      final existing = (await history.load())
           .where((item) => item.transferId == transferId)
           .firstOrNull;
-      if (batch == null) {
+      if (existing == null) {
         throw StateError('Transfer $transferId no longer exists.');
       }
-      if (batch.files.isNotEmpty &&
-          batch.files.every((file) => _isTerminal(file.status))) {
-        return batch;
+      if (_isBatchTerminal(existing)) return existing;
+
+      return waiter.future.timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException(
+          'Timed out waiting for transfer $transferId.',
+        ),
+      );
+    } finally {
+      if (identical(_terminalWaiters[transferId], waiter)) {
+        _terminalWaiters.remove(transferId);
       }
-      if (!DateTime.now().isBefore(deadline)) {
-        throw TimeoutException('Timed out waiting for transfer $transferId.');
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 1));
     }
   }
 
@@ -1775,8 +1784,8 @@ class PhoneTransferSender {
         );
         transferFile = batch.files[index];
         final reference = transferFile.sourceReference;
-        final transientDocument = reference?.kind ==
-                PhoneTransferSourceKind.androidDocumentUri &&
+        final transientDocument =
+            reference?.kind == PhoneTransferSourceKind.androidDocumentUri &&
             reference!.persisted == false;
         if (reference?.ownership == PhoneTransferSourceOwnership.managed ||
             transientDocument) {
@@ -2156,7 +2165,18 @@ class PhoneTransferSender {
 
   void _publishSnapshot(PhoneTransferBatch batch) {
     if (!_snapshotController.isClosed) _snapshotController.add(batch);
+    if (_isBatchTerminal(batch)) {
+      final waiter = _terminalWaiters[batch.transferId];
+      if (waiter != null && !waiter.isCompleted) {
+        waiter.complete(batch);
+      }
+    }
   }
+
+  bool _isBatchTerminal(PhoneTransferBatch batch) =>
+      batch.files.isNotEmpty &&
+      _isTerminal(batch.status) &&
+      batch.files.every((file) => _isTerminal(file.status));
 
   void _cleanupTrackingForBatch(PhoneTransferBatch batch) {
     for (final file in batch.files) {

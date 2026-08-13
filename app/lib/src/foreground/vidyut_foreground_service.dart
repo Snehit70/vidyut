@@ -114,7 +114,12 @@ class VidyutForegroundTaskHandler extends TaskHandler {
             payloadId: batch.transferId,
             outcome:
                 batch.files.any(
-                  (file) => file.status == PhoneTransferStatus.failed,
+                  (file) => switch (file.status) {
+                    PhoneTransferStatus.failed ||
+                    PhoneTransferStatus.cancelled ||
+                    PhoneTransferStatus.expired => true,
+                    _ => false,
+                  },
                 )
                 ? ActivityOutcome.failed
                 : ActivityOutcome.completed,
