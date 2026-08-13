@@ -7,7 +7,6 @@ import 'package:vidyut_files/vidyut_files.dart';
 
 import '../debug/debug_log.dart';
 import '../debug/debug_log_screen.dart';
-import '../design/widgets.dart';
 import '../onboarding/setup_actions.dart';
 import '../onboarding/setup_checklist_screen.dart';
 import '../update/github_update_checker.dart';
@@ -403,8 +402,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    var step = 0;
-    int next() => step++;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -423,7 +420,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: _chooseThemeMode,
             ),
-          ).entrance(next()),
+          ),
           // Master switch, first and alone: it governs all syncing (ADR 0006).
           Card(
             child: SwitchListTile(
@@ -442,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(showPersistentSendNotification: value),
               ),
             ),
-          ).entrance(next()),
+          ),
           const _SectionHeader('Files'),
           Card(
             margin: const EdgeInsets.only(bottom: 12),
@@ -459,7 +456,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (value) =>
                   _updateSettings(_settings.copyWith(receiveFiles: value)),
             ),
-          ).entrance(next()),
+          ),
           Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: ListTile(
@@ -471,7 +468,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? null
                   : () => unawaited(_chooseFilesDestination()),
             ),
-          ).entrance(next()),
+          ),
           Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: ListTile(
@@ -481,7 +478,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: _chooseMaxTransferSize,
             ),
-          ).entrance(next()),
+          ),
           Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: SwitchListTile(
@@ -495,7 +492,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(allowMeteredFileTransfers: value),
               ),
             ),
-          ).entrance(next()),
+          ),
           const _SectionHeader('Sync'),
           Card(
             child: SwitchListTile(
@@ -513,7 +510,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(autoPushScreenshots: value),
               ),
             ),
-          ).entrance(next()),
+          ),
           Card(
             margin: const EdgeInsets.only(top: 12),
             child: SwitchListTile(
@@ -527,7 +524,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(fileTransferAlerts: value),
               ),
             ),
-          ).entrance(next()),
+          ),
           const _SectionHeader('Notifications'),
           Card(
             child: SwitchListTile(
@@ -545,7 +542,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _settings.copyWith(showReceiveNotifications: value),
               ),
             ),
-          ).entrance(next()),
+          ),
           const _SectionHeader('Setup'),
           if (widget.setupLoader != null)
             Card(
@@ -560,7 +557,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: _SummaryChip(issueCount: _issueCount),
                 onTap: () => unawaited(_openChecklist()),
               ),
-            ).entrance(next()),
+            ),
           if (widget.clipboardAutoSendWatcher != null)
             Card(
               margin: const EdgeInsets.only(bottom: 12),
@@ -577,7 +574,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => unawaited(_openClipboardAutoSend()),
               ),
-            ).entrance(next()),
+            ),
           if (widget.debugLog != null)
             Card(
               child: ListTile(
@@ -590,7 +587,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => unawaited(_openDebugLog()),
               ),
-            ).entrance(next()),
+            ),
           if (widget.updateChecker != null) ...[
             const _SectionHeader('About'),
             Card(
@@ -616,7 +613,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ? null
                     : () => unawaited(_checkForUpdates()),
               ),
-            ).entrance(next()),
+            ),
           ],
           if (widget.paired && widget.onForgetPairing != null) ...[
             const _SectionHeader('Danger zone'),
@@ -637,7 +634,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 onTap: () => unawaited(_confirmForget()),
               ),
-            ).entrance(next()),
+            ),
           ],
         ],
       ),

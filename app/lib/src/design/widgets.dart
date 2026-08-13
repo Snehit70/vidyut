@@ -34,6 +34,18 @@ class _PulsingDotState extends State<PulsingDot>
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: widget.color ?? Theme.of(context).colorScheme.primary,
+            shape: BoxShape.circle,
+          ),
+        ),
+      );
+    }
     final effectiveColor =
         widget.color ?? Theme.of(context).colorScheme.primary;
     final halo = widget.size * 2.6;
@@ -86,6 +98,7 @@ class _PressableScaleState extends State<PressableScale> {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return widget.child;
     return Listener(
       onPointerDown: (_) => setState(() => _pressed = true),
       onPointerUp: (_) => setState(() => _pressed = false),
@@ -109,6 +122,7 @@ class Entrance extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
     final delay = Motion.stagger * index;
     final total = Motion.entrance + delay;
     final start = delay.inMilliseconds / total.inMilliseconds;
