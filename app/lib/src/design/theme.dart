@@ -81,9 +81,18 @@ ThemeData _buildVidyutTheme(Brightness brightness) {
 
   final surfaceContainer = dark ? Palette.darkMist : Palette.mist;
   final outline = dark ? Palette.darkHairline : Palette.hairline;
+  final statusColors = VidyutStatusColors(
+    success: dark ? Palette.darkSuccess : Palette.success,
+    successContainer: dark ? Palette.darkMist : Palette.successMist,
+    warning: dark ? Palette.darkWarning : Palette.warning,
+    warningContainer: dark ? Palette.darkMist : Palette.warningMist,
+    active: dark ? Palette.darkWarning : Palette.active,
+    activeContainer: dark ? Palette.darkMist : Palette.activeMist,
+  );
 
   return base.copyWith(
     scaffoldBackgroundColor: scheme.surface,
+    extensions: [statusColors],
     textTheme: textTheme,
     iconTheme: IconThemeData(color: ink),
     dividerTheme: DividerThemeData(color: outline, thickness: 1),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import 'relay_discovery.dart';
 
@@ -28,6 +27,7 @@ class NearbyRelaysCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -35,7 +35,7 @@ class NearbyRelaysCard extends StatelessWidget {
         Row(
           children: [
             if (discovering) ...[
-              const PulsingDot(size: 8),
+              PulsingDot(size: 8, color: scheme.primary),
               const SizedBox(width: 4),
             ],
             Expanded(
@@ -46,8 +46,8 @@ class NearbyRelaysCard extends StatelessWidget {
                 tooltip: 'Search again',
                 icon: const Icon(Icons.refresh, size: 20),
                 style: IconButton.styleFrom(
-                  backgroundColor: Palette.mist,
-                  foregroundColor: Palette.raspberry,
+                  backgroundColor: scheme.secondaryContainer,
+                  foregroundColor: scheme.primary,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -64,7 +64,9 @@ class NearbyRelaysCard extends StatelessWidget {
                 : error ??
                       'No laptop found. Start the relay, then search again, '
                           'or scan its QR code below.',
-            style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+            style: textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           )
         else
           for (final relay in relays)
@@ -75,22 +77,20 @@ class NearbyRelaysCard extends StatelessWidget {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Palette.petal,
+                    color: scheme.primaryContainer,
                     borderRadius: BorderRadius.circular(13),
                   ),
-                  child: const Icon(
-                    Icons.dns,
-                    size: 20,
-                    color: Palette.raspberry,
-                  ),
+                  child: Icon(Icons.dns, size: 20, color: scheme.primary),
                 ),
                 title: Text(relay.name, style: textTheme.titleSmall),
                 subtitle: Text(
                   '${relay.host}:${relay.port}',
-                  style: textTheme.bodySmall?.copyWith(color: Palette.muted),
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
                 trailing: relay == selected
-                    ? const Icon(Icons.check_circle, color: Palette.raspberry)
+                    ? Icon(Icons.check_circle, color: scheme.primary)
                     : null,
                 onTap: () => onSelect(relay),
               ),
@@ -99,7 +99,9 @@ class NearbyRelaysCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             'Enter the pairing secret below and tap Pair manually.',
-            style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+            style: textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ],
       ],
@@ -128,6 +130,7 @@ class ManualPairingForm extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -163,25 +166,21 @@ class ManualPairingForm extends StatelessWidget {
           const SizedBox(height: 12),
           DecoratedBox(
             decoration: BoxDecoration(
-              color: Palette.mist,
+              color: scheme.errorContainer,
               borderRadius: BorderRadius.circular(16),
             ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.error_outline,
-                    size: 18,
-                    color: Palette.error,
-                  ),
+                  Icon(Icons.error_outline, size: 18, color: scheme.error),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       error!,
                       style: Theme.of(
                         context,
-                      ).textTheme.bodyMedium?.copyWith(color: Palette.error),
+                      ).textTheme.bodyMedium?.copyWith(color: scheme.error),
                     ),
                   ),
                 ],

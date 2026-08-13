@@ -29,3 +29,69 @@ abstract final class Palette {
   static const darkSuccess = Color(0xFF8DDB9F);
   static const darkWarning = Color(0xFFFFB870);
 }
+
+@immutable
+class VidyutStatusColors extends ThemeExtension<VidyutStatusColors> {
+  const VidyutStatusColors({
+    required this.success,
+    required this.successContainer,
+    required this.warning,
+    required this.warningContainer,
+    required this.active,
+    required this.activeContainer,
+  });
+
+  final Color success;
+  final Color successContainer;
+  final Color warning;
+  final Color warningContainer;
+  final Color active;
+  final Color activeContainer;
+
+  static VidyutStatusColors of(BuildContext context) {
+    return Theme.of(context).extension<VidyutStatusColors>()!;
+  }
+
+  @override
+  VidyutStatusColors copyWith({
+    Color? success,
+    Color? successContainer,
+    Color? warning,
+    Color? warningContainer,
+    Color? active,
+    Color? activeContainer,
+  }) {
+    return VidyutStatusColors(
+      success: success ?? this.success,
+      successContainer: successContainer ?? this.successContainer,
+      warning: warning ?? this.warning,
+      warningContainer: warningContainer ?? this.warningContainer,
+      active: active ?? this.active,
+      activeContainer: activeContainer ?? this.activeContainer,
+    );
+  }
+
+  @override
+  VidyutStatusColors lerp(
+    covariant ThemeExtension<VidyutStatusColors>? other,
+    double t,
+  ) {
+    if (other is! VidyutStatusColors) return this;
+    return VidyutStatusColors(
+      success: Color.lerp(success, other.success, t)!,
+      successContainer: Color.lerp(
+        successContainer,
+        other.successContainer,
+        t,
+      )!,
+      warning: Color.lerp(warning, other.warning, t)!,
+      warningContainer: Color.lerp(
+        warningContainer,
+        other.warningContainer,
+        t,
+      )!,
+      active: Color.lerp(active, other.active, t)!,
+      activeContainer: Color.lerp(activeContainer, other.activeContainer, t)!,
+    );
+  }
+}

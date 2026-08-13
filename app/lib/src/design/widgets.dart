@@ -1,82 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'motion.dart';
-import 'palette.dart';
-
-/// Organic blob that slowly morphs between two silhouettes (9-12s loop).
-class MorphingBlob extends StatefulWidget {
-  const MorphingBlob({
-    super.key,
-    required this.size,
-    this.color = Palette.raspberry,
-    this.child,
-  });
-
-  final double size;
-  final Color color;
-  final Widget? child;
-
-  @override
-  State<MorphingBlob> createState() => _MorphingBlobState();
-}
-
-class _MorphingBlobState extends State<MorphingBlob>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(seconds: 10),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    if (Motion.loopsEnabled) _controller.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  BorderRadius _silhouette(double t) {
-    final s = widget.size;
-    Radius r(double x, double y) => Radius.elliptical(s * x, s * y);
-    Radius lerp(Radius a, Radius b) => Radius.lerp(a, b, t)!;
-    return BorderRadius.only(
-      topLeft: lerp(r(.42, .55), r(.55, .48)),
-      topRight: lerp(r(.58, .45), r(.45, .52)),
-      bottomRight: lerp(r(.63, .58), r(.52, .46)),
-      bottomLeft: lerp(r(.37, .42), r(.48, .54)),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final t = Curves.easeInOut.transform(_controller.value);
-        return Container(
-          width: widget.size,
-          height: widget.size,
-          decoration: BoxDecoration(
-            color: widget.color,
-            borderRadius: _silhouette(t),
-          ),
-          child: child,
-        );
-      },
-      child: widget.child == null ? null : Center(child: widget.child),
-    );
-  }
-}
 
 /// Small dot with a soft expanding halo; pulses while searching.
 class PulsingDot extends StatefulWidget {
-  const PulsingDot({super.key, this.color = Palette.raspberry, this.size = 10});
+  const PulsingDot({super.key, this.color, this.size = 10});
 
-  final Color color;
+  final Color? color;
   final double size;
 
   @override
@@ -104,6 +34,8 @@ class _PulsingDotState extends State<PulsingDot>
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor =
+        widget.color ?? Theme.of(context).colorScheme.primary;
     final halo = widget.size * 2.6;
     return SizedBox(
       width: halo,
@@ -120,7 +52,7 @@ class _PulsingDotState extends State<PulsingDot>
                 height: widget.size + (halo - widget.size) * t,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.color.withValues(alpha: (1 - t) * 0.3),
+                  color: effectiveColor.withValues(alpha: (1 - t) * 0.3),
                 ),
               ),
               Container(
@@ -128,7 +60,7 @@ class _PulsingDotState extends State<PulsingDot>
                 height: widget.size,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: widget.color,
+                  color: effectiveColor,
                 ),
               ),
             ],
@@ -137,87 +69,6 @@ class _PulsingDotState extends State<PulsingDot>
       ),
     );
   }
-}
-
-/// Ripple rings radiating outward from a central child (success orb).
-class RippleRings extends StatefulWidget {
-  const RippleRings({
-    super.key,
-    required this.size,
-    this.color = Palette.petal,
-    this.child,
-  });
-
-  final double size;
-  final Color color;
-  final Widget? child;
-
-  @override
-  State<RippleRings> createState() => _RippleRingsState();
-}
-
-class _RippleRingsState extends State<RippleRings>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2200),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    if (Motion.loopsEnabled) _controller.repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: widget.size,
-      height: widget.size,
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) => CustomPaint(
-          painter: _RingsPainter(
-            progress: _controller.value,
-            color: widget.color,
-          ),
-          child: child,
-        ),
-        child: widget.child == null ? null : Center(child: widget.child),
-      ),
-    );
-  }
-}
-
-class _RingsPainter extends CustomPainter {
-  _RingsPainter({required this.progress, required this.color});
-
-  final double progress;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-    final maxRadius = size.shortestSide / 2;
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    for (var i = 0; i < 3; i++) {
-      final t = (progress + i / 3) % 1;
-      paint.color = color.withValues(alpha: (1 - t) * 0.8);
-      canvas.drawCircle(center, maxRadius * (0.45 + 0.55 * t), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_RingsPainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 /// Squash-on-press wrapper: 0.93 down, spring overshoot back up (~300ms).

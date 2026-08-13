@@ -233,6 +233,39 @@ void main() {
     );
   });
 
+  testWidgets('switches the app theme from settings', (tester) async {
+    final settingsStorage = MemoryAppSettingsStorage();
+
+    await tester.pumpWidget(
+      VidyutApp(
+        appSettingsRepository: AppSettingsRepository(settingsStorage),
+        lastActivityRepository: LastActivityRepository(
+          MemoryLastActivityStorage(),
+        ),
+        foregroundServiceClient: FakeForegroundServiceClient(),
+        pairingRepository: PairingRepository(MemoryPairingStorage()),
+        relayConnectionFactory: fakeConnection,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Theme'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dark').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      (await AppSettingsRepository(settingsStorage).load()).themeMode,
+      AppThemeMode.dark,
+    );
+    expect(
+      Theme.of(tester.element(find.text('Settings'))).brightness,
+      Brightness.dark,
+    );
+  });
+
   testWidgets('forget this laptop unpairs only after confirmation', (
     tester,
   ) async {

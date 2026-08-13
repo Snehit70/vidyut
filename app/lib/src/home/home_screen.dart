@@ -34,7 +34,8 @@ class HomeScreen extends StatelessWidget {
     final state = _HomeSyncState.from(
       connectionStatus: connectionStatus,
       relayHealth: relayHealth,
-      brightness: Theme.of(context).brightness,
+      scheme: Theme.of(context).colorScheme,
+      statusColors: VidyutStatusColors.of(context),
     );
 
     return Scaffold(
@@ -146,26 +147,17 @@ class _HomeSyncState {
   factory _HomeSyncState.from({
     required ConnectionStatus connectionStatus,
     required RelayHealth? relayHealth,
-    required Brightness brightness,
+    required ColorScheme scheme,
+    required VidyutStatusColors statusColors,
   }) {
-    final dark = brightness == Brightness.dark;
-    final primary = dark ? Palette.darkRaspberry : Palette.raspberry;
-    final primaryContainer = dark ? Palette.darkPetal : Palette.petal;
-    final surfaceContainer = dark ? Palette.darkMist : Palette.mist;
-    final warning = dark ? Palette.darkWarning : Palette.warning;
-    final warningContainer = dark ? Palette.darkMist : Palette.warningMist;
-    final success = dark ? Palette.darkSuccess : Palette.success;
-    final successContainer = dark ? Palette.darkMist : Palette.successMist;
-    final error = dark ? Palette.darkError : Palette.error;
-
     if (connectionStatus == ConnectionStatus.connected) {
       if (relayHealth == null) {
         return _HomeSyncState(
           label: 'Checking sync',
           description: 'Checking the laptop clipboard connection.',
           icon: Icons.sync_outlined,
-          color: primary,
-          containerColor: primaryContainer,
+          color: scheme.primary,
+          containerColor: scheme.primaryContainer,
           searching: true,
         );
       }
@@ -175,8 +167,8 @@ class _HomeSyncState {
           description:
               'Connected, but automatic clipboard sync needs recovery.',
           icon: Icons.sync_problem_outlined,
-          color: warning,
-          containerColor: warningContainer,
+          color: statusColors.warning,
+          containerColor: statusColors.warningContainer,
           searching: false,
         );
       }
@@ -184,8 +176,8 @@ class _HomeSyncState {
         label: 'Ready',
         description: 'Automatic clipboard sync is ready between your devices.',
         icon: Icons.sync_outlined,
-        color: success,
-        containerColor: successContainer,
+        color: statusColors.success,
+        containerColor: statusColors.successContainer,
         searching: false,
       );
     }
@@ -195,8 +187,8 @@ class _HomeSyncState {
         label: 'Searching',
         description: 'Looking for your laptop on the local network.',
         icon: Icons.wifi_find_outlined,
-        color: primary,
-        containerColor: primaryContainer,
+        color: scheme.primary,
+        containerColor: scheme.primaryContainer,
         searching: true,
       );
     }
@@ -206,8 +198,8 @@ class _HomeSyncState {
       description:
           "Can't reach your laptop right now. Vidyut will reconnect automatically.",
       icon: Icons.cloud_off_outlined,
-      color: error,
-      containerColor: surfaceContainer,
+      color: scheme.error,
+      containerColor: scheme.secondaryContainer,
       searching: false,
     );
   }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../design/palette.dart';
 import 'last_activity.dart';
 
 class RecentActivityScreen extends StatelessWidget {
@@ -28,12 +27,12 @@ class RecentActivityScreen extends StatelessWidget {
                 final received =
                     activity.direction == ActivityDirection.received;
                 final direction = received ? 'Received from' : 'Sent to';
+                final scheme = Theme.of(context).colorScheme;
                 return Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: Palette.mist,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Palette.hairline),
+                    color: scheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
@@ -41,12 +40,16 @@ class RecentActivityScreen extends StatelessWidget {
                         width: 44,
                         height: 44,
                         decoration: BoxDecoration(
-                          color: received ? Palette.petal : Palette.ground,
-                          borderRadius: BorderRadius.circular(14),
+                          color: received
+                              ? scheme.primaryContainer
+                              : scheme.surface,
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Icon(
                           received ? Icons.south_west : Icons.north_east,
-                          color: received ? Palette.raspberry : Palette.muted,
+                          color: received
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(width: 14),
@@ -62,7 +65,7 @@ class RecentActivityScreen extends StatelessWidget {
                             Text(
                               '$direction ${activity.counterpart} · ${activity.describe().split('· ').last}',
                               style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: Palette.muted),
+                                  ?.copyWith(color: scheme.onSurfaceVariant),
                             ),
                           ],
                         ),

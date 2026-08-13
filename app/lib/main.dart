@@ -13,7 +13,6 @@ import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
 import 'src/activity/recent_activity_screen.dart';
 import 'src/debug/debug_log.dart';
-import 'src/design/palette.dart';
 import 'src/design/theme.dart';
 import 'src/design/widgets.dart';
 import 'src/foreground/foreground_service_client.dart';
@@ -928,27 +927,28 @@ class _StatusHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
 
     final content = Column(
       children: [
         const SizedBox(height: 16),
-        MorphingBlob(
-          size: 180,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 32, color: Palette.raspberry),
+        Container(
+          width: 96,
+          height: 96,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            borderRadius: BorderRadius.circular(16),
           ),
+          child: Icon(icon, size: 36, color: scheme.primary),
         ),
         const SizedBox(height: 22),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (searching) ...[const PulsingDot(), const SizedBox(width: 6)],
+            if (searching) ...[
+              PulsingDot(color: scheme.primary, size: 8),
+              const SizedBox(width: 6),
+            ],
             Text(label, style: textTheme.titleLarge),
           ],
         ),
@@ -958,7 +958,9 @@ class _StatusHero extends StatelessWidget {
           child: Text(
             description,
             textAlign: TextAlign.center,
-            style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+            style: textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],
@@ -980,16 +982,20 @@ class _SetupBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return PressableScale(
       child: Material(
-        color: Palette.petal,
-        borderRadius: BorderRadius.circular(20),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
-                const Icon(Icons.tune, size: 20, color: Palette.raspberry),
+                Icon(
+                  Icons.tune,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -997,10 +1003,10 @@ class _SetupBanner extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-                const Icon(
+                Icon(
                   Icons.chevron_right,
                   size: 20,
-                  color: Palette.raspberry,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ],
             ),
@@ -1083,8 +1089,8 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: DecoratedBox(
-                decoration: const BoxDecoration(
-                  color: Palette.petal,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.all(Radius.circular(999)),
                 ),
                 child: Padding(
@@ -1094,7 +1100,9 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
                   ),
                   child: Text(
                     'Point at the QR code on the laptop',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
                   ),
                 ),
               ),

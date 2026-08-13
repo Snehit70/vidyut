@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import 'debug_log.dart';
 
@@ -20,6 +19,7 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Debug log'),
@@ -41,8 +41,8 @@ class _DebugLogScreenState extends State<DebugLogScreen> {
             tooltip: 'Clear log',
             icon: const Icon(Icons.delete_sweep, size: 20),
             style: IconButton.styleFrom(
-              backgroundColor: Palette.mist,
-              foregroundColor: Palette.ink,
+              backgroundColor: scheme.secondaryContainer,
+              foregroundColor: scheme.onSecondaryContainer,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
               ),
@@ -164,11 +164,12 @@ class _FilterPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: PressableScale(
         child: Material(
-          color: active ? Palette.raspberry : Palette.mist,
+          color: active ? scheme.primary : scheme.secondaryContainer,
           borderRadius: BorderRadius.circular(999),
           child: InkWell(
             borderRadius: BorderRadius.circular(999),
@@ -178,7 +179,9 @@ class _FilterPill extends StatelessWidget {
               child: Text(
                 label,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: active ? Colors.white : Palette.ink,
+                  color: active
+                      ? scheme.onPrimary
+                      : scheme.onSecondaryContainer,
                 ),
               ),
             ),
@@ -194,6 +197,7 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -201,14 +205,11 @@ class _EmptyState extends StatelessWidget {
           Container(
             width: 64,
             height: 64,
-            decoration: const BoxDecoration(
-              color: Palette.petal,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.bug_report_outlined,
-              color: Palette.raspberry,
-            ),
+            child: Icon(Icons.bug_report_outlined, color: scheme.primary),
           ),
           const SizedBox(height: 16),
           const Text('No debug events yet.'),
@@ -226,6 +227,7 @@ class _DebugLogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     final time = entry.timestamp;
     final timeLabel =
         '${_pad(time.hour)}:${_pad(time.minute)}:${_pad(time.second)}';
@@ -239,7 +241,7 @@ class _DebugLogTile extends StatelessWidget {
             timeLabel,
             style: textTheme.labelSmall?.copyWith(
               fontFeatures: const [FontFeature.tabularFigures()],
-              color: Palette.muted,
+              color: scheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(width: 10),
@@ -250,14 +252,14 @@ class _DebugLogTile extends StatelessWidget {
                 Text(
                   entry.category,
                   style: textTheme.labelSmall?.copyWith(
-                    color: entry.isError ? Palette.error : Palette.raspberry,
+                    color: entry.isError ? scheme.error : scheme.primary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 Text(
                   entry.message,
                   style: textTheme.bodySmall?.copyWith(
-                    color: entry.isError ? Palette.error : null,
+                    color: entry.isError ? scheme.error : null,
                   ),
                 ),
               ],

@@ -7,7 +7,6 @@ import 'package:vidyut_files/vidyut_files.dart';
 
 import '../debug/debug_log.dart';
 import '../debug/debug_log_screen.dart';
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import '../onboarding/setup_actions.dart';
 import '../onboarding/setup_checklist_screen.dart';
@@ -204,10 +203,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Palette.ground,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(20)),
-        ),
         title: const Text('Forget this laptop?'),
         content: const Text(
           "Vidyut will delete this pairing. You'll need to pair again — "
@@ -216,12 +211,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            style: TextButton.styleFrom(foregroundColor: Palette.muted),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Palette.error),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: const Text('Forget'),
           ),
         ],
@@ -282,16 +281,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Palette.ground,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(20)),
-        ),
         title: Text(title),
         content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            style: TextButton.styleFrom(foregroundColor: Palette.muted),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             child: Text(update == null ? 'Close' : 'Install later'),
           ),
           if (update != null)
@@ -481,7 +478,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               contentPadding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
               title: const Text('Maximum file size'),
               subtitle: Text(_transferSize(_settings.maxTransferFileBytes)),
-              trailing: const Icon(Icons.chevron_right, color: Palette.muted),
+              trailing: const Icon(Icons.chevron_right),
               onTap: _chooseMaxTransferSize,
             ),
           ).entrance(next()),
@@ -577,7 +574,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'not for every phone.',
                   ),
                 ),
-                trailing: const Icon(Icons.chevron_right, color: Palette.muted),
+                trailing: const Icon(Icons.chevron_right),
                 onTap: () => unawaited(_openClipboardAutoSend()),
               ),
             ).entrance(next()),
@@ -590,7 +587,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   padding: EdgeInsets.only(top: 4),
                   child: Text('Timestamped connection and payload events.'),
                 ),
-                trailing: const Icon(Icons.chevron_right, color: Palette.muted),
+                trailing: const Icon(Icons.chevron_right),
                 onTap: () => unawaited(_openDebugLog()),
               ),
             ).entrance(next()),
@@ -614,7 +611,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.chevron_right, color: Palette.muted),
+                    : const Icon(Icons.chevron_right),
                 onTap: _checkingForUpdates
                     ? null
                     : () => unawaited(_checkForUpdates()),
@@ -626,10 +623,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Card(
               child: ListTile(
                 contentPadding: const EdgeInsets.fromLTRB(20, 4, 16, 4),
-                leading: const Icon(Icons.link_off, color: Palette.error),
-                title: const Text(
+                leading: Icon(
+                  Icons.link_off,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                title: Text(
                   'Forget this laptop',
-                  style: TextStyle(color: Palette.error),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
                 subtitle: const Padding(
                   padding: EdgeInsets.only(top: 4),
@@ -670,9 +670,9 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
       child: Text(
         label,
-        style: Theme.of(
-          context,
-        ).textTheme.labelMedium?.copyWith(color: Palette.muted),
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -689,20 +689,23 @@ class _SummaryChip extends StatelessWidget {
     final count = issueCount;
     if (count == null) return const SizedBox.shrink();
     if (count == 0) {
-      return const Icon(Icons.check_circle, color: Palette.raspberry);
+      return Icon(
+        Icons.check_circle,
+        color: Theme.of(context).colorScheme.primary,
+      );
     }
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Palette.petal,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
         borderRadius: BorderRadius.all(Radius.circular(999)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         child: Text(
           count == 1 ? '1 issue' : '$count issues',
-          style: Theme.of(
-            context,
-          ).textTheme.labelMedium?.copyWith(color: Palette.raspberry),
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+          ),
         ),
       ),
     );
