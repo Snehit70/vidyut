@@ -6,8 +6,9 @@ abstract final class Motion {
   static bool loopsEnabled = true;
 
   static const spring = Cubic(0.34, 1.56, 0.64, 1);
-  static const entrance = Duration(milliseconds: 600);
-  static const stagger = Duration(milliseconds: 100);
-  static const pressDown = Duration(milliseconds: 120);
-  static const pressUp = Duration(milliseconds: 300);
+  static const entrance = Duration(milliseconds: 300);
+  static const stagger = Duration(milliseconds: 50);
+  static const state = Duration(milliseconds: 250);
+  static const pressDown = Duration(milliseconds: 100);
+  static const pressUp = Duration(milliseconds: 180);
 }

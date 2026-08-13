@@ -326,7 +326,9 @@ class _StatusGlyph extends StatelessWidget {
           alignment: Alignment.center,
           children: [
             Icon(state.icon, size: 30, color: state.color),
-            if (animate)
+            if (animate &&
+                Motion.loopsEnabled &&
+                !MediaQuery.disableAnimationsOf(context))
               Positioned(
                 right: 8,
                 top: 8,

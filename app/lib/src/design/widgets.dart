@@ -113,7 +113,8 @@ class _PressableScaleState extends State<PressableScale> {
   }
 }
 
-/// Staggered screen entrance: rise 30px + fade, 600ms, 100ms apart.
+/// Short entrance for finite flows such as onboarding. Long lists render
+/// immediately and must not use this helper.
 class Entrance extends StatelessWidget {
   const Entrance({super.key, required this.index, required this.child});
 
