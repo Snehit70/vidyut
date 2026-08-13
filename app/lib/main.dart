@@ -82,7 +82,7 @@ Future<void> main() async {
   );
 }
 
-class VidyutApp extends StatelessWidget {
+class VidyutApp extends StatefulWidget {
   const VidyutApp({
     super.key,
     required this.appSettingsRepository,
@@ -113,30 +113,58 @@ class VidyutApp extends StatelessWidget {
   final SetupActions? setupActions;
 
   @override
+  State<VidyutApp> createState() => _VidyutAppState();
+}
+
+class _VidyutAppState extends State<VidyutApp> {
+  AppThemeMode _themeMode = AppThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadThemeMode());
+  }
+
+  Future<void> _loadThemeMode() async {
+    final settings = await widget.appSettingsRepository.load();
+    if (mounted) setState(() => _themeMode = settings.themeMode);
+  }
+
+  void _setThemeMode(AppThemeMode mode) {
+    if (mounted) setState(() => _themeMode = mode);
+  }
+
+  ThemeMode get _materialThemeMode => switch (_themeMode) {
+    AppThemeMode.system => ThemeMode.system,
+    AppThemeMode.light => ThemeMode.light,
+    AppThemeMode.dark => ThemeMode.dark,
+  };
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Vidyut',
       theme: buildVidyutTheme(),
       darkTheme: buildVidyutDarkTheme(),
-      themeMode: ThemeMode.system,
+      themeMode: _materialThemeMode,
       debugShowCheckedModeBanner: false,
       onGenerateRoute: (settings) {
         final connectionFactory =
-            relayConnectionFactory ?? _defaultRelayConnection;
-        final log = debugLog ?? sharedDebugLog;
+            widget.relayConnectionFactory ?? _defaultRelayConnection;
+        final log = widget.debugLog ?? sharedDebugLog;
         if (settings.name == sendClipboardRoute) {
           return MaterialPageRoute(
             builder: (_) => SendClipboardScreen(
               clipboardReader: const FlutterClipboardReader(),
               publisher: SharePublisherAdapter(
                 SharePublisher(
-                  pairingRepository: pairingRepository,
+                  pairingRepository: widget.pairingRepository,
                   relaySessionFactory: connectionFactory,
                   crypto: PayloadCrypto(),
                   fileReader: const LocalShareFileReader(),
                 ),
               ),
-              lastActivityRepository: lastActivityRepository,
+              lastActivityRepository: widget.lastActivityRepository,
               debugLog: log,
             ),
             settings: settings,
@@ -144,16 +172,17 @@ class VidyutApp extends StatelessWidget {
         }
         return MaterialPageRoute(
           builder: (_) => PairingScreen(
-            appSettingsRepository: appSettingsRepository,
-            lastActivityRepository: lastActivityRepository,
-            foregroundServiceClient: foregroundServiceClient,
-            pairingRepository: pairingRepository,
+            appSettingsRepository: widget.appSettingsRepository,
+            lastActivityRepository: widget.lastActivityRepository,
+            foregroundServiceClient: widget.foregroundServiceClient,
+            pairingRepository: widget.pairingRepository,
             relayConnectionFactory: connectionFactory,
-            relayDiscovery: relayDiscovery,
-            shareSource: shareSource,
-            receiveNotificationTapHandler: receiveNotificationTapHandler,
+            relayDiscovery: widget.relayDiscovery,
+            shareSource: widget.shareSource,
+            receiveNotificationTapHandler: widget.receiveNotificationTapHandler,
             debugLog: log,
-            setupActions: setupActions,
+            setupActions: widget.setupActions,
+            onThemeModeChanged: _setThemeMode,
           ),
           settings: settings,
         );
@@ -183,6 +212,7 @@ class PairingScreen extends StatefulWidget {
     this.receiveNotificationTapHandler,
     this.debugLog,
     this.setupActions,
+    this.onThemeModeChanged,
   });
 
   final AppSettingsRepository appSettingsRepository;
@@ -195,6 +225,7 @@ class PairingScreen extends StatefulWidget {
   final ReceiveNotificationTapHandler? receiveNotificationTapHandler;
   final DebugLog? debugLog;
   final SetupActions? setupActions;
+  final ValueChanged<AppThemeMode>? onThemeModeChanged;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -718,6 +749,7 @@ class _PairingScreenState extends State<PairingScreen>
     await widget.appSettingsRepository.save(settings);
     if (!mounted) return;
     setState(() => _settings = settings);
+    widget.onThemeModeChanged?.call(settings.themeMode);
     await _syncForegroundService();
   }
 

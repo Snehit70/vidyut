@@ -171,6 +171,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _chooseThemeMode() async {
+    final selected = await showModalBottomSheet<AppThemeMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: RadioGroup<AppThemeMode>(
+          groupValue: _settings.themeMode,
+          onChanged: (value) => Navigator.pop(context, value),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final mode in AppThemeMode.values)
+                RadioListTile<AppThemeMode>(
+                  value: mode,
+                  title: Text(mode.label),
+                  subtitle: Text(mode.description),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (selected != null) {
+      await _updateSettings(_settings.copyWith(themeMode: selected));
+    }
+  }
+
   Future<void> _confirmForget() async {
     final onForget = widget.onForgetPairing;
     if (onForget == null) return;
@@ -386,6 +413,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          const _SectionHeader('Appearance'),
+          Card(
+            child: ListTile(
+              leading: Icon(switch (_settings.themeMode) {
+                AppThemeMode.system => Icons.brightness_auto_outlined,
+                AppThemeMode.light => Icons.light_mode_outlined,
+                AppThemeMode.dark => Icons.dark_mode_outlined,
+              }),
+              title: const Text('Theme'),
+              subtitle: Text(_settings.themeMode.label),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _chooseThemeMode,
+            ),
+          ).entrance(next()),
           // Master switch, first and alone: it governs all syncing (ADR 0006).
           Card(
             child: SwitchListTile(

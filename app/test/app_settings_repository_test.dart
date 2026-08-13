@@ -33,6 +33,18 @@ void main() {
     expect(await AppSettingsRepository(storage).load(), settings);
   });
 
+  test('persists the selected theme mode', () async {
+    final storage = MemoryAppSettingsStorage();
+    final repository = AppSettingsRepository(storage);
+
+    await repository.save(const AppSettings(themeMode: AppThemeMode.dark));
+
+    expect(
+      (await AppSettingsRepository(storage).load()).themeMode,
+      AppThemeMode.dark,
+    );
+  });
+
   test('tracks the one-time MIUI clipboard hint flag', () async {
     final storage = MemoryAppSettingsStorage();
     final repository = AppSettingsRepository(storage);

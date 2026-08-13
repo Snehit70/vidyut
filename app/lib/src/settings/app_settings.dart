@@ -2,8 +2,25 @@
 /// self-reported "I did this" checkboxes persisted in settings storage.
 enum MiuiSetupFlag { autostart, battery, lockInRecents, clipboard }
 
+enum AppThemeMode { system, light, dark }
+
+extension AppThemeModeCopy on AppThemeMode {
+  String get label => switch (this) {
+    AppThemeMode.system => 'System default',
+    AppThemeMode.light => 'Light',
+    AppThemeMode.dark => 'Dark',
+  };
+
+  String get description => switch (this) {
+    AppThemeMode.system => 'Follow the phone theme',
+    AppThemeMode.light => 'Use Vidyut’s light theme',
+    AppThemeMode.dark => 'Use Vidyut’s dark theme',
+  };
+}
+
 class AppSettings {
   const AppSettings({
+    this.themeMode = AppThemeMode.system,
     this.showReceiveNotifications = true,
     this.showPersistentSendNotification = true,
     this.autoPushScreenshots = true,
@@ -14,6 +31,7 @@ class AppSettings {
     this.maxTransferFileBytes = 1024 * 1024 * 1024,
   });
 
+  final AppThemeMode themeMode;
   final bool showReceiveNotifications;
   final bool showPersistentSendNotification;
 
@@ -34,6 +52,7 @@ class AppSettings {
   final int maxTransferFileBytes;
 
   AppSettings copyWith({
+    AppThemeMode? themeMode,
     bool? showReceiveNotifications,
     bool? showPersistentSendNotification,
     bool? autoPushScreenshots,
@@ -44,6 +63,7 @@ class AppSettings {
     int? maxTransferFileBytes,
   }) {
     return AppSettings(
+      themeMode: themeMode ?? this.themeMode,
       showReceiveNotifications:
           showReceiveNotifications ?? this.showReceiveNotifications,
       showPersistentSendNotification:
@@ -62,6 +82,7 @@ class AppSettings {
   @override
   bool operator ==(Object other) {
     return other is AppSettings &&
+        other.themeMode == themeMode &&
         other.showReceiveNotifications == showReceiveNotifications &&
         other.showPersistentSendNotification ==
             showPersistentSendNotification &&
@@ -75,6 +96,7 @@ class AppSettings {
 
   @override
   int get hashCode => Object.hash(
+    themeMode,
     showReceiveNotifications,
     showPersistentSendNotification,
     autoPushScreenshots,

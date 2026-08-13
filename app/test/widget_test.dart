@@ -207,6 +207,11 @@ void main() {
     );
     expect(find.text('Notify when laptop payloads arrive'), findsOneWidget);
 
+    await tester.ensureVisible(
+      find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, -96));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
     );

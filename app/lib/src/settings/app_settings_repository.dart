@@ -39,6 +39,7 @@ class MemoryAppSettingsStorage implements AppSettingsStorage {
 class AppSettingsRepository {
   const AppSettingsRepository(this._storage);
 
+  static const _themeModeKey = 'vidyut.settings.themeMode';
   static const _showReceiveNotificationsKey =
       'vidyut.settings.showReceiveNotifications';
   static const _showPersistentSendNotificationKey =
@@ -67,6 +68,7 @@ class AppSettingsRepository {
       _storage.read(_fileTransferAlertsKey),
       _storage.read(_allowMeteredFileTransfersKey),
       _storage.read(_maxTransferFileBytesKey),
+      _storage.read(_themeModeKey),
     ]);
     return AppSettings(
       showReceiveNotifications: _readBool(values[0], fallback: true),
@@ -78,11 +80,13 @@ class AppSettingsRepository {
       fileTransferAlerts: _readBool(values[5], fallback: true),
       allowMeteredFileTransfers: _readBool(values[6], fallback: true),
       maxTransferFileBytes: int.tryParse(values[7] ?? '') ?? 1024 * 1024 * 1024,
+      themeMode: _readThemeMode(values[8]),
     );
   }
 
   Future<void> save(AppSettings settings) async {
     await Future.wait([
+      _storage.write(_themeModeKey, settings.themeMode.name),
       _storage.write(
         _showReceiveNotificationsKey,
         settings.showReceiveNotifications.toString(),
@@ -113,6 +117,14 @@ class AppSettingsRepository {
         settings.maxTransferFileBytes.toString(),
       ),
     ]);
+  }
+
+  static AppThemeMode _readThemeMode(String? value) {
+    return switch (value) {
+      'light' => AppThemeMode.light,
+      'dark' => AppThemeMode.dark,
+      _ => AppThemeMode.system,
+    };
   }
 
   /// Whether the one-time "MIUI blocked the clipboard write" hint has been
