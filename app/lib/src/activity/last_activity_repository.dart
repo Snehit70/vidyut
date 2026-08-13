@@ -10,6 +10,9 @@ abstract interface class LastActivityStorage {
 
   Future<Map<String, String>> readAll();
 
+  /// Reads a key from the pre-namespace store during migration.
+  Future<String?> readLegacy(String key);
+
   Future<void> write(String key, String value);
 
   Future<void> delete(String key);
@@ -22,15 +25,20 @@ class SecureLastActivityStorage implements LastActivityStorage {
       iOptions: IOSOptions(accountName: 'vidyut.activity'),
       mOptions: MacOsOptions(accountName: 'vidyut.activity'),
     ),
+    this._legacyStorage = const FlutterSecureStorage(),
   ]);
 
   final FlutterSecureStorage _storage;
+  final FlutterSecureStorage _legacyStorage;
 
   @override
   Future<String?> read(String key) => _storage.read(key: key);
 
   @override
   Future<Map<String, String>> readAll() => _storage.readAll();
+
+  @override
+  Future<String?> readLegacy(String key) => _legacyStorage.read(key: key);
 
   @override
   Future<void> write(String key, String value) {
@@ -51,6 +59,9 @@ class MemoryLastActivityStorage implements LastActivityStorage {
 
   @override
   Future<Map<String, String>> readAll() async => Map.of(_values);
+
+  @override
+  Future<String?> readLegacy(String key) async => null;
 
   @override
   Future<void> write(String key, String value) async {
@@ -89,6 +100,7 @@ class LastActivityRepository {
 
   Future<List<LastActivity>> loadAll() async {
     final values = await _storage.readAll();
+    await _migrateLegacyValues(values);
     final activities = <LastActivity>[];
     for (final entry in values.entries.where(
       (entry) => entry.key.startsWith(_eventPrefix),
@@ -122,6 +134,16 @@ class LastActivityRepository {
         })
         .take(_maxEntries)
         .toList(growable: false);
+  }
+
+  Future<void> _migrateLegacyValues(Map<String, String> values) async {
+    for (final key in [_historyKey, _key]) {
+      if (values.containsKey(key)) continue;
+      final legacy = await _storage.readLegacy(key);
+      if (legacy == null) continue;
+      values[key] = legacy;
+      await _storage.write(key, legacy);
+    }
   }
 
   Future<void> record(LastActivity activity) {
