@@ -272,6 +272,8 @@ class _PairingScreenState extends State<PairingScreen>
 
   /// Live "connected" flag mirrored into the wizard's finale (D2).
   final _connectedNotifier = ValueNotifier<bool>(false);
+  StreamSubscription<List<LastActivity>>? _activitySubscription;
+  Timer? _relativeTimeTimer;
   SetupStatus? _setupStatus;
   RelayHealth? _relayHealth;
   String? _connectionDetail;
@@ -291,6 +293,14 @@ class _PairingScreenState extends State<PairingScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.foregroundServiceClient.addTaskDataCallback(_onServiceData);
+    _activitySubscription = widget.lastActivityRepository.changes.listen((
+      activities,
+    ) {
+      if (mounted) setState(() => _activities = activities);
+    });
+    _relativeTimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
     final tapHandler = widget.receiveNotificationTapHandler;
     unawaited(_debugLog.load());
     if (tapHandler != null) {
@@ -307,12 +317,17 @@ class _PairingScreenState extends State<PairingScreen>
   /// changes (revoking photos in system settings).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_refreshSetupStatus());
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadLastActivity());
+      unawaited(_refreshSetupStatus());
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _activitySubscription?.cancel();
+    _relativeTimeTimer?.cancel();
     _connectedNotifier.dispose();
     widget.foregroundServiceClient.removeTaskDataCallback(_onServiceData);
     _shareIntakeController?.dispose();
@@ -371,6 +386,15 @@ class _PairingScreenState extends State<PairingScreen>
             unawaited(_recordReceived(data, message));
           }
         }
+      case 'activity':
+        final activity = _decodeActivity(data);
+        if (activity != null) {
+          if (data['persisted'] == true) {
+            unawaited(_loadLastActivity());
+          } else {
+            unawaited(_record(activity));
+          }
+        }
       case 'log':
         final message = data['message'];
         if (message is String) {
@@ -419,6 +443,7 @@ class _PairingScreenState extends State<PairingScreen>
       MaterialPageRoute(
         builder: (_) => RecentActivityScreen(
           activities: _activities,
+          activityChanges: widget.lastActivityRepository.changes,
           onCopy: (activity) async {
             if (activity.direction != ActivityDirection.received) return;
             await widget.receiveNotificationTapHandler?.copyActivity(activity);
@@ -449,7 +474,10 @@ class _PairingScreenState extends State<PairingScreen>
     );
   }
 
-  Future<void> _recordSent(SharePayload payload) {
+  Future<void> _recordSent(
+    SharePayload payload, {
+    required ActivityOutcome outcome,
+  }) {
     final summary = switch (payload.type) {
       SharePayloadType.text => 'text (${payload.text?.length ?? 0} chars)',
       SharePayloadType.image => 'image',
@@ -461,6 +489,7 @@ class _PairingScreenState extends State<PairingScreen>
         summary: summary,
         counterpart: 'laptop',
         timestamp: DateTime.now(),
+        outcome: outcome,
       ),
     );
   }
@@ -478,6 +507,32 @@ class _PairingScreenState extends State<PairingScreen>
           ),
         ].take(30).toList();
       });
+    }
+  }
+
+  Future<void> _recordTransferResult(PhoneTransferBatch initial) async {
+    final batch = await _transferSender.waitForTerminal(initial.transferId);
+    final failed = batch.files.any(
+      (file) => file.status == PhoneTransferStatus.failed,
+    );
+    final noun = batch.files.length == 1 ? 'file' : 'files';
+    await _record(
+      LastActivity(
+        direction: ActivityDirection.sent,
+        summary: '${batch.files.length} $noun${failed ? ' (with issues)' : ''}',
+        counterpart: 'laptop',
+        timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
+        payloadId: batch.transferId,
+        outcome: failed ? ActivityOutcome.failed : ActivityOutcome.completed,
+      ),
+    );
+  }
+
+  LastActivity? _decodeActivity(Map<Object?, Object?> data) {
+    try {
+      return LastActivity.fromJson(data.cast<String, Object?>());
+    } on Object {
+      return null;
     }
   }
 
@@ -677,14 +732,20 @@ class _PairingScreenState extends State<PairingScreen>
         }
         final batch = result as PhoneTransferBatch;
         _debugLog.add('transfer', 'Sent ${batch.files.length} file(s).');
-        if (mounted) _showSnack('Sent ${batch.files.length} file(s).');
+        if (mounted) _showSnack('Sending ${batch.files.length} file(s)…');
+        unawaited(_recordTransferResult(batch));
       },
       onResult: (payload, result) {
         _debugLog.add('send', result.message, isError: !result.published);
-        if (!mounted) return;
-        if (result.published) {
-          unawaited(_recordSent(payload));
-        } else {
+        unawaited(
+          _recordSent(
+            payload,
+            outcome: result.published
+                ? ActivityOutcome.completed
+                : ActivityOutcome.failed,
+          ),
+        );
+        if (!result.published && mounted) {
           _showSnack(result.message);
         }
       },

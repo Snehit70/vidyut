@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -49,7 +50,13 @@ class LastActivityRepository {
   static const _maxEntries = 30;
 
   final LastActivityStorage _storage;
+  final _changes = StreamController<List<LastActivity>>.broadcast();
   Future<void> _writeTail = Future<void>.value();
+
+  /// Emits the current timeline after a write in this isolate. Consumers that
+  /// were backgrounded should still call [loadAll] on resume because the
+  /// foreground service may have written through another isolate.
+  Stream<List<LastActivity>> get changes => _changes.stream;
 
   Future<LastActivity?> load() async {
     return (await loadAll()).firstOrNull;
@@ -85,12 +92,13 @@ class LastActivityRepository {
               activity.payloadId == null ||
               entry.payloadId != activity.payloadId,
         ),
-      ].take(_maxEntries);
+      ].take(_maxEntries).toList(growable: false);
       await _storage.write(
         _historyKey,
         jsonEncode(updated.map((entry) => entry.encode()).toList()),
       );
       await _storage.write(_key, activity.encode());
+      if (!_changes.isClosed) _changes.add(updated);
     });
     _writeTail = next.catchError((_) {});
     return next;

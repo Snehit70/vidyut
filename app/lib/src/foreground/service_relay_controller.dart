@@ -4,6 +4,7 @@ import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/services.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
+import '../activity/last_activity.dart';
 import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
@@ -24,6 +25,7 @@ typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
 typedef ServiceTransferReceiverFactory =
     PhoneTransferReceiver Function(AppSettings settings);
 typedef ServiceEmit = void Function(Map<String, Object?> message);
+typedef ServiceActivityRecorder = Future<void> Function(LastActivity activity);
 typedef ServiceNotificationUpdate =
     Future<void> Function(String title, String text);
 
@@ -84,6 +86,7 @@ class ServiceRelayController {
     required this.receiverFactory,
     required this.emit,
     required this.updateNotification,
+    this.activityRecorder,
     this.screenshotWatcher,
     this.pushController,
     this.screenOnEvents,
@@ -103,6 +106,7 @@ class ServiceRelayController {
   final ServiceReceiverFactory receiverFactory;
   final ServiceEmit emit;
   final ServiceNotificationUpdate updateNotification;
+  final ServiceActivityRecorder? activityRecorder;
 
   /// Optional collaborator (injected like [connectionFactory] to keep this
   /// class testable). When present, [_sync] starts it while
@@ -322,6 +326,19 @@ class ServiceRelayController {
         'Manual clipboard send: ${publishResult.message}',
         isError: !publishResult.published,
       );
+      unawaited(
+        recordActivity(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (${text.length} chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+            outcome: publishResult.published
+                ? ActivityOutcome.completed
+                : ActivityOutcome.failed,
+          ),
+        ),
+      );
       await updateNotification(
         publishResult.published
             ? 'Vidyut sent to laptop'
@@ -361,6 +378,17 @@ class ServiceRelayController {
   /// composition's receive-clipboard wrapper after a successful write.
   void recordReceivedClipboardText(String text) {
     _lastReceivedClipboardWrite = text;
+  }
+
+  /// Persists a meaningful outcome in the service isolate before notifying the
+  /// UI. This keeps activity durable even when the app surface is not open.
+  Future<void> recordActivity(LastActivity activity) async {
+    await activityRecorder?.call(activity);
+    emit({
+      'kind': 'activity',
+      ...activity.toJson(),
+      'persisted': activityRecorder != null,
+    });
   }
 
   Future<void> _sync() async {
@@ -463,6 +491,22 @@ class ServiceRelayController {
       pairingSecret: pairing.secret,
       receiver: receiverFactory(settings),
       onResult: (frame, result) {
+        final type = frame.type.wireName;
+        final size = _payloadSizeBytes(frame.payload);
+        unawaited(
+          recordActivity(
+            LastActivity(
+              direction: ActivityDirection.received,
+              summary: '$type (${_formatBytes(size)})',
+              counterpart: frame.origin,
+              timestamp: DateTime.now(),
+              payloadId: frame.nonce,
+              outcome: result.received
+                  ? ActivityOutcome.completed
+                  : ActivityOutcome.failed,
+            ),
+          ),
+        );
         emit({
           'kind': 'receive',
           'received': result.received,
@@ -477,6 +521,12 @@ class ServiceRelayController {
     _transferReceiver = transferReceiverFactory?.call(settings);
     _transferReceiver?.start(connection, pairing);
     await connection.start();
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   /// Drops the phone's own frames and the pool re-send that follows every
@@ -664,6 +714,19 @@ class ServiceRelayController {
     _log(
       'Clipboard auto-send publish: ${result.message}',
       isError: !result.published,
+    );
+    unawaited(
+      recordActivity(
+        LastActivity(
+          direction: ActivityDirection.sent,
+          summary: 'text (${text.length} chars)',
+          counterpart: 'laptop',
+          timestamp: DateTime.now(),
+          outcome: result.published
+              ? ActivityOutcome.completed
+              : ActivityOutcome.failed,
+        ),
+      ),
     );
   }
 

@@ -3,6 +3,9 @@ import 'dart:convert';
 /// Which way the most recent payload moved through the pool.
 enum ActivityDirection { sent, received }
 
+/// Whether the user-visible operation completed or needs attention.
+enum ActivityOutcome { completed, failed }
+
 /// The single most recent sync event, persisted so the home dashboard can
 /// answer "when did this last work?" after an app restart (ADR 0004). Only
 /// the newest event is kept — latest-write-wins, like the pool itself.
@@ -13,6 +16,7 @@ class LastActivity {
     required this.counterpart,
     required this.timestamp,
     this.payloadId,
+    this.outcome = ActivityOutcome.completed,
   });
 
   /// Whether the phone sent this payload or received it.
@@ -27,6 +31,8 @@ class LastActivity {
   final DateTime timestamp;
 
   final String? payloadId;
+
+  final ActivityOutcome outcome;
 
   /// One line for the dashboard row, e.g. "text (14 chars) to laptop · 2m ago".
   String describe({DateTime? now}) {
@@ -47,6 +53,7 @@ class LastActivity {
     'summary': summary,
     'counterpart': counterpart,
     'ts': timestamp.millisecondsSinceEpoch,
+    'outcome': outcome.name,
     if (payloadId != null) 'payloadId': payloadId,
   };
 
@@ -58,6 +65,10 @@ class LastActivity {
     final counterpart = json['counterpart'];
     final ts = json['ts'];
     final payloadId = json['payloadId'];
+    final outcomeName = json['outcome'];
+    final outcome = ActivityOutcome.values
+        .where((value) => value.name == outcomeName)
+        .firstOrNull;
     if (direction == null ||
         summary is! String ||
         counterpart is! String ||
@@ -70,6 +81,7 @@ class LastActivity {
       counterpart: counterpart,
       timestamp: DateTime.fromMillisecondsSinceEpoch(ts),
       payloadId: payloadId is String ? payloadId : null,
+      outcome: outcome ?? ActivityOutcome.completed,
     );
   }
 

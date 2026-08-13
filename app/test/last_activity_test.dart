@@ -11,6 +11,7 @@ void main() {
         summary: 'screenshot (1.2 MB)',
         counterpart: 'laptop',
         timestamp: DateTime.fromMillisecondsSinceEpoch(1720000000000),
+        outcome: ActivityOutcome.failed,
       );
 
       final decoded = LastActivity.decode(activity.encode())!;
@@ -19,6 +20,7 @@ void main() {
       expect(decoded.summary, 'screenshot (1.2 MB)');
       expect(decoded.counterpart, 'laptop');
       expect(decoded.timestamp, activity.timestamp);
+      expect(decoded.outcome, ActivityOutcome.failed);
     });
 
     test('decode returns null for empty or malformed input', () {
@@ -116,6 +118,28 @@ void main() {
       ]);
 
       expect((await repo.loadAll()).length, 2);
+    });
+
+    test('emits the updated timeline after a record', () async {
+      final repo = LastActivityRepository(MemoryLastActivityStorage());
+      final changes = expectLater(
+        repo.changes,
+        emits(
+          predicate<List<LastActivity>>(
+            (items) => items.length == 1 && items.single.summary == 'image',
+          ),
+        ),
+      );
+
+      await repo.record(
+        LastActivity(
+          direction: ActivityDirection.received,
+          summary: 'image',
+          counterpart: 'laptop',
+          timestamp: DateTime.fromMillisecondsSinceEpoch(3),
+        ),
+      );
+      await changes;
     });
   });
 
