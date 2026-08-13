@@ -139,3 +139,14 @@ A Files-surface grouping for transfer states that require user action:
 failed, waiting for source, completed with issues, or expired. It is not a
 transfer status and does not include ordinary queued, active, or paused work.
 _Avoid_: problem transfers, errors only, incomplete
+
+**Ready**:
+The user-facing Home state in which the phone is connected to the Relay and
+the laptop clipboard watcher is healthy enough for automatic clipboard
+synchronization.
+_Avoid_: connected only, online, synced
+
+**Sync needs attention**:
+The user-facing Home state in which the phone remains connected but automatic
+clipboard synchronization is degraded or requires recovery.
+_Avoid_: Needs attention, offline, failed

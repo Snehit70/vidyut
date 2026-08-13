@@ -48,7 +48,6 @@ dependencies:
   receive_sharing_intent: 1.8.1
   flutter_foreground_task: ^9.2.2
   permission_handler: ^12.0.1
-  google_fonts: ^8.1.0
   package_info_plus: ^9.0.1
   shared_preferences: ^2.5.3
   file_selector: ^1.0.3
@@ -80,6 +79,11 @@ flutter:
 
   assets:
     - assets/icon/icon-legacy.png
+
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope[wght].ttf
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

@@ -73,7 +73,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.10:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('loads existing pairing from storage', (tester) async {
@@ -98,7 +98,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.20:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('lists nearby relays and selecting one fills host and port', (
@@ -154,7 +154,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.textContaining('192.168.1.5:17321'), findsOneWidget);
+    expect(find.text('Send files'), findsOneWidget);
   });
 
   testWidgets('shows guidance when no relays are discovered', (tester) async {
@@ -207,6 +207,11 @@ void main() {
     );
     expect(find.text('Notify when laptop payloads arrive'), findsOneWidget);
 
+    await tester.ensureVisible(
+      find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, -96));
+    await tester.pumpAndSettle();
     await tester.tap(
       find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
     );
@@ -225,6 +230,39 @@ void main() {
         showReceiveNotifications: false,
         showPersistentSendNotification: false,
       ),
+    );
+  });
+
+  testWidgets('switches the app theme from settings', (tester) async {
+    final settingsStorage = MemoryAppSettingsStorage();
+
+    await tester.pumpWidget(
+      VidyutApp(
+        appSettingsRepository: AppSettingsRepository(settingsStorage),
+        lastActivityRepository: LastActivityRepository(
+          MemoryLastActivityStorage(),
+        ),
+        foregroundServiceClient: FakeForegroundServiceClient(),
+        pairingRepository: PairingRepository(MemoryPairingStorage()),
+        relayConnectionFactory: fakeConnection,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Theme'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dark').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      (await AppSettingsRepository(settingsStorage).load()).themeMode,
+      AppThemeMode.dark,
+    );
+    expect(
+      Theme.of(tester.element(find.text('Settings'))).brightness,
+      Brightness.dark,
     );
   });
 

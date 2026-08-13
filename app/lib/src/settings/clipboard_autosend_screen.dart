@@ -4,7 +4,6 @@ import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import 'app_settings.dart';
 import 'settings_screen.dart';
@@ -94,7 +93,7 @@ class _ClipboardAutoSendScreenState extends State<ClipboardAutoSendScreen>
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Card(
+          Card(
             child: Padding(
               padding: EdgeInsets.all(20),
               child: Text(
@@ -126,14 +125,16 @@ class _ClipboardAutoSendScreenState extends State<ClipboardAutoSendScreen>
           const SizedBox(height: 14),
           _AdbBlockCard(onCopy: _copyCommands).entrance(3),
           const SizedBox(height: 14),
-          const Card(
+          Card(
             child: Padding(
               padding: EdgeInsets.all(20),
               child: Text(
                 'On Xiaomi (MIUI/HyperOS) this may still not work until you also '
                 'enable "Display pop-up windows while running in the background" '
                 'for Vidyut in the app\'s permission settings.',
-                style: TextStyle(color: Palette.muted),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ).entrance(4),
@@ -153,16 +154,21 @@ class _GrantStateCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final granted = this.granted;
+    final scheme = Theme.of(context).colorScheme;
     final (icon, color, text) = switch (granted) {
-      null => (Icons.hourglass_empty, Palette.muted, 'Checking permission...'),
+      null => (
+        Icons.hourglass_empty,
+        scheme.onSurfaceVariant,
+        'Checking permission...',
+      ),
       true => (
         Icons.check_circle,
-        Palette.raspberry,
+        scheme.primary,
         'READ_LOGS granted — auto-send can run.',
       ),
       false => (
         Icons.error_outline,
-        Palette.error,
+        scheme.error,
         'READ_LOGS not granted — run the setup below.',
       ),
     };
@@ -183,6 +189,7 @@ class _AdbBlockCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -204,17 +211,17 @@ class _AdbBlockCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Connect the phone by USB with debugging on, then run these on the '
               'computer:',
-              style: TextStyle(color: Palette.muted),
+              style: TextStyle(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Palette.mist,
+                color: scheme.secondaryContainer,
                 borderRadius: const BorderRadius.all(Radius.circular(12)),
-                border: Border.all(color: Palette.hairline),
+                border: Border.all(color: scheme.outlineVariant),
               ),
               child: const Padding(
                 padding: EdgeInsets.all(14),

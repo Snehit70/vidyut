@@ -13,13 +13,13 @@ import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
 import 'src/activity/recent_activity_screen.dart';
 import 'src/debug/debug_log.dart';
-import 'src/design/palette.dart';
 import 'src/design/theme.dart';
 import 'src/design/widgets.dart';
 import 'src/foreground/foreground_service_client.dart';
 import 'src/foreground/foreground_service_coordinator.dart';
 import 'src/foreground/vidyut_foreground_service.dart';
 import 'src/foreground/send_clipboard_screen.dart';
+import 'src/home/home_screen.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';
 import 'src/onboarding/setup_checklist_screen.dart';
@@ -81,7 +81,7 @@ Future<void> main() async {
   );
 }
 
-class VidyutApp extends StatelessWidget {
+class VidyutApp extends StatefulWidget {
   const VidyutApp({
     super.key,
     required this.appSettingsRepository,
@@ -112,28 +112,63 @@ class VidyutApp extends StatelessWidget {
   final SetupActions? setupActions;
 
   @override
+  State<VidyutApp> createState() => _VidyutAppState();
+}
+
+class _VidyutAppState extends State<VidyutApp> {
+  AppThemeMode _themeMode = AppThemeMode.system;
+  var _themeModeRevision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadThemeMode());
+  }
+
+  Future<void> _loadThemeMode() async {
+    final revision = _themeModeRevision;
+    final settings = await widget.appSettingsRepository.load();
+    if (mounted && revision == _themeModeRevision) {
+      setState(() => _themeMode = settings.themeMode);
+    }
+  }
+
+  void _setThemeMode(AppThemeMode mode) {
+    _themeModeRevision++;
+    if (mounted) setState(() => _themeMode = mode);
+  }
+
+  ThemeMode get _materialThemeMode => switch (_themeMode) {
+    AppThemeMode.system => ThemeMode.system,
+    AppThemeMode.light => ThemeMode.light,
+    AppThemeMode.dark => ThemeMode.dark,
+  };
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Vidyut',
       theme: buildVidyutTheme(),
+      darkTheme: buildVidyutDarkTheme(),
+      themeMode: _materialThemeMode,
       debugShowCheckedModeBanner: false,
       onGenerateRoute: (settings) {
         final connectionFactory =
-            relayConnectionFactory ?? _defaultRelayConnection;
-        final log = debugLog ?? sharedDebugLog;
+            widget.relayConnectionFactory ?? _defaultRelayConnection;
+        final log = widget.debugLog ?? sharedDebugLog;
         if (settings.name == sendClipboardRoute) {
           return MaterialPageRoute(
             builder: (_) => SendClipboardScreen(
               clipboardReader: const FlutterClipboardReader(),
               publisher: SharePublisherAdapter(
                 SharePublisher(
-                  pairingRepository: pairingRepository,
+                  pairingRepository: widget.pairingRepository,
                   relaySessionFactory: connectionFactory,
                   crypto: PayloadCrypto(),
                   fileReader: const LocalShareFileReader(),
                 ),
               ),
-              lastActivityRepository: lastActivityRepository,
+              lastActivityRepository: widget.lastActivityRepository,
               debugLog: log,
             ),
             settings: settings,
@@ -141,16 +176,17 @@ class VidyutApp extends StatelessWidget {
         }
         return MaterialPageRoute(
           builder: (_) => PairingScreen(
-            appSettingsRepository: appSettingsRepository,
-            lastActivityRepository: lastActivityRepository,
-            foregroundServiceClient: foregroundServiceClient,
-            pairingRepository: pairingRepository,
+            appSettingsRepository: widget.appSettingsRepository,
+            lastActivityRepository: widget.lastActivityRepository,
+            foregroundServiceClient: widget.foregroundServiceClient,
+            pairingRepository: widget.pairingRepository,
             relayConnectionFactory: connectionFactory,
-            relayDiscovery: relayDiscovery,
-            shareSource: shareSource,
-            receiveNotificationTapHandler: receiveNotificationTapHandler,
+            relayDiscovery: widget.relayDiscovery,
+            shareSource: widget.shareSource,
+            receiveNotificationTapHandler: widget.receiveNotificationTapHandler,
             debugLog: log,
-            setupActions: setupActions,
+            setupActions: widget.setupActions,
+            onThemeModeChanged: _setThemeMode,
           ),
           settings: settings,
         );
@@ -180,6 +216,7 @@ class PairingScreen extends StatefulWidget {
     this.receiveNotificationTapHandler,
     this.debugLog,
     this.setupActions,
+    this.onThemeModeChanged,
   });
 
   final AppSettingsRepository appSettingsRepository;
@@ -192,6 +229,7 @@ class PairingScreen extends StatefulWidget {
   final ReceiveNotificationTapHandler? receiveNotificationTapHandler;
   final DebugLog? debugLog;
   final SetupActions? setupActions;
+  final ValueChanged<AppThemeMode>? onThemeModeChanged;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -680,6 +718,7 @@ class _PairingScreenState extends State<PairingScreen>
         builder: (_) => TransferFilesScreen(
           history: _transferHistory,
           sender: _transferSender,
+          onOpenHome: () => Navigator.of(context).pop(),
           onOpenSettings: _openSettings,
           onOpenFile: (file) => _runTransferFileAction(
             'Open file',
@@ -715,6 +754,7 @@ class _PairingScreenState extends State<PairingScreen>
     await widget.appSettingsRepository.save(settings);
     if (!mounted) return;
     setState(() => _settings = settings);
+    widget.onThemeModeChanged?.call(settings.themeMode);
     await _syncForegroundService();
   }
 
@@ -732,12 +772,29 @@ class _PairingScreenState extends State<PairingScreen>
     }
 
     final paired = _pairing != null;
-    final statusLabel = switch (_connectionStatus) {
-      ConnectionStatus.connected =>
-        _relayHealth?.degraded == true ? 'Needs attention' : 'Ready',
-      ConnectionStatus.searching => 'Searching',
-      ConnectionStatus.offline => paired ? 'Offline' : 'Unpaired',
-    };
+    if (paired) {
+      final setupNeedsAttention = _setupStatus?.bannerNeeded(_settings) == true;
+      return HomeScreen(
+        connectionStatus: _connectionStatus,
+        relayHealth: _relayHealth,
+        lastActivity: _lastActivity,
+        onOpenFiles: () => unawaited(_openFiles()),
+        onOpenSettings: () => unawaited(_openSettings()),
+        onOpenRecentActivity: () => unawaited(_openRecentActivity()),
+        onOpenConnectionDetails: () => unawaited(_showConnectionHelp()),
+        onSendFiles: () => unawaited(_openFiles()),
+        setupBannerLabel: setupNeedsAttention
+            ? _setupStatus!.bannerLabel(_settings)
+            : null,
+        onOpenSetup: setupNeedsAttention
+            ? () => unawaited(
+                _setupStatus!.onboardingComplete
+                    ? _openChecklist()
+                    : _openWizard(),
+              )
+            : null,
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -754,15 +811,9 @@ class _PairingScreenState extends State<PairingScreen>
           ],
         ),
         actions: [
-          if (paired)
-            _AppBarAction(
-              tooltip: 'Files',
-              icon: Icons.folder_outlined,
-              onPressed: _openFiles,
-            ),
-          _AppBarAction(
+          IconButton(
             tooltip: 'Settings',
-            icon: Icons.settings_outlined,
+            icon: const Icon(Icons.settings_outlined),
             onPressed: _openSettings,
           ),
           const SizedBox(width: 12),
@@ -773,89 +824,43 @@ class _PairingScreenState extends State<PairingScreen>
           padding: const EdgeInsets.all(20),
           children: [
             _StatusHero(
-              label: statusLabel,
-              description: paired
-                  ? switch (_connectionStatus) {
-                      ConnectionStatus.connected =>
-                        _relayHealth?.degraded == true
-                            ? 'Connected, but the laptop clipboard watcher is not working.'
-                            : 'Your laptop and phone share one clipboard.',
-                      ConnectionStatus.searching =>
-                        'Looking for your laptop on the network.',
-                      ConnectionStatus.offline =>
-                        "Can't reach your laptop right now.",
-                    }
-                  : 'Pair with the laptop relay to join the clipboard pool.',
-              icon: switch (_connectionStatus) {
-                ConnectionStatus.connected => Icons.link,
-                ConnectionStatus.searching => Icons.wifi_find,
-                ConnectionStatus.offline =>
-                  paired ? Icons.cloud_off : Icons.qr_code_scanner,
-              },
-              searching: _connectionStatus == ConnectionStatus.searching,
-              onTap: paired ? _showConnectionHelp : null,
+              label: 'Unpaired',
+              description:
+                  'Pair with the laptop relay to join the clipboard pool.',
+              icon: Icons.qr_code_scanner,
+              searching: false,
             ).entrance(0),
-            if (paired) ...[
-              if (_lastActivity != null) ...[
-                const SizedBox(height: 24),
-                _DashboardRow(
-                  icon: Icons.history,
-                  title: 'Last activity',
-                  subtitle: _lastActivity!.describe(),
-                  onTap: () => unawaited(_openRecentActivity()),
-                ).entrance(1),
-              ],
-              const SizedBox(height: 12),
-              _DashboardRow(
-                icon: Icons.dns_outlined,
-                title: _relayHealth?.relayName ?? _pairing!.name ?? 'Laptop',
-                subtitle: '${_pairing!.host}:${_pairing!.port}',
-              ).entrance(2),
-              if (_setupStatus != null) ...[
-                const SizedBox(height: 12),
-                _SetupHealthRow(
-                  status: _setupStatus!,
-                  settings: _settings,
-                  onTap: () => unawaited(
-                    _setupStatus!.onboardingComplete
-                        ? _openChecklist()
-                        : _openWizard(),
-                  ),
-                ).entrance(3),
-              ],
-            ] else ...[
-              if (_setupStatus?.bannerNeeded(_settings) ?? false) ...[
-                const SizedBox(height: 16),
-                _SetupBanner(
-                  label: _setupStatus!.bannerLabel(_settings),
-                  onTap: () => unawaited(
-                    _setupStatus!.onboardingComplete
-                        ? _openChecklist()
-                        : _openWizard(),
-                  ),
-                ).entrance(1),
-              ],
-              const SizedBox(height: 28),
-              if (widget.relayDiscovery != null) ...[
-                NearbyRelaysCard(
-                  relays: _nearbyRelays,
-                  selected: _selectedRelay,
-                  discovering: _discovering,
-                  onRefresh: _discoverRelays,
-                  onSelect: _selectNearbyRelay,
-                  error: _discoveryError,
-                ).entrance(2),
-                const SizedBox(height: 28),
-              ],
-              ManualPairingForm(
-                hostController: _hostController,
-                portController: _portController,
-                secretController: _secretController,
-                error: _error,
-                onScanQr: _openQrScanner,
-                onPair: _saveManualPairing,
-              ).entrance(3),
+            if (_setupStatus?.bannerNeeded(_settings) ?? false) ...[
+              const SizedBox(height: 16),
+              _SetupBanner(
+                label: _setupStatus!.bannerLabel(_settings),
+                onTap: () => unawaited(
+                  _setupStatus!.onboardingComplete
+                      ? _openChecklist()
+                      : _openWizard(),
+                ),
+              ).entrance(1),
             ],
+            const SizedBox(height: 28),
+            if (widget.relayDiscovery != null) ...[
+              NearbyRelaysCard(
+                relays: _nearbyRelays,
+                selected: _selectedRelay,
+                discovering: _discovering,
+                onRefresh: _discoverRelays,
+                onSelect: _selectNearbyRelay,
+                error: _discoveryError,
+              ).entrance(2),
+              const SizedBox(height: 28),
+            ],
+            ManualPairingForm(
+              hostController: _hostController,
+              portController: _portController,
+              secretController: _secretController,
+              error: _error,
+              onScanQr: _openQrScanner,
+              onPair: _saveManualPairing,
+            ).entrance(3),
           ],
         ),
       ),
@@ -874,6 +879,8 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _showConnectionHelp() async {
     final degraded = _relayHealth?.degraded == true;
+    final pairing = _pairing;
+    final relayName = _relayHealth?.relayName ?? pairing?.name;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -891,6 +898,23 @@ class _PairingScreenState extends State<PairingScreen>
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 12),
+              if (relayName != null || pairing != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer,
+                    foregroundColor: Theme.of(
+                      context,
+                    ).colorScheme.onPrimaryContainer,
+                    child: const Icon(Icons.laptop_mac_outlined),
+                  ),
+                  title: Text(relayName ?? 'Paired laptop'),
+                  subtitle: pairing == null
+                      ? null
+                      : Text('${pairing.host}:${pairing.port}'),
+                ),
               Text(
                 degraded
                     ? (_relayHealth?.clipboardError ??
@@ -923,77 +947,44 @@ class _PairingScreenState extends State<PairingScreen>
   }
 }
 
-class _AppBarAction extends StatelessWidget {
-  const _AppBarAction({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: PressableScale(
-        child: IconButton(
-          tooltip: tooltip,
-          icon: Icon(icon, size: 20, color: Palette.ink),
-          style: IconButton.styleFrom(
-            backgroundColor: Palette.mist,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          onPressed: onPressed,
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusHero extends StatelessWidget {
   const _StatusHero({
     required this.label,
     required this.description,
     required this.icon,
     required this.searching,
-    this.onTap,
   });
 
   final String label;
   final String description;
   final IconData icon;
   final bool searching;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
 
     final content = Column(
       children: [
         const SizedBox(height: 16),
-        MorphingBlob(
-          size: 180,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 32, color: Palette.raspberry),
+        Container(
+          width: 96,
+          height: 96,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            borderRadius: BorderRadius.circular(16),
           ),
+          child: Icon(icon, size: 36, color: scheme.primary),
         ),
         const SizedBox(height: 22),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (searching) ...[const PulsingDot(), const SizedBox(width: 6)],
+            if (searching) ...[
+              PulsingDot(color: scheme.primary, size: 8),
+              const SizedBox(width: 6),
+            ],
             Text(label, style: textTheme.titleLarge),
           ],
         ),
@@ -1003,134 +994,14 @@ class _StatusHero extends StatelessWidget {
           child: Text(
             description,
             textAlign: TextAlign.center,
-            style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+            style: textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],
     );
-    if (onTap == null) return content;
-    return Semantics(
-      button: true,
-      label: 'Connection details',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: content,
-      ),
-    );
-  }
-}
-
-/// A flat dashboard row: leading chip icon, title, muted subtitle, optional
-/// trailing chevron when tappable. Emphasis swaps the mist fill for petal to
-/// flag something that wants attention (ADR 0004).
-class _DashboardRow extends StatelessWidget {
-  const _DashboardRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.emphasis = false,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool emphasis;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final surface = emphasis ? Palette.petal : Palette.mist;
-    final chip = emphasis ? Palette.ground : Palette.petal;
-
-    final row = Padding(
-      padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: chip,
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(icon, size: 20, color: Palette.raspberry),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: textTheme.titleSmall),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: textTheme.bodySmall?.copyWith(color: Palette.muted),
-                ),
-              ],
-            ),
-          ),
-          if (onTap != null) ...[
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, size: 20, color: Palette.raspberry),
-          ],
-        ],
-      ),
-    );
-
-    if (onTap == null) {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          color: surface,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: row,
-      );
-    }
-    return PressableScale(
-      child: Material(
-        color: surface,
-        borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: row,
-        ),
-      ),
-    );
-  }
-}
-
-/// The persistent setup-health row on the paired dashboard (ADR 0004):
-/// "All clear" with a check when healthy, "N issues" on petal otherwise.
-class _SetupHealthRow extends StatelessWidget {
-  const _SetupHealthRow({
-    required this.status,
-    required this.settings,
-    required this.onTap,
-  });
-
-  final SetupStatus status;
-  final AppSettings settings;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final issues = status.issueCount;
-    final healthy = issues == 0;
-    return _DashboardRow(
-      icon: healthy ? Icons.check_circle : Icons.tune,
-      title: 'Setup',
-      subtitle: healthy
-          ? 'All clear'
-          : issues == 1
-          ? '1 issue needs attention'
-          : '$issues issues need attention',
-      emphasis: !healthy,
-      onTap: onTap,
-    );
+    return content;
   }
 }
 
@@ -1147,16 +1018,20 @@ class _SetupBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return PressableScale(
       child: Material(
-        color: Palette.petal,
-        borderRadius: BorderRadius.circular(20),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Row(
               children: [
-                const Icon(Icons.tune, size: 20, color: Palette.raspberry),
+                Icon(
+                  Icons.tune,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -1164,10 +1039,10 @@ class _SetupBanner extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-                const Icon(
+                Icon(
                   Icons.chevron_right,
                   size: 20,
-                  color: Palette.raspberry,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ],
             ),
@@ -1250,8 +1125,8 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: DecoratedBox(
-                decoration: const BoxDecoration(
-                  color: Palette.petal,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
                   borderRadius: BorderRadius.all(Radius.circular(999)),
                 ),
                 child: Padding(
@@ -1261,7 +1136,9 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
                   ),
                   child: Text(
                     'Point at the QR code on the laptop',
-                    style: Theme.of(context).textTheme.bodyMedium,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
                   ),
                 ),
               ),

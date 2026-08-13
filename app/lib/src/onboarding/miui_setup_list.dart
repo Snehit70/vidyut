@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../design/palette.dart';
 import '../settings/app_settings.dart';
 import 'setup_actions.dart';
 
@@ -98,6 +97,7 @@ class _MiuiItemState extends State<_MiuiItem> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -115,7 +115,7 @@ class _MiuiItemState extends State<_MiuiItem> {
                     Text(
                       widget.description!,
                       style: textTheme.bodySmall?.copyWith(
-                        color: Palette.muted,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -143,7 +143,7 @@ class _MiuiItemState extends State<_MiuiItem> {
                       Text(
                         widget.expandableHow!,
                         style: textTheme.bodySmall?.copyWith(
-                          color: Palette.muted,
+                          color: scheme.onSurfaceVariant,
                         ),
                       ),
                   ],
@@ -152,7 +152,7 @@ class _MiuiItemState extends State<_MiuiItem> {
             ),
             Checkbox(
               value: widget.done,
-              activeColor: Palette.raspberry,
+              activeColor: scheme.primary,
               onChanged: (value) => widget.onDone(widget.flag, value ?? false),
             ),
           ],

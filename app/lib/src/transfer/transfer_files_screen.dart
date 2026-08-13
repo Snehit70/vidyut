@@ -13,6 +13,7 @@ class TransferFilesScreen extends StatefulWidget {
     required this.history,
     required this.sender,
     this.onOpenSettings,
+    this.onOpenHome,
     this.onOpenFile,
     this.onShareFile,
     this.onSendAgain,
@@ -22,6 +23,7 @@ class TransferFilesScreen extends StatefulWidget {
   final TransferHistoryRepository history;
   final PhoneTransferSender sender;
   final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenHome;
   final Future<void> Function(PhoneTransferFile file)? onOpenFile;
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
@@ -235,9 +237,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         if (!_needsAttention(batch)) return false;
     }
     return query.isEmpty ||
-        batch.files.any(
-          (file) => file.filename.toLowerCase().contains(query),
-        );
+        batch.files.any((file) => file.filename.toLowerCase().contains(query));
   }
 
   @override
@@ -256,6 +256,117 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     final showEmpty = !_loading && _batches.isEmpty;
     final showNoResults = !_loading && _batches.isNotEmpty && visible.isEmpty;
     final selectionMode = _selectedTransferIds.isNotEmpty;
+    final content = _loading
+        ? const Center(child: CircularProgressIndicator())
+        : CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: _SummaryStrip(batches: _batches),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: TextField(
+                    controller: _search,
+                    decoration: const InputDecoration(
+                      hintText: 'Search filenames',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                sliver: SliverToBoxAdapter(child: _buildFilters()),
+              ),
+              if (showEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _EmptyFiles(onSend: _chooseFiles),
+                )
+              else if (showNoResults)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _NoResults(onClear: _clearFilters),
+                )
+              else ...[
+                if (_liveProgress != null && _liveProgressIsVisible)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: _LiveTransferCard(
+                        progress: _liveProgress!,
+                        onCancel: _canCancelLive(_liveProgress!)
+                            ? () => widget.sender.cancelBatch(
+                                _liveProgress!.transferId!,
+                              )
+                            : null,
+                      ),
+                    ),
+                  ),
+                if (active.isNotEmpty) ...[
+                  _sectionHeader('Active'),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    sliver: SliverList.builder(
+                      itemCount: active.length,
+                      itemBuilder: (_, index) => Padding(
+                        padding: EdgeInsets.only(
+                          bottom: index == active.length - 1 ? 0 : 10,
+                        ),
+                        child: _TransferRow(
+                          batch: active[index],
+                          onRetry: null,
+                          onCancel: _cancelCallback(active[index]),
+                          onRemove: () => _remove(active[index]),
+                          onTap: () => _showBatchDetails(active[index]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                for (final entry in groupedHistory.entries) ...[
+                  _sectionHeader(entry.key),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    sliver: SliverList.builder(
+                      itemCount: entry.value.length,
+                      itemBuilder: (_, index) {
+                        final batch = entry.value[index];
+                        final canSelect = _canRemoveFromHistory(batch);
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            bottom: index == entry.value.length - 1 ? 0 : 10,
+                          ),
+                          child: _TransferRow(
+                            batch: batch,
+                            onRetry: _retryCallback(batch),
+                            onCancel: _cancelCallback(batch),
+                            onRemove: () => _remove(batch),
+                            onOpenSettings: widget.onOpenSettings,
+                            onTap: selectionMode && canSelect
+                                ? () => _toggleSelection(batch)
+                                : () => _showBatchDetails(batch),
+                            onLongPress: canSelect
+                                ? () => _toggleSelection(batch)
+                                : null,
+                            selected: _selectedTransferIds.contains(
+                              batch.transferId,
+                            ),
+                            selectionMode: selectionMode,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                const SliverPadding(padding: EdgeInsets.only(bottom: 112)),
+              ],
+            ],
+          );
     return Scaffold(
       appBar: _buildAppBar(selectionMode),
       floatingActionButton: FloatingActionButton.extended(
@@ -264,273 +375,207 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         label: const Text('Send files'),
       ),
       bottomNavigationBar: selectionMode ? _buildSelectionBar() : null,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: _SummaryStrip(batches: _batches),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 600) return content;
+          return Row(
+            children: [
+              NavigationRail(
+                selectedIndex: 1,
+                onDestinationSelected: (index) {
+                  if (index == 0) widget.onOpenHome?.call();
+                },
+                labelType: NavigationRailLabelType.all,
+                groupAlignment: -0.8,
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.home_outlined),
+                    selectedIcon: Icon(Icons.home),
+                    label: Text('Home'),
                   ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: TextField(
-                      controller: _search,
-                      decoration: const InputDecoration(
-                        hintText: 'Search filenames',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                    ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.folder_outlined),
+                    selectedIcon: Icon(Icons.folder),
+                    label: Text('Files'),
                   ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  sliver: SliverToBoxAdapter(child: _buildFilters()),
-                ),
-                if (showEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _EmptyFiles(onSend: _chooseFiles),
-                  )
-                else if (showNoResults)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _NoResults(onClear: _clearFilters),
-                  )
-                else ...[
-                  if (_liveProgress != null && _liveProgressIsVisible)
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: _LiveTransferCard(
-                          progress: _liveProgress!,
-                          onCancel: _canCancelLive(_liveProgress!)
-                              ? () => widget.sender.cancelBatch(
-                                  _liveProgress!.transferId!,
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                  if (active.isNotEmpty) ...[
-                    _sectionHeader('Active'),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      sliver: SliverList.builder(
-                        itemCount: active.length,
-                        itemBuilder: (_, index) => Padding(
-                          padding: EdgeInsets.only(
-                            bottom: index == active.length - 1 ? 0 : 10,
-                          ),
-                          child: _TransferRow(
-                            batch: active[index],
-                            onRetry: null,
-                            onCancel: _cancelCallback(active[index]),
-                            onRemove: () => _remove(active[index]),
-                            onTap: () => _showBatchDetails(active[index]),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  for (final entry in groupedHistory.entries) ...[
-                    _sectionHeader(entry.key),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      sliver: SliverList.builder(
-                        itemCount: entry.value.length,
-                        itemBuilder: (_, index) {
-                          final batch = entry.value[index];
-                          final canSelect = _canRemoveFromHistory(batch);
-                          return Padding(
-                            padding: EdgeInsets.only(
-                              bottom: index == entry.value.length - 1 ? 0 : 10,
-                            ),
-                            child: _TransferRow(
-                              batch: batch,
-                              onRetry: _retryCallback(batch),
-                              onCancel: _cancelCallback(batch),
-                              onRemove: () => _remove(batch),
-                              onOpenSettings: widget.onOpenSettings,
-                              onTap: selectionMode && canSelect
-                                  ? () => _toggleSelection(batch)
-                                  : () => _showBatchDetails(batch),
-                              onLongPress: canSelect
-                                  ? () => _toggleSelection(batch)
-                                  : null,
-                              selected: _selectedTransferIds.contains(
-                                batch.transferId,
-                              ),
-                              selectionMode: selectionMode,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  const SliverPadding(padding: EdgeInsets.only(bottom: 112)),
                 ],
-              ],
-            ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 800),
+                    child: content,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildFilters() => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    child: Row(
-      children: [
-        _FilterButton(
-          label: 'All',
-          selected: _filter == _FilesFilter.all,
-          onTap: () => setState(() => _filter = _FilesFilter.all),
-        ),
-        const SizedBox(width: 10),
-        _FilterButton(
-          label: 'Active',
-          selected: _filter == _FilesFilter.active,
-          dotColor: Palette.active,
-          onTap: () => setState(() => _filter = _FilesFilter.active),
-        ),
-        const SizedBox(width: 10),
-        _FilterButton(
-          label: 'Needs attention',
-          selected: _filter == _FilesFilter.needsAttention,
-          dotColor: Palette.error,
-          onTap: () => setState(() => _filter = _FilesFilter.needsAttention),
-        ),
-        const SizedBox(width: 10),
-        OutlinedButton.icon(
-          onPressed: _showDirectionFilter,
-          icon: const Icon(Icons.tune_outlined, size: 18),
-          label: Text(
-            _direction == null
-                ? 'Filter'
-                : _direction == PhoneTransferDirection.sent
-                ? 'Sent'
-                : 'Received',
+  Widget _buildFilters() {
+    final scheme = Theme.of(context).colorScheme;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _FilterButton(
+            label: 'All',
+            selected: _filter == _FilesFilter.all,
+            onTap: () => setState(() => _filter = _FilesFilter.all),
           ),
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(0, 48),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            side: const BorderSide(color: Palette.hairline, width: 1.5),
-            foregroundColor: Palette.ink,
+          const SizedBox(width: 10),
+          _FilterButton(
+            label: 'Active',
+            selected: _filter == _FilesFilter.active,
+            dotColor: VidyutStatusColors.of(context).active,
+            onTap: () => setState(() => _filter = _FilesFilter.active),
           ),
-        ),
-      ],
-    ),
-  );
+          const SizedBox(width: 10),
+          _FilterButton(
+            label: 'Needs attention',
+            selected: _filter == _FilesFilter.needsAttention,
+            dotColor: scheme.error,
+            onTap: () => setState(() => _filter = _FilesFilter.needsAttention),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            onPressed: _showDirectionFilter,
+            icon: const Icon(Icons.tune_outlined, size: 18),
+            label: Text(
+              _direction == null
+                  ? 'Filter'
+                  : _direction == PhoneTransferDirection.sent
+                  ? 'Sent'
+                  : 'Received',
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              side: BorderSide(color: scheme.outlineVariant),
+              foregroundColor: scheme.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _showDirectionFilter() async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Filter transfers',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  leading: Icon(
-                    _direction == null
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: _direction == null
-                        ? Palette.raspberry
-                        : Palette.muted,
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Filter transfers',
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                  title: const Text('All directions'),
-                  onTap: () {
-                    setState(() => _direction = null);
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: Icon(
-                    _direction == PhoneTransferDirection.sent
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: _direction == PhoneTransferDirection.sent
-                        ? Palette.raspberry
-                        : Palette.muted,
+                  const SizedBox(height: 8),
+                  ListTile(
+                    leading: Icon(
+                      _direction == null
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: _direction == null
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                    title: const Text('All directions'),
+                    onTap: () {
+                      setState(() => _direction = null);
+                      Navigator.pop(context);
+                    },
                   ),
-                  title: const Text('Sent'),
-                  onTap: () {
-                    setState(() => _direction = PhoneTransferDirection.sent);
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: Icon(
-                    _direction == PhoneTransferDirection.received
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: _direction == PhoneTransferDirection.received
-                        ? Palette.raspberry
-                        : Palette.muted,
+                  ListTile(
+                    leading: Icon(
+                      _direction == PhoneTransferDirection.sent
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: _direction == PhoneTransferDirection.sent
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                    title: const Text('Sent'),
+                    onTap: () {
+                      setState(() => _direction = PhoneTransferDirection.sent);
+                      Navigator.pop(context);
+                    },
                   ),
-                  title: const Text('Received'),
-                  onTap: () {
-                    setState(
-                      () => _direction = PhoneTransferDirection.received,
-                    );
-                    Navigator.pop(context);
-                  },
-                ),
-                const Divider(height: 24),
-                Text(
-                  'Date',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.labelLarge?.copyWith(color: Palette.muted),
-                ),
-                _DateFilterTile(
-                  label: 'All dates',
-                  selected: _dateFilter == _DateFilter.all,
-                  onTap: () {
-                    setState(() => _dateFilter = _DateFilter.all);
-                    Navigator.pop(context);
-                  },
-                ),
-                _DateFilterTile(
-                  label: 'Today',
-                  selected: _dateFilter == _DateFilter.today,
-                  onTap: () {
-                    setState(() => _dateFilter = _DateFilter.today);
-                    Navigator.pop(context);
-                  },
-                ),
-                _DateFilterTile(
-                  label: 'Yesterday',
-                  selected: _dateFilter == _DateFilter.yesterday,
-                  onTap: () {
-                    setState(() => _dateFilter = _DateFilter.yesterday);
-                    Navigator.pop(context);
-                  },
-                ),
-                _DateFilterTile(
-                  label: 'Earlier',
-                  selected: _dateFilter == _DateFilter.earlier,
-                  onTap: () {
-                    setState(() => _dateFilter = _DateFilter.earlier);
-                    Navigator.pop(context);
-                  },
-                ),
-              ],
+                  ListTile(
+                    leading: Icon(
+                      _direction == PhoneTransferDirection.received
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                      color: _direction == PhoneTransferDirection.received
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                    title: const Text('Received'),
+                    onTap: () {
+                      setState(
+                        () => _direction = PhoneTransferDirection.received,
+                      );
+                      Navigator.pop(context);
+                    },
+                  ),
+                  const Divider(height: 24),
+                  Text(
+                    'Date',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  _DateFilterTile(
+                    label: 'All dates',
+                    selected: _dateFilter == _DateFilter.all,
+                    onTap: () {
+                      setState(() => _dateFilter = _DateFilter.all);
+                      Navigator.pop(context);
+                    },
+                  ),
+                  _DateFilterTile(
+                    label: 'Today',
+                    selected: _dateFilter == _DateFilter.today,
+                    onTap: () {
+                      setState(() => _dateFilter = _DateFilter.today);
+                      Navigator.pop(context);
+                    },
+                  ),
+                  _DateFilterTile(
+                    label: 'Yesterday',
+                    selected: _dateFilter == _DateFilter.yesterday,
+                    onTap: () {
+                      setState(() => _dateFilter = _DateFilter.yesterday);
+                      Navigator.pop(context);
+                    },
+                  ),
+                  _DateFilterTile(
+                    label: 'Earlier',
+                    selected: _dateFilter == _DateFilter.earlier,
+                    onTap: () {
+                      setState(() => _dateFilter = _DateFilter.earlier);
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -780,13 +825,15 @@ class _SummaryStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = VidyutStatusColors.of(context);
     final active = batches.where(_isActiveBatch).length;
     final attention = batches.where(_needsAttention).length;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Palette.mist,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Palette.hairline),
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -795,7 +842,7 @@ class _SummaryStrip extends StatelessWidget {
             Expanded(
               child: _SummaryMetric(
                 icon: Icons.sync_outlined,
-                color: Palette.active,
+                color: statusColors.active,
                 value: '$active',
                 label: 'active',
               ),
@@ -804,7 +851,7 @@ class _SummaryStrip extends StatelessWidget {
             Expanded(
               child: _SummaryMetric(
                 icon: Icons.file_upload_outlined,
-                color: Palette.raspberry,
+                color: scheme.primary,
                 value: '${batches.length}',
                 label: 'transfers',
               ),
@@ -813,7 +860,7 @@ class _SummaryStrip extends StatelessWidget {
             Expanded(
               child: _SummaryMetric(
                 icon: Icons.error_outline,
-                color: attention == 0 ? Palette.muted : Palette.error,
+                color: attention == 0 ? scheme.onSurfaceVariant : scheme.error,
                 value: '$attention',
                 label: 'need attention',
               ),
@@ -863,7 +910,7 @@ class _SummaryDivider extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     width: 1,
     height: 24,
-    color: Palette.hairline,
+    color: Theme.of(context).colorScheme.outlineVariant,
     margin: const EdgeInsets.symmetric(horizontal: 6),
   );
 }
@@ -882,33 +929,41 @@ class _FilterButton extends StatelessWidget {
   final Color? dotColor;
 
   @override
-  Widget build(BuildContext context) => OutlinedButton(
-    onPressed: onTap,
-    style: OutlinedButton.styleFrom(
-      minimumSize: const Size(0, 48),
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      backgroundColor: selected ? Palette.petal : Colors.transparent,
-      foregroundColor: Palette.ink,
-      side: BorderSide(
-        color: selected ? Palette.petal : Palette.hairline,
-        width: 1.5,
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        backgroundColor: selected ? scheme.primaryContainer : null,
+        foregroundColor: selected
+            ? scheme.onPrimaryContainer
+            : scheme.onSurface,
+        side: BorderSide(
+          color: selected ? scheme.primary : scheme.outlineVariant,
+          width: selected ? 1.5 : 1,
+        ),
       ),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label),
-        if (dotColor != null) ...[
-          const SizedBox(width: 8),
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label),
+          if (dotColor != null) ...[
+            const SizedBox(width: 8),
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: dotColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
         ],
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 class _DateFilterTile extends StatelessWidget {
@@ -923,14 +978,17 @@ class _DateFilterTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    leading: Icon(
-      selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-      color: selected ? Palette.raspberry : Palette.muted,
-    ),
-    title: Text(label),
-    onTap: onTap,
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        color: selected ? scheme.primary : scheme.onSurfaceVariant,
+      ),
+      title: Text(label),
+      onTap: onTap,
+    );
+  }
 }
 
 class _TransferRow extends StatelessWidget {
@@ -958,12 +1016,13 @@ class _TransferRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final first = batch.files.isEmpty ? null : batch.files.first;
     final title = batch.files.length == 1
         ? first!.filename
         : '${batch.files.length} files';
     final size = batch.files.fold<int>(0, (sum, file) => sum + file.size);
-    final status = _statusVisual(batch.status);
+    final status = _statusVisual(context, batch.status);
     final subtitle = batch.files.length == 1
         ? '${_directionLabel(batch.direction)} · ${_timeLabel(context, batch.createdAtMs)}'
         : '${_directionLabel(batch.direction)} · ${_bytes(size)} · ${_timeLabel(context, batch.createdAtMs)}';
@@ -976,13 +1035,13 @@ class _TransferRow extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: selected
-              ? Palette.mist
+              ? scheme.secondaryContainer
               : _needsAttention(batch)
               ? status.background
-              : Palette.ground,
-          borderRadius: BorderRadius.circular(18),
+              : scheme.surface,
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: selected ? Palette.raspberry : Palette.hairline,
+            color: selected ? scheme.primary : scheme.outlineVariant,
             width: selected ? 1.6 : 1,
           ),
         ),
@@ -994,7 +1053,7 @@ class _TransferRow extends StatelessWidget {
                 Checkbox(
                   value: selected,
                   onChanged: (_) => onTap(),
-                  activeColor: Palette.raspberry,
+                  activeColor: scheme.primary,
                 )
               else
                 _FileTypeIcon(
@@ -1018,9 +1077,9 @@ class _TransferRow extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     if (failure != null) ...[
                       const SizedBox(height: 5),
@@ -1030,7 +1089,7 @@ class _TransferRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(
                           context,
-                        ).textTheme.bodySmall?.copyWith(color: Palette.error),
+                        ).textTheme.bodySmall?.copyWith(color: scheme.error),
                       ),
                     ],
                   ],
@@ -1043,9 +1102,9 @@ class _TransferRow extends StatelessWidget {
                 children: [
                   Text(
                     _bytes(size),
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Icon(status.icon, color: status.color, size: 22),
@@ -1114,9 +1173,10 @@ class _BatchDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final firstFile = batch.files.isEmpty ? null : batch.files.first;
     final size = batch.files.fold<int>(0, (sum, item) => sum + item.size);
-    final status = _statusVisual(batch.status);
+    final status = _statusVisual(context, batch.status);
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -1151,9 +1211,9 @@ class _BatchDetailsSheet extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                         '${_bytes(size)} · ${_directionLabel(batch.direction)} · ${_dateGroup(batch.createdAtMs)}, ${_timeLabel(context, batch.createdAtMs)}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -1163,14 +1223,14 @@ class _BatchDetailsSheet extends StatelessWidget {
             const SizedBox(height: 20),
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Palette.mist,
-                borderRadius: BorderRadius.circular(18),
+                color: scheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(16),
               ),
               child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Palette.petal,
-                  foregroundColor: Palette.ink,
-                  child: Icon(Icons.laptop_mac_outlined),
+                leading: CircleAvatar(
+                  backgroundColor: scheme.primaryContainer,
+                  foregroundColor: scheme.onPrimaryContainer,
+                  child: const Icon(Icons.laptop_mac_outlined),
                 ),
                 title: Text(_savedLocationLabel(batch)),
               ),
@@ -1225,7 +1285,7 @@ class _BatchDetailsSheet extends StatelessWidget {
                   Navigator.pop(context);
                   onRetry!();
                 },
-                color: Palette.raspberry,
+                color: scheme.primary,
               ),
             if (batch.files.any((item) => item.errorCode == 'file_too_large') &&
                 onOpenSettings != null)
@@ -1242,7 +1302,7 @@ class _BatchDetailsSheet extends StatelessWidget {
               _DetailAction(
                 icon: Icons.delete_outline,
                 label: 'Remove from history',
-                color: Palette.error,
+                color: scheme.error,
                 onTap: onRemove,
               ),
               const SizedBox(height: 8),
@@ -1250,7 +1310,7 @@ class _BatchDetailsSheet extends StatelessWidget {
                 'Removing history does not delete the file.',
                 style: Theme.of(
                   context,
-                ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ],
           ],
@@ -1290,14 +1350,18 @@ class _DetailAction extends StatelessWidget {
   final Color? color;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    leading: Icon(icon, color: color ?? Palette.ink),
-    title: Text(
-      label,
-      style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: color),
-    ),
-    onTap: onTap,
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final foreground = color ?? scheme.onSurface;
+    return ListTile(
+      leading: Icon(icon, color: foreground),
+      title: Text(
+        label,
+        style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: color),
+      ),
+      onTap: onTap,
+    );
+  }
 }
 
 class _FileTypeIcon extends StatelessWidget {
@@ -1313,12 +1377,20 @@ class _FileTypeIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visual = _fileVisual(filename, mime, direction);
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = VidyutStatusColors.of(context);
+    final visual = _fileVisual(
+      filename,
+      mime,
+      direction,
+      scheme.primary,
+      statusColors.success,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Palette.ground,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Palette.hairline),
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant),
       ),
       child: SizedBox(
         width: 48,
@@ -1333,31 +1405,33 @@ class _FileTypeIcon extends StatelessWidget {
   String? filename,
   String? mime,
   PhoneTransferDirection direction,
+  Color primary,
+  Color success,
 ) {
   final normalizedFilename = filename?.toLowerCase() ?? '';
   final normalizedMime = mime?.toLowerCase() ?? '';
   if (normalizedMime == 'application/pdf' ||
       normalizedFilename.endsWith('.pdf')) {
-    return (icon: Icons.picture_as_pdf_outlined, color: Palette.raspberry);
+    return (icon: Icons.picture_as_pdf_outlined, color: primary);
   }
   if (normalizedMime.startsWith('image/') ||
       normalizedFilename.endsWith('.png') ||
       normalizedFilename.endsWith('.jpg') ||
       normalizedFilename.endsWith('.jpeg')) {
-    return (icon: Icons.image_outlined, color: Palette.raspberry);
+    return (icon: Icons.image_outlined, color: primary);
   }
   if (normalizedMime == 'text/csv' || normalizedFilename.endsWith('.csv')) {
-    return (icon: Icons.table_chart_outlined, color: Palette.success);
+    return (icon: Icons.table_chart_outlined, color: success);
   }
   if (normalizedFilename.endsWith('.apk') ||
       normalizedMime == 'application/vnd.android.package-archive') {
-    return (icon: Icons.android_outlined, color: Palette.raspberry);
+    return (icon: Icons.android_outlined, color: primary);
   }
   return (
     icon: direction == PhoneTransferDirection.sent
         ? Icons.file_upload_outlined
         : Icons.file_download_outlined,
-    color: Palette.raspberry,
+    color: primary,
   );
 }
 
@@ -1369,35 +1443,42 @@ class _StatusVisual {
   final Color background;
 }
 
-_StatusVisual _statusVisual(PhoneTransferStatus status) => switch (status) {
-  PhoneTransferStatus.completed => const _StatusVisual(
-    Icons.check_circle_outline,
-    Palette.success,
-    Palette.successMist,
-  ),
-  PhoneTransferStatus.completedWithIssues => const _StatusVisual(
-    Icons.warning_amber_outlined,
-    Palette.warning,
-    Palette.warningMist,
-  ),
-  PhoneTransferStatus.failed || PhoneTransferStatus.expired =>
-    const _StatusVisual(Icons.error_outline, Palette.error, Color(0xFFFFF2F4)),
-  PhoneTransferStatus.waitingForSource => const _StatusVisual(
-    Icons.error_outline,
-    Palette.warning,
-    Palette.warningMist,
-  ),
-  PhoneTransferStatus.cancelled => const _StatusVisual(
-    Icons.cancel_outlined,
-    Palette.muted,
-    Palette.mist,
-  ),
-  _ => const _StatusVisual(
-    Icons.timelapse_outlined,
-    Palette.active,
-    Palette.activeMist,
-  ),
-};
+_StatusVisual _statusVisual(BuildContext context, PhoneTransferStatus status) {
+  final scheme = Theme.of(context).colorScheme;
+  final statusColors = VidyutStatusColors.of(context);
+  return switch (status) {
+    PhoneTransferStatus.completed => _StatusVisual(
+      Icons.check_circle_outline,
+      statusColors.success,
+      statusColors.successContainer,
+    ),
+    PhoneTransferStatus.completedWithIssues => _StatusVisual(
+      Icons.warning_amber_outlined,
+      statusColors.warning,
+      statusColors.warningContainer,
+    ),
+    PhoneTransferStatus.failed || PhoneTransferStatus.expired => _StatusVisual(
+      Icons.error_outline,
+      scheme.error,
+      scheme.errorContainer,
+    ),
+    PhoneTransferStatus.waitingForSource => _StatusVisual(
+      Icons.error_outline,
+      statusColors.warning,
+      statusColors.warningContainer,
+    ),
+    PhoneTransferStatus.cancelled => _StatusVisual(
+      Icons.cancel_outlined,
+      scheme.onSurfaceVariant,
+      scheme.secondaryContainer,
+    ),
+    _ => _StatusVisual(
+      Icons.timelapse_outlined,
+      statusColors.active,
+      statusColors.activeContainer,
+    ),
+  };
+}
 
 String _statusLabel(PhoneTransferStatus status) => switch (status) {
   PhoneTransferStatus.preparing => 'Preparing',
@@ -1444,6 +1525,8 @@ class _LiveTransferCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = VidyutStatusColors.of(context);
     final isTransferring =
         progress.stage == PhoneTransferProgressStage.transferring;
     final isCompleted = progress.stage == PhoneTransferProgressStage.completed;
@@ -1485,10 +1568,12 @@ class _LiveTransferCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: isTransferring ? Palette.activeMist : Palette.mist,
-        borderRadius: BorderRadius.circular(22),
+        color: isTransferring
+            ? statusColors.activeContainer
+            : scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isTransferring ? const Color(0xFFFFD2A5) : Palette.hairline,
+          color: isTransferring ? statusColors.active : scheme.outlineVariant,
         ),
       ),
       child: Padding(
@@ -1518,19 +1603,19 @@ class _LiveTransferCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         'Sending to your laptop',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 _StatusBadge(
                   label: stageLabel,
-                  color: isTransferring ? Palette.active : Palette.raspberry,
+                  color: isTransferring ? statusColors.active : scheme.primary,
                   background: isTransferring
-                      ? const Color(0xFFFFE2C1)
-                      : Palette.petal,
+                      ? statusColors.activeContainer
+                      : scheme.primaryContainer,
                 ),
               ],
             ),
@@ -1541,16 +1626,18 @@ class _LiveTransferCard extends StatelessWidget {
                 Text(
                   '${(progressFraction * 100).round()}%',
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: isTransferring ? Palette.active : Palette.raspberry,
+                    color: isTransferring
+                        ? statusColors.active
+                        : scheme.primary,
                   ),
                 ),
                 const Spacer(),
                 if (!isTerminal)
                   Text(
                     _remaining(progress.remaining),
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
               ],
             ),
@@ -1561,8 +1648,8 @@ class _LiveTransferCard extends StatelessWidget {
                   : progressFraction,
               minHeight: 8,
               borderRadius: BorderRadius.circular(8),
-              color: isTransferring ? Palette.active : Palette.raspberry,
-              backgroundColor: Colors.white,
+              color: isTransferring ? statusColors.active : scheme.primary,
+              backgroundColor: scheme.surface,
             ),
             const SizedBox(height: 10),
             Row(
@@ -1609,7 +1696,7 @@ class _LiveTransferCard extends StatelessWidget {
                     icon: const Icon(Icons.close, size: 20),
                     label: const Text('Cancel'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: Palette.raspberry,
+                      backgroundColor: scheme.primary,
                     ),
                   ),
                 ),
@@ -1660,7 +1747,7 @@ class _ProgressDetail extends StatelessWidget {
     text,
     textAlign: align,
     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-      color: Palette.muted,
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
       fontWeight: FontWeight.w600,
     ),
   );
@@ -1673,6 +1760,7 @@ class _EmptyFiles extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(32, 28, 32, 96),
@@ -1681,16 +1769,16 @@ class _EmptyFiles extends StatelessWidget {
           children: [
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Palette.mist,
-                shape: BoxShape.circle,
-                border: Border.all(color: Palette.hairline),
+                color: scheme.primaryContainer,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: scheme.outlineVariant),
               ),
-              child: const Padding(
+              child: Padding(
                 padding: EdgeInsets.all(28),
                 child: Icon(
                   Icons.file_upload_outlined,
                   size: 56,
-                  color: Palette.raspberry,
+                  color: scheme.onPrimaryContainer,
                 ),
               ),
             ),
@@ -1706,7 +1794,7 @@ class _EmptyFiles extends StatelessWidget {
               textAlign: TextAlign.center,
               style: Theme.of(
                 context,
-              ).textTheme.bodyLarge?.copyWith(color: Palette.muted),
+              ).textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
@@ -1719,7 +1807,7 @@ class _EmptyFiles extends StatelessWidget {
               'You can send multiple files at once.',
               style: Theme.of(
                 context,
-              ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -1734,32 +1822,39 @@ class _NoResults extends StatelessWidget {
   final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.search_off_outlined, size: 48, color: Palette.muted),
-          const SizedBox(height: 16),
-          Text(
-            'No transfers found',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Try another filename or clear the filters.',
-            textAlign: TextAlign.center,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: Palette.muted),
-          ),
-          const SizedBox(height: 14),
-          TextButton(onPressed: onClear, child: const Text('Clear filters')),
-        ],
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.search_off_outlined,
+              size: 48,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No transfers found',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Try another filename or clear the filters.',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 14),
+            TextButton(onPressed: onClear, child: const Text('Clear filters')),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 String _elapsed(Duration? value) {

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import '../settings/app_settings.dart';
 import 'miui_setup_list.dart';
@@ -128,9 +127,9 @@ class _SetupChecklistScreenState extends State<SetupChecklistScreen>
                   const SizedBox(height: 4),
                   Text(
                     "We can't check these for you — tick what you've done.",
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: Palette.muted),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ).entrance(4),
                   const SizedBox(height: 12),
                   MiuiSetupList(
@@ -168,6 +167,7 @@ class _ChecklistRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -178,7 +178,7 @@ class _ChecklistRow extends StatelessWidget {
             Icon(
               ok ? Icons.check_circle : Icons.warning_amber_rounded,
               size: 22,
-              color: ok ? Palette.raspberry : Palette.error,
+              color: ok ? scheme.primary : scheme.error,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -189,7 +189,9 @@ class _ChecklistRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     detail,
-                    style: textTheme.bodySmall?.copyWith(color: Palette.muted),
+                    style: textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                   if (actionLabel != null)
                     TextButton(

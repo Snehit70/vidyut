@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import '../pairing/pairing_code.dart';
 import '../pairing/pairing_widgets.dart';
@@ -286,9 +285,9 @@ class _OnboardingWizardState extends State<OnboardingWizard>
                         child: PressableScale(
                           child: IconButton(
                             tooltip: 'Back',
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.chevron_left,
-                              color: Palette.ink,
+                              color: Theme.of(context).colorScheme.onSurface,
                             ),
                             onPressed: _goBack,
                           ),
@@ -391,6 +390,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
 
   Widget _xiaomiStep() {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     return ListView(
       key: const ValueKey('step-xiaomi'),
       children: [
@@ -403,7 +403,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
           'MIUI closes background apps aggressively. These four switches keep '
           "Vidyut alive — we can't check them for you, so tick what "
           "you've done.",
-          style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+          style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         ).entrance(1),
         const SizedBox(height: 20),
         MiuiSetupList(
@@ -414,7 +414,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
         const SizedBox(height: 8),
         Text(
           'Skipping: MIUI will likely kill sync in the background.',
-          style: textTheme.bodySmall?.copyWith(color: Palette.muted),
+          style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ).entrance(3),
         const SizedBox(height: 16),
         PressableScale(
@@ -429,6 +429,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
 
   Widget _pairingStep() {
     final textTheme = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     if (_paired) {
       final connected = widget.connectionStatus.value;
       // Live confirmation (D2): completing the wizard means the app
@@ -439,20 +440,19 @@ class _OnboardingWizardState extends State<OnboardingWizard>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Center(
-            child: RippleRings(
-              size: 160,
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: const BoxDecoration(
-                  color: Palette.raspberry,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  connected ? Icons.link : Icons.wifi_find,
-                  size: 32,
-                  color: Colors.white,
-                ),
+            child: Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: connected
+                    ? scheme.primaryContainer
+                    : scheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                connected ? Icons.link : Icons.wifi_find,
+                size: 36,
+                color: connected ? scheme.primary : scheme.onSurfaceVariant,
               ),
             ),
           ).entrance(0),
@@ -469,7 +469,9 @@ class _OnboardingWizardState extends State<OnboardingWizard>
               connected
                   ? 'Your laptop and phone are in sync.'
                   : 'Paired — waiting for the relay.',
-              style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ).entrance(2),
           const SizedBox(height: 32),
@@ -487,7 +489,7 @@ class _OnboardingWizardState extends State<OnboardingWizard>
         Text(
           'Run the relay on your laptop, then pick it below or scan its QR '
           'code.',
-          style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+          style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         ).entrance(1),
         const SizedBox(height: 20),
         if (widget.relayDiscovery != null) ...[
@@ -554,16 +556,17 @@ class _StepScaffold extends StatelessWidget {
       children: [
         const Spacer(),
         Center(
-          child: MorphingBlob(
-            size: 150,
-            child: Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, size: 28, color: Palette.raspberry),
+          child: Container(
+            width: 96,
+            height: 96,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              icon,
+              size: 36,
+              color: Theme.of(context).colorScheme.primary,
             ),
           ),
         ).entrance(0),
@@ -577,13 +580,17 @@ class _StepScaffold extends StatelessWidget {
         Text(
           body,
           textAlign: TextAlign.center,
-          style: textTheme.bodyMedium?.copyWith(color: Palette.muted),
+          style: textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ).entrance(2),
         const Spacer(),
         Text(
           'If you skip: $consequence',
           textAlign: TextAlign.center,
-          style: textTheme.bodySmall?.copyWith(color: Palette.muted),
+          style: textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ).entrance(3),
         const SizedBox(height: 14),
         PressableScale(
@@ -595,7 +602,9 @@ class _StepScaffold extends StatelessWidget {
         const SizedBox(height: 6),
         TextButton(
           onPressed: onSkip,
-          style: TextButton.styleFrom(foregroundColor: Palette.muted),
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
           child: const Text('Skip'),
         ).entrance(5),
       ],
@@ -611,6 +620,7 @@ class _StepDots extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -622,7 +632,7 @@ class _StepDots extends StatelessWidget {
             width: i == index ? 22 : 8,
             height: 8,
             decoration: BoxDecoration(
-              color: i == index ? Palette.raspberry : Palette.petal,
+              color: i == index ? scheme.primary : scheme.primaryContainer,
               borderRadius: BorderRadius.circular(999),
             ),
           ),

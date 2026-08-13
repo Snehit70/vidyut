@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import '../activity/last_activity.dart';
 import '../activity/last_activity_repository.dart';
 import '../debug/debug_log.dart';
-import '../design/palette.dart';
 import '../design/widgets.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
@@ -76,6 +75,18 @@ class _SendClipboardScreenState extends State<SendClipboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusIcon = _working
+        ? const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          )
+        : Icon(
+            _sent ? Icons.check : Icons.priority_high,
+            size: 32,
+            color: _sent ? scheme.primary : scheme.error,
+          );
     return Scaffold(
       appBar: AppBar(title: const Text('Send clipboard')),
       body: Center(
@@ -84,51 +95,19 @@ class _SendClipboardScreenState extends State<SendClipboardScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_working)
-                const SizedBox(
-                  width: 160,
-                  height: 160,
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_sent)
-                // Success orb: raspberry blob with ripple rings radiating out.
-                RippleRings(
-                  size: 160,
-                  child: MorphingBlob(
-                    size: 104,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.check,
-                        size: 24,
-                        color: Palette.raspberry,
-                      ),
-                    ),
-                  ),
-                )
-              else
-                MorphingBlob(
-                  size: 120,
-                  color: Palette.petal,
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.priority_high,
-                      size: 22,
-                      color: Palette.raspberry,
-                    ),
-                  ),
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: _working
+                      ? scheme.secondaryContainer
+                      : _sent
+                      ? scheme.primaryContainer
+                      : scheme.errorContainer,
+                  borderRadius: BorderRadius.circular(16),
                 ),
+                child: Center(child: statusIcon),
+              ),
               const SizedBox(height: 24),
               Text(
                 _message,
