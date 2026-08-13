@@ -25,6 +25,8 @@ class RecentActivityScreen extends StatefulWidget {
 class _RecentActivityScreenState extends State<RecentActivityScreen>
     with WidgetsBindingObserver {
   late List<LastActivity> _activities = widget.activities;
+  var _activityRevision = 0;
+  var _reloadGeneration = 0;
   StreamSubscription<List<LastActivity>>? _activitySubscription;
   Timer? _relativeTimeTimer;
 
@@ -33,6 +35,8 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _activitySubscription = widget.activityChanges?.listen((activities) {
+      _activityRevision++;
+      _reloadGeneration++;
       if (mounted) setState(() => _activities = activities);
     });
     // Relative labels are intentionally low-frequency; this is feedback, not
@@ -43,6 +47,16 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
   }
 
   @override
+  void didUpdateWidget(covariant RecentActivityScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.activities, widget.activities)) {
+      _activityRevision++;
+      _reloadGeneration++;
+      setState(() => _activities = widget.activities);
+    }
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) unawaited(_reloadActivities());
   }
@@ -50,8 +64,15 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
   Future<void> _reloadActivities() async {
     final load = widget.loadActivities;
     if (load == null) return;
+    final request = ++_reloadGeneration;
+    final revision = _activityRevision;
     final activities = await load();
-    if (mounted) setState(() => _activities = activities);
+    if (!mounted ||
+        request != _reloadGeneration ||
+        revision != _activityRevision) {
+      return;
+    }
+    setState(() => _activities = activities);
   }
 
   @override

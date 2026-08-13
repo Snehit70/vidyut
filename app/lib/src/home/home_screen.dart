@@ -394,6 +394,7 @@ class _LatestActivitySection extends StatelessWidget {
       container: true,
       excludeSemantics: true,
       label: 'Latest activity. $activityLabel',
+      onTap: onTap,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
