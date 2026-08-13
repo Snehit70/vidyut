@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
+import '../activity/last_activity.dart';
 import '../shared/payload_crypto.dart';
 import '../shared/relay_connection.dart';
 import '../shared/wire.dart';
@@ -12,6 +13,7 @@ import '../shared/wire.dart';
 typedef ScreenshotImageReader = Future<Uint8List> Function(int id);
 
 typedef PushEmit = void Function(Map<String, Object?> message);
+typedef PushActivityRecorder = FutureOr<void> Function(LastActivity activity);
 
 /// GCM tag appended to every ciphertext; the relay measures its cap on
 /// plaintext + tag (push spec §3).
@@ -53,6 +55,7 @@ class ScreenshotPushController {
     required this.readImage,
     required this.crypto,
     required this.emit,
+    this.onActivity,
     this.deviceId = 'phone',
     this.readAttempts = 3,
     this.readRetryDelay = const Duration(milliseconds: 300),
@@ -62,6 +65,7 @@ class ScreenshotPushController {
   final ScreenshotImageReader readImage;
   final PayloadCrypto crypto;
   final PushEmit emit;
+  final PushActivityRecorder? onActivity;
   final String deviceId;
 
   /// MIUI's scanner can publish rows ahead of stable reads (spec §2): retry
@@ -292,6 +296,22 @@ class ScreenshotPushController {
       'ts': ts,
       'ackMs': _nowMs() - (pending.sentAtMs ?? pending.queuedAtMs),
     });
+    final recorder = onActivity;
+    if (recorder != null) {
+      unawaited(
+        Future<void>.sync(
+          () => recorder(
+            LastActivity(
+              direction: ActivityDirection.sent,
+              summary: 'screenshot (${_formatBytes(pending.plaintextBytes)})',
+              counterpart: 'laptop',
+              timestamp: _clock(),
+              payloadId: pending.frame.nonce,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void _onRelayEvent(RelayEvent event) {
@@ -307,6 +327,25 @@ class ScreenshotPushController {
 
   void _skip(int id, String reason) {
     _event('screenshot_skipped', {'id': id, 'reason': reason});
+    if (reason != 'read_failed' && reason != 'too_large') return;
+    final recorder = onActivity;
+    if (recorder == null) return;
+    unawaited(
+      Future<void>.sync(
+        () => recorder(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: reason == 'too_large'
+                ? 'screenshot (too large)'
+                : 'screenshot (unavailable)',
+            counterpart: 'laptop',
+            timestamp: _clock(),
+            payloadId: 'screenshot:$id:$reason',
+            outcome: ActivityOutcome.failed,
+          ),
+        ),
+      ),
+    );
   }
 
   /// Instrumentation events (§8) ride the debug log as one greppable line:
@@ -323,4 +362,10 @@ class ScreenshotPushController {
   }
 
   int _nowMs() => _clock().millisecondsSinceEpoch;
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }

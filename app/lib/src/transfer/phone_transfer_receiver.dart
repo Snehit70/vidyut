@@ -23,6 +23,7 @@ class PhoneTransferReceiver {
     this.chunkBytes = TransferChunkPolicy.preferredBytes,
     this.rootDirectory,
     this.onEvent,
+    this.onBatchResult,
     this.receiveEnabled,
     this.maximumFileBytes,
     this.publisher,
@@ -40,6 +41,7 @@ class PhoneTransferReceiver {
   final int chunkBytes;
   final Future<Directory> Function()? rootDirectory;
   final void Function(String message, {bool isError})? onEvent;
+  final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchResult;
   final Future<bool> Function()? receiveEnabled;
   final Future<int> Function()? maximumFileBytes;
   final ReceivedFilePublisher? publisher;
@@ -322,6 +324,14 @@ class PhoneTransferReceiver {
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
     await history.upsert(batch);
+    try {
+      await onBatchResult?.call(batch);
+    } catch (error) {
+      onEvent?.call(
+        'Activity recording failed after receiving the batch: $error',
+        isError: true,
+      );
+    }
     if (notifier != null && (alertsEnabled == null || await alertsEnabled!())) {
       _throwIfDisposed();
       await notifier!.showBatchResult(

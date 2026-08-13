@@ -11,6 +11,7 @@ void main() {
         summary: 'screenshot (1.2 MB)',
         counterpart: 'laptop',
         timestamp: DateTime.fromMillisecondsSinceEpoch(1720000000000),
+        outcome: ActivityOutcome.failed,
       );
 
       final decoded = LastActivity.decode(activity.encode())!;
@@ -19,6 +20,7 @@ void main() {
       expect(decoded.summary, 'screenshot (1.2 MB)');
       expect(decoded.counterpart, 'laptop');
       expect(decoded.timestamp, activity.timestamp);
+      expect(decoded.outcome, ActivityOutcome.failed);
     });
 
     test('decode returns null for empty or malformed input', () {
@@ -117,6 +119,78 @@ void main() {
 
       expect((await repo.loadAll()).length, 2);
     });
+
+    test('prunes persisted event keys to the retained timeline', () async {
+      final storage = MemoryLastActivityStorage();
+      final repo = LastActivityRepository(storage);
+
+      for (var index = 0; index < 35; index++) {
+        await repo.record(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text ($index chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime(2026, 1, 1).add(Duration(seconds: index)),
+            payloadId: 'payload-$index',
+          ),
+        );
+      }
+
+      final eventKeys = (await storage.readAll()).keys.where(
+        (key) => key.startsWith('vidyut.activity.event.'),
+      );
+      expect(eventKeys, hasLength(30));
+      expect(await repo.loadAll(), hasLength(30));
+    });
+
+    test('emits the updated timeline after a record', () async {
+      final repo = LastActivityRepository(MemoryLastActivityStorage());
+      final changes = expectLater(
+        repo.changes,
+        emits(
+          predicate<List<LastActivity>>(
+            (items) => items.length == 1 && items.single.summary == 'image',
+          ),
+        ),
+      );
+
+      await repo.record(
+        LastActivity(
+          direction: ActivityDirection.received,
+          summary: 'image',
+          counterpart: 'laptop',
+          timestamp: DateTime.fromMillisecondsSinceEpoch(3),
+        ),
+      );
+      await changes;
+    });
+  });
+
+  test('keeps concurrent repository-isolate writes in the timeline', () async {
+    final storage = MemoryLastActivityStorage();
+    final first = LastActivityRepository(storage);
+    final second = LastActivityRepository(storage);
+
+    await Future.wait([
+      first.record(
+        LastActivity(
+          direction: ActivityDirection.sent,
+          summary: 'text (1 chars)',
+          counterpart: 'laptop',
+          timestamp: DateTime(2026, 1, 1, 0, 0, 1),
+        ),
+      ),
+      second.record(
+        LastActivity(
+          direction: ActivityDirection.received,
+          summary: 'text (2 chars)',
+          counterpart: 'laptop',
+          timestamp: DateTime(2026, 1, 1, 0, 0, 2),
+        ),
+      ),
+    ]);
+
+    expect(await first.loadAll(), hasLength(2));
   });
 
   test('serializes concurrent received text history writes', () async {

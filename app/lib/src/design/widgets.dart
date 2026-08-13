@@ -15,6 +15,7 @@ class PulsingDot extends StatefulWidget {
 
 class _PulsingDotState extends State<PulsingDot>
     with SingleTickerProviderStateMixin {
+  bool _animate = false;
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1400),
@@ -23,7 +24,19 @@ class _PulsingDotState extends State<PulsingDot>
   @override
   void initState() {
     super.initState();
-    if (Motion.loopsEnabled) _controller.repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final animate =
+        Motion.loopsEnabled && !MediaQuery.disableAnimationsOf(context);
+    _animate = animate;
+    if (animate) {
+      if (!_controller.isAnimating) _controller.repeat();
+    } else {
+      _controller.stop();
+    }
   }
 
   @override
@@ -34,6 +47,25 @@ class _PulsingDotState extends State<PulsingDot>
 
   @override
   Widget build(BuildContext context) {
+    if (!_animate) {
+      final halo = widget.size * 2.6;
+      return SizedBox(
+        width: halo,
+        height: halo,
+        child: Center(
+          child: SizedBox(
+            width: widget.size,
+            height: widget.size,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: widget.color ?? Theme.of(context).colorScheme.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     final effectiveColor =
         widget.color ?? Theme.of(context).colorScheme.primary;
     final halo = widget.size * 2.6;
@@ -86,6 +118,7 @@ class _PressableScaleState extends State<PressableScale> {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return widget.child;
     return Listener(
       onPointerDown: (_) => setState(() => _pressed = true),
       onPointerUp: (_) => setState(() => _pressed = false),
@@ -100,7 +133,8 @@ class _PressableScaleState extends State<PressableScale> {
   }
 }
 
-/// Staggered screen entrance: rise 30px + fade, 600ms, 100ms apart.
+/// Short entrance for finite flows such as onboarding. Long lists render
+/// immediately and must not use this helper.
 class Entrance extends StatelessWidget {
   const Entrance({super.key, required this.index, required this.child});
 
@@ -109,6 +143,7 @@ class Entrance extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
     final delay = Motion.stagger * index;
     final total = Motion.entrance + delay;
     final start = delay.inMilliseconds / total.inMilliseconds;

@@ -262,6 +262,7 @@ class PhoneTransferSender {
     this.monotonicClock,
     this.wallClock,
     this.onBatchCreated,
+    this.onBatchTerminal,
     this.reconnectBackoff = const [
       Duration(seconds: 1),
       Duration(seconds: 2),
@@ -284,6 +285,7 @@ class PhoneTransferSender {
   final MonotonicClock? monotonicClock;
   final MonotonicClock? wallClock;
   final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchCreated;
+  final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchTerminal;
   final List<Duration> reconnectBackoff;
   final _progressController =
       StreamController<PhoneTransferProgress>.broadcast();
@@ -305,6 +307,7 @@ class PhoneTransferSender {
   Future<void> _sendTail = Future<void>.value();
   final _sendPredecessors = <String, Future<void>>{};
   final _sendTurnCompleters = <String, Completer<void>>{};
+  final _terminalCallbacksSent = <String>{};
 
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
   Stream<PhoneTransferBatch> get batchesCreated =>
@@ -461,6 +464,7 @@ class PhoneTransferSender {
 
   static bool _isTerminal(PhoneTransferStatus status) =>
       status == PhoneTransferStatus.completed ||
+      status == PhoneTransferStatus.completedWithIssues ||
       status == PhoneTransferStatus.failed ||
       status == PhoneTransferStatus.cancelled ||
       status == PhoneTransferStatus.expired;
@@ -626,6 +630,7 @@ class PhoneTransferSender {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     final deadline = DateTime.now().add(timeout);
+    var delay = const Duration(milliseconds: 100);
     while (true) {
       final batch = (await history.load())
           .where((item) => item.transferId == transferId)
@@ -640,7 +645,11 @@ class PhoneTransferSender {
       if (!DateTime.now().isBefore(deadline)) {
         throw TimeoutException('Timed out waiting for transfer $transferId.');
       }
-      await Future<void>.delayed(const Duration(milliseconds: 1));
+      await Future<void>.delayed(delay);
+      if (delay < const Duration(seconds: 2)) {
+        final nextMilliseconds = (delay.inMilliseconds * 2).clamp(100, 2000);
+        delay = Duration(milliseconds: nextMilliseconds);
+      }
     }
   }
 
@@ -1775,8 +1784,8 @@ class PhoneTransferSender {
         );
         transferFile = batch.files[index];
         final reference = transferFile.sourceReference;
-        final transientDocument = reference?.kind ==
-                PhoneTransferSourceKind.androidDocumentUri &&
+        final transientDocument =
+            reference?.kind == PhoneTransferSourceKind.androidDocumentUri &&
             reference!.persisted == false;
         if (reference?.ownership == PhoneTransferSourceOwnership.managed ||
             transientDocument) {
@@ -2156,6 +2165,17 @@ class PhoneTransferSender {
 
   void _publishSnapshot(PhoneTransferBatch batch) {
     if (!_snapshotController.isClosed) _snapshotController.add(batch);
+    final terminal =
+        batch.files.isNotEmpty &&
+        batch.files.every((file) => _isTerminal(file.status));
+    if (!terminal) {
+      _terminalCallbacksSent.remove(batch.transferId);
+    } else if (_terminalCallbacksSent.add(batch.transferId)) {
+      final callback = onBatchTerminal;
+      if (callback != null) {
+        unawaited(Future<void>.sync(() => callback(batch)));
+      }
+    }
   }
 
   void _cleanupTrackingForBatch(PhoneTransferBatch batch) {

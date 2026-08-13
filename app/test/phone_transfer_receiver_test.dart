@@ -112,6 +112,9 @@ void main() {
       onEvent: (message, {isError = false}) {
         if (isError) errors.add(message);
       },
+      onBatchResult: (_) async {
+        throw StateError('activity storage failure');
+      },
     );
     receiver.start(connection, pairing);
     await connection.start();
@@ -149,7 +152,8 @@ void main() {
     });
 
     expect(await File('${root.path}/report.bin').readAsBytes(), bytes);
-    expect(errors.single, contains('temporary storage failure'));
+    expect(errors, contains(contains('temporary storage failure')));
+    expect(errors, contains(contains('activity storage failure')));
     expect(
       transport.sent.map((message) => message['kind']),
       containsAll([

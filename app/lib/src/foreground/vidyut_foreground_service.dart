@@ -8,6 +8,8 @@ import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
+import '../activity/last_activity.dart';
+import '../activity/last_activity_repository.dart';
 import '../pairing/pairing_repository.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
@@ -26,6 +28,11 @@ import 'service_relay_controller.dart';
 const sendClipboardRoute = '/send-clipboard';
 const foregroundNotificationId = 17321;
 const foregroundNotificationChannelId = 'vidyut_foreground';
+
+String _transferActivitySummary(int fileCount) {
+  final noun = fileCount == 1 ? 'file' : 'files';
+  return '$fileCount $noun';
+}
 
 @pragma('vm:entry-point')
 void startForegroundCallback() {
@@ -52,6 +59,9 @@ class VidyutForegroundTaskHandler extends TaskHandler {
     final autoSendWatcher = ChannelClipboardAutoSendWatcher();
     // One crypto for push and receive so the memoized PBKDF2 key is shared.
     final crypto = PayloadCrypto();
+    final activityRepository = LastActivityRepository(
+      SecureLastActivityStorage(),
+    );
     // The auto-send path reuses the manual sender verbatim (D3): auto and manual
     // text sends are indistinguishable on the wire, with one failure taxonomy.
     final sharePublisher = SharePublisher(
@@ -75,6 +85,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
         readImage: screenshotWatcher.readImage,
         crypto: crypto,
         emit: FlutterForegroundTask.sendDataToMain,
+        onActivity: (activity) => controller.recordActivity(activity),
       ),
       screenOnEvents: ScreenOnEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
@@ -92,6 +103,28 @@ class VidyutForegroundTaskHandler extends TaskHandler {
             'error': isError,
           });
         },
+        onBatchResult: (batch) => controller.recordActivity(
+          LastActivity(
+            direction: batch.direction == PhoneTransferDirection.received
+                ? ActivityDirection.received
+                : ActivityDirection.sent,
+            summary: _transferActivitySummary(batch.files.length),
+            counterpart: 'laptop',
+            timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
+            payloadId: batch.transferId,
+            outcome:
+                batch.files.any(
+                  (file) => switch (file.status) {
+                    PhoneTransferStatus.failed ||
+                    PhoneTransferStatus.cancelled ||
+                    PhoneTransferStatus.expired => true,
+                    _ => false,
+                  },
+                )
+                ? ActivityOutcome.failed
+                : ActivityOutcome.completed,
+          ),
+        ),
         receiveEnabled: () async =>
             (await settingsRepository.load()).receiveFiles,
         maximumFileBytes: () async =>
@@ -146,6 +179,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
             }),
       ),
       emit: FlutterForegroundTask.sendDataToMain,
+      activityRecorder: activityRepository.record,
       updateNotification: (title, text) async {
         await FlutterForegroundTask.updateService(
           notificationTitle: title,

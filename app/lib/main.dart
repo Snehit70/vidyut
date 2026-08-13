@@ -252,6 +252,8 @@ class _PairingScreenState extends State<PairingScreen>
   ConnectionStatus _connectionStatus = ConnectionStatus.offline;
   String? _error;
   List<LastActivity> _activities = const [];
+  var _activityRevision = 0;
+  var _activityLoadGeneration = 0;
   bool _loading = true;
   late final DebugLog _debugLog = widget.debugLog ?? sharedDebugLog;
   late final TransferHistoryRepository _transferHistory =
@@ -268,10 +270,13 @@ class _PairingScreenState extends State<PairingScreen>
       return settings.allowMeteredFileTransfers ||
           !await const VidyutFiles().isNetworkMetered();
     },
+    onBatchTerminal: _recordTransferResult,
   );
 
   /// Live "connected" flag mirrored into the wizard's finale (D2).
   final _connectedNotifier = ValueNotifier<bool>(false);
+  StreamSubscription<List<LastActivity>>? _activitySubscription;
+  Timer? _relativeTimeTimer;
   SetupStatus? _setupStatus;
   RelayHealth? _relayHealth;
   String? _connectionDetail;
@@ -291,6 +296,16 @@ class _PairingScreenState extends State<PairingScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.foregroundServiceClient.addTaskDataCallback(_onServiceData);
+    _activitySubscription = widget.lastActivityRepository.changes.listen((
+      activities,
+    ) {
+      _activityRevision++;
+      _activityLoadGeneration++;
+      if (mounted) setState(() => _activities = activities);
+    });
+    _relativeTimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
     final tapHandler = widget.receiveNotificationTapHandler;
     unawaited(_debugLog.load());
     if (tapHandler != null) {
@@ -307,12 +322,17 @@ class _PairingScreenState extends State<PairingScreen>
   /// changes (revoking photos in system settings).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_refreshSetupStatus());
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadLastActivity());
+      unawaited(_refreshSetupStatus());
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _activitySubscription?.cancel();
+    _relativeTimeTimer?.cancel();
     _connectedNotifier.dispose();
     widget.foregroundServiceClient.removeTaskDataCallback(_onServiceData);
     _shareIntakeController?.dispose();
@@ -367,8 +387,17 @@ class _PairingScreenState extends State<PairingScreen>
           );
           if (failed) {
             _showSnack(message);
-          } else {
+          } else if (data['activityHandled'] != true) {
             unawaited(_recordReceived(data, message));
+          }
+        }
+      case 'activity':
+        final activity = _decodeActivity(data);
+        if (activity != null) {
+          if (data['persisted'] == true) {
+            unawaited(_loadLastActivity());
+          } else {
+            unawaited(_record(activity));
           }
         }
       case 'log':
@@ -408,8 +437,15 @@ class _PairingScreenState extends State<PairingScreen>
   }
 
   Future<void> _loadLastActivity() async {
+    final generation = ++_activityLoadGeneration;
+    final revision = _activityRevision;
     final activities = await widget.lastActivityRepository.loadAll();
-    if (mounted) setState(() => _activities = activities);
+    if (!mounted ||
+        generation != _activityLoadGeneration ||
+        revision != _activityRevision) {
+      return;
+    }
+    setState(() => _activities = activities);
   }
 
   LastActivity? get _lastActivity => _activities.firstOrNull;
@@ -419,6 +455,8 @@ class _PairingScreenState extends State<PairingScreen>
       MaterialPageRoute(
         builder: (_) => RecentActivityScreen(
           activities: _activities,
+          activityChanges: widget.lastActivityRepository.changes,
+          loadActivities: widget.lastActivityRepository.loadAll,
           onCopy: (activity) async {
             if (activity.direction != ActivityDirection.received) return;
             await widget.receiveNotificationTapHandler?.copyActivity(activity);
@@ -449,7 +487,10 @@ class _PairingScreenState extends State<PairingScreen>
     );
   }
 
-  Future<void> _recordSent(SharePayload payload) {
+  Future<void> _recordSent(
+    SharePayload payload, {
+    required ActivityOutcome outcome,
+  }) {
     final summary = switch (payload.type) {
       SharePayloadType.text => 'text (${payload.text?.length ?? 0} chars)',
       SharePayloadType.image => 'image',
@@ -461,23 +502,48 @@ class _PairingScreenState extends State<PairingScreen>
         summary: summary,
         counterpart: 'laptop',
         timestamp: DateTime.now(),
+        outcome: outcome,
       ),
     );
   }
 
   Future<void> _record(LastActivity activity) async {
     await widget.lastActivityRepository.record(activity);
+    _activityRevision++;
+    _activityLoadGeneration++;
+    final activities = await widget.lastActivityRepository.loadAll();
     if (mounted) {
-      setState(() {
-        _activities = [
-          activity,
-          ..._activities.where(
-            (entry) =>
-                activity.payloadId == null ||
-                entry.payloadId != activity.payloadId,
-          ),
-        ].take(30).toList();
-      });
+      setState(() => _activities = activities);
+    }
+  }
+
+  Future<void> _recordTransferResult(PhoneTransferBatch batch) async {
+    final failed = batch.files.any(
+      (file) => switch (file.status) {
+        PhoneTransferStatus.failed ||
+        PhoneTransferStatus.cancelled ||
+        PhoneTransferStatus.expired => true,
+        _ => false,
+      },
+    );
+    final noun = batch.files.length == 1 ? 'file' : 'files';
+    await _record(
+      LastActivity(
+        direction: ActivityDirection.sent,
+        summary: '${batch.files.length} $noun${failed ? ' (with issues)' : ''}',
+        counterpart: 'laptop',
+        timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
+        payloadId: batch.transferId,
+        outcome: failed ? ActivityOutcome.failed : ActivityOutcome.completed,
+      ),
+    );
+  }
+
+  LastActivity? _decodeActivity(Map<Object?, Object?> data) {
+    try {
+      return LastActivity.fromJson(data.cast<String, Object?>());
+    } on Object {
+      return null;
     }
   }
 
@@ -677,14 +743,19 @@ class _PairingScreenState extends State<PairingScreen>
         }
         final batch = result as PhoneTransferBatch;
         _debugLog.add('transfer', 'Sent ${batch.files.length} file(s).');
-        if (mounted) _showSnack('Sent ${batch.files.length} file(s).');
+        if (mounted) _showSnack('Sending ${batch.files.length} file(s)…');
       },
       onResult: (payload, result) {
         _debugLog.add('send', result.message, isError: !result.published);
-        if (!mounted) return;
-        if (result.published) {
-          unawaited(_recordSent(payload));
-        } else {
+        unawaited(
+          _recordSent(
+            payload,
+            outcome: result.published
+                ? ActivityOutcome.completed
+                : ActivityOutcome.failed,
+          ),
+        );
+        if (!result.published && mounted) {
           _showSnack(result.message);
         }
       },
@@ -703,6 +774,10 @@ class _PairingScreenState extends State<PairingScreen>
           clipboardAutoSendWatcher: ChannelClipboardAutoSendWatcher(),
           debugLog: _debugLog,
           paired: _pairing != null,
+          pairedDeviceName: _relayHealth?.relayName ?? _pairing?.name,
+          pairedDeviceAddress: _pairing == null
+              ? null
+              : '${_pairing!.host}:${_pairing!.port}',
           onForgetPairing: _forgetPairing,
           updateChecker: GithubUpdateChecker(owner: 'Snehit70', repo: 'vidyut'),
           files: const VidyutFiles(),

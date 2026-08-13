@@ -326,7 +326,9 @@ class _StatusGlyph extends StatelessWidget {
           alignment: Alignment.center,
           children: [
             Icon(state.icon, size: 30, color: state.color),
-            if (animate)
+            if (animate &&
+                Motion.loopsEnabled &&
+                !MediaQuery.disableAnimationsOf(context))
               Positioned(
                 right: 8,
                 top: 8,
@@ -382,11 +384,17 @@ class _LatestActivitySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final activityLabel = activity == null
+        ? 'Nothing shared yet'
+        : activity!.outcome == ActivityOutcome.failed
+        ? 'Failed: ${activity!.describe()}'
+        : activity!.describe();
     return Semantics(
       button: true,
       container: true,
       excludeSemantics: true,
-      label: 'Latest activity. ${activity?.describe() ?? 'Nothing shared yet'}',
+      label: 'Latest activity. $activityLabel',
+      onTap: onTap,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -449,11 +457,15 @@ class _ActivityRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final hasActivity = activity != null;
+    final failed = hasActivity && activity!.outcome == ActivityOutcome.failed;
     final icon = !hasActivity
         ? Icons.history_outlined
+        : failed
+        ? Icons.error_outline
         : activity!.direction == ActivityDirection.received
         ? Icons.call_received_outlined
         : Icons.call_made_outlined;
+    final scheme = Theme.of(context).colorScheme;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -466,7 +478,7 @@ class _ActivityRow extends StatelessWidget {
           children: [
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
+                color: failed ? scheme.errorContainer : scheme.primaryContainer,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Padding(
@@ -474,14 +486,18 @@ class _ActivityRow extends StatelessWidget {
                 child: Icon(
                   icon,
                   size: 20,
-                  color: Theme.of(context).colorScheme.primary,
+                  color: failed ? scheme.error : scheme.primary,
                 ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                hasActivity ? activity!.describe() : 'Nothing shared yet',
+                hasActivity
+                    ? failed
+                          ? 'Failed: ${activity!.describe()}'
+                          : activity!.describe()
+                    : 'Nothing shared yet',
                 style: textTheme.bodyMedium,
               ),
             ),

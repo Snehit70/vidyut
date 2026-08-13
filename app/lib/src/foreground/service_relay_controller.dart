@@ -4,6 +4,7 @@ import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/services.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
+import '../activity/last_activity.dart';
 import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
@@ -24,6 +25,7 @@ typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
 typedef ServiceTransferReceiverFactory =
     PhoneTransferReceiver Function(AppSettings settings);
 typedef ServiceEmit = void Function(Map<String, Object?> message);
+typedef ServiceActivityRecorder = Future<void> Function(LastActivity activity);
 typedef ServiceNotificationUpdate =
     Future<void> Function(String title, String text);
 
@@ -84,6 +86,7 @@ class ServiceRelayController {
     required this.receiverFactory,
     required this.emit,
     required this.updateNotification,
+    this.activityRecorder,
     this.screenshotWatcher,
     this.pushController,
     this.screenOnEvents,
@@ -103,6 +106,7 @@ class ServiceRelayController {
   final ServiceReceiverFactory receiverFactory;
   final ServiceEmit emit;
   final ServiceNotificationUpdate updateNotification;
+  final ServiceActivityRecorder? activityRecorder;
 
   /// Optional collaborator (injected like [connectionFactory] to keep this
   /// class testable). When present, [_sync] starts it while
@@ -322,6 +326,19 @@ class ServiceRelayController {
         'Manual clipboard send: ${publishResult.message}',
         isError: !publishResult.published,
       );
+      unawaited(
+        recordActivity(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (${text.length} chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+            outcome: publishResult.published
+                ? ActivityOutcome.completed
+                : ActivityOutcome.failed,
+          ),
+        ),
+      );
       await updateNotification(
         publishResult.published
             ? 'Vidyut sent to laptop'
@@ -337,6 +354,17 @@ class ServiceRelayController {
       });
     } catch (error) {
       _log('Manual clipboard send failed: $error', isError: true);
+      unawaited(
+        recordActivity(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (${text.length} chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+            outcome: ActivityOutcome.failed,
+          ),
+        ),
+      );
       await updateNotification('Vidyut could not send', 'Tap to try again.');
     } finally {
       _manualSendInFlight = false;
@@ -361,6 +389,19 @@ class ServiceRelayController {
   /// composition's receive-clipboard wrapper after a successful write.
   void recordReceivedClipboardText(String text) {
     _lastReceivedClipboardWrite = text;
+  }
+
+  /// Persists a meaningful outcome in the service isolate before notifying the
+  /// UI. This keeps activity durable even when the app surface is not open.
+  Future<void> recordActivity(LastActivity activity) async {
+    var persisted = false;
+    try {
+      await activityRecorder?.call(activity);
+      persisted = activityRecorder != null;
+    } catch (error, stackTrace) {
+      _log('Activity persistence failed: $error\n$stackTrace', isError: true);
+    }
+    emit({'kind': 'activity', ...activity.toJson(), 'persisted': persisted});
   }
 
   Future<void> _sync() async {
@@ -462,21 +503,48 @@ class ServiceRelayController {
       frames: connection.payloads.where(_shouldHandleFrame),
       pairingSecret: pairing.secret,
       receiver: receiverFactory(settings),
-      onResult: (frame, result) {
-        emit({
-          'kind': 'receive',
-          'received': result.received,
-          'message': result.message,
-          'type': frame.type.wireName,
-          'size': _payloadSizeBytes(frame.payload),
-          'origin': frame.origin,
-          'payloadId': frame.nonce,
-        });
-      },
+      onResult: (frame, result) =>
+          unawaited(_handleReceiveResult(frame, result)),
     )..start();
     _transferReceiver = transferReceiverFactory?.call(settings);
     _transferReceiver?.start(connection, pairing);
     await connection.start();
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _handleReceiveResult(
+    PayloadFrame frame,
+    PayloadReceiveResult result,
+  ) async {
+    final type = frame.type.wireName;
+    final size = _payloadSizeBytes(frame.payload);
+    await recordActivity(
+      LastActivity(
+        direction: ActivityDirection.received,
+        summary: '$type (${_formatBytes(size)})',
+        counterpart: frame.origin,
+        timestamp: DateTime.now(),
+        payloadId: frame.nonce,
+        outcome: result.received
+            ? ActivityOutcome.completed
+            : ActivityOutcome.failed,
+      ),
+    );
+    emit({
+      'kind': 'receive',
+      'received': result.received,
+      'message': result.message,
+      'type': type,
+      'size': size,
+      'origin': frame.origin,
+      'payloadId': frame.nonce,
+      'activityHandled': true,
+    });
   }
 
   /// Drops the phone's own frames and the pool re-send that follows every
@@ -660,11 +728,39 @@ class ServiceRelayController {
     final publish = autoSendPublish;
     if (publish == null) return;
     _log('Clipboard auto-send: forwarding ${text.length} chars to publish.');
-    final result = await publish(SharePayload.text(text));
-    _log(
-      'Clipboard auto-send publish: ${result.message}',
-      isError: !result.published,
-    );
+    try {
+      final result = await publish(SharePayload.text(text));
+      _log(
+        'Clipboard auto-send publish: ${result.message}',
+        isError: !result.published,
+      );
+      unawaited(
+        recordActivity(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (${text.length} chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+            outcome: result.published
+                ? ActivityOutcome.completed
+                : ActivityOutcome.failed,
+          ),
+        ),
+      );
+    } catch (error) {
+      _log('Clipboard auto-send publish failed: $error', isError: true);
+      unawaited(
+        recordActivity(
+          LastActivity(
+            direction: ActivityDirection.sent,
+            summary: 'text (${text.length} chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+            outcome: ActivityOutcome.failed,
+          ),
+        ),
+      );
+    }
   }
 
   void _setScreenshotPaused(bool paused, {ScreenshotAccessLevel? access}) {

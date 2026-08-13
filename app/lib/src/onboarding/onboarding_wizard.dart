@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
 import '../design/widgets.dart';
+import '../design/motion.dart';
 import '../pairing/pairing_code.dart';
 import '../pairing/pairing_widgets.dart';
 import '../pairing/relay_discovery.dart';
@@ -626,7 +627,9 @@ class _StepDots extends StatelessWidget {
       children: [
         for (var i = 0; i < count; i++)
           AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : Motion.state,
             curve: Curves.easeOutCubic,
             margin: const EdgeInsets.symmetric(horizontal: 4),
             width: i == index ? 22 : 8,

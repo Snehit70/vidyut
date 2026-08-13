@@ -1006,6 +1006,30 @@ void main() {
       expect(harness.autoSendPublished, isEmpty);
     });
 
+    test('notification action records a failure when publish throws', () async {
+      final watcher = _FakeAutoSendWatcher();
+      final harness = _Harness(
+        pairing: pairing,
+        autoSendWatcher: watcher,
+        autoSendError: StateError('publisher failed'),
+      );
+      await harness.controller.start();
+
+      watcher.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'copied on phone',
+        ),
+      );
+      await _waitUntil(
+        () => harness.emitted.any(
+          (message) =>
+              message['kind'] == 'activity' && message['outcome'] == 'failed',
+        ),
+      );
+    });
+
     test('stays inert when the setting is off (default)', () async {
       final watcher = _FakeAutoSendWatcher();
       final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
@@ -1069,6 +1093,25 @@ void main() {
       await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
 
       expect(harness.autoSendPublished, ['copied on phone']);
+    });
+
+    test('records a failure when automatic publish throws', () async {
+      final watcher = _FakeAutoSendWatcher(granted: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(enableClipboardAutoSend: true),
+        autoSendWatcher: watcher,
+        autoSendError: StateError('publisher failed'),
+      );
+
+      await harness.controller.start();
+      watcher.emitText('copied on phone');
+      await _waitUntil(
+        () => harness.emitted.any(
+          (message) =>
+              message['kind'] == 'activity' && message['outcome'] == 'failed',
+        ),
+      );
     });
 
     test(
@@ -1260,6 +1303,7 @@ class _Harness {
     bool transportsHangOnClose = false,
     bool provideAutoSendPublish = true,
     Completer<SharePublishResult>? autoSendGate,
+    this.autoSendError,
     Future<AppSettings> Function()? loadSettings,
     ServiceTransferReceiverFactory? transferReceiverFactory,
   }) {
@@ -1275,6 +1319,7 @@ class _Harness {
       autoSendPublish: provideAutoSendPublish
           ? (payload) async {
               autoSendPublished.add(payload.text ?? '');
+              if (autoSendError != null) throw autoSendError!;
               return autoSendGate?.future ?? autoSendResult;
             }
           : null,
@@ -1326,6 +1371,7 @@ class _Harness {
   final notifications = <({String title, String text})>[];
   final clipboard = _RecordingClipboard();
   final autoSendPublished = <String>[];
+  final Object? autoSendError;
   SharePublishResult autoSendResult = const SharePublishResult.published();
 }
 

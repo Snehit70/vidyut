@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -65,6 +67,48 @@ void main() {
     expect(settingsOpened, isTrue);
     expect(activityOpened, isTrue);
     expect(detailsOpened, isTrue);
+  });
+
+  testWidgets('exposes latest activity as a tappable semantics node', (
+    tester,
+  ) async {
+    final semanticsHandle = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          lastActivity: LastActivity(
+            direction: ActivityDirection.received,
+            summary: 'text (42 chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final semantics = tester.getSemantics(
+      find.bySemanticsLabel(
+        'Latest activity. text (42 chars) from laptop · just now',
+      ),
+    );
+    expect(
+      semantics.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+      isTrue,
+    );
+    semanticsHandle.dispose();
   });
 
   testWidgets('uses a navigation rail on expanded widths', (tester) async {
