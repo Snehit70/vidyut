@@ -17,7 +17,11 @@ abstract interface class LastActivityStorage {
 
 class SecureLastActivityStorage implements LastActivityStorage {
   const SecureLastActivityStorage([
-    this._storage = const FlutterSecureStorage(),
+    this._storage = const FlutterSecureStorage(
+      aOptions: AndroidOptions(storageNamespace: 'vidyut.activity'),
+      iOptions: IOSOptions(accountName: 'vidyut.activity'),
+      mOptions: MacOsOptions(accountName: 'vidyut.activity'),
+    ),
   ]);
 
   final FlutterSecureStorage _storage;

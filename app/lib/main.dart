@@ -268,6 +268,7 @@ class _PairingScreenState extends State<PairingScreen>
       return settings.allowMeteredFileTransfers ||
           !await const VidyutFiles().isNetworkMetered();
     },
+    onBatchTerminal: _recordTransferResult,
   );
 
   /// Live "connected" flag mirrored into the wizard's finale (D2).
@@ -503,14 +504,7 @@ class _PairingScreenState extends State<PairingScreen>
     }
   }
 
-  Future<void> _recordTransferResult(PhoneTransferBatch initial) async {
-    // File preparation and transfer can legitimately outlive the short UI
-    // interaction window. Activity follows the durable terminal snapshot and
-    // is allowed to wait for the transfer lifecycle to finish.
-    final batch = await _transferSender.waitForTerminal(
-      initial.transferId,
-      timeout: const Duration(hours: 24),
-    );
+  Future<void> _recordTransferResult(PhoneTransferBatch batch) async {
     final failed = batch.files.any(
       (file) => switch (file.status) {
         PhoneTransferStatus.failed ||
@@ -737,7 +731,6 @@ class _PairingScreenState extends State<PairingScreen>
         final batch = result as PhoneTransferBatch;
         _debugLog.add('transfer', 'Sent ${batch.files.length} file(s).');
         if (mounted) _showSnack('Sending ${batch.files.length} file(s)…');
-        unawaited(_recordTransferResult(batch));
       },
       onResult: (payload, result) {
         _debugLog.add('send', result.message, isError: !result.published);

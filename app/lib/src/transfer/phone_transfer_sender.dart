@@ -262,6 +262,7 @@ class PhoneTransferSender {
     this.monotonicClock,
     this.wallClock,
     this.onBatchCreated,
+    this.onBatchTerminal,
     this.reconnectBackoff = const [
       Duration(seconds: 1),
       Duration(seconds: 2),
@@ -284,6 +285,7 @@ class PhoneTransferSender {
   final MonotonicClock? monotonicClock;
   final MonotonicClock? wallClock;
   final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchCreated;
+  final FutureOr<void> Function(PhoneTransferBatch batch)? onBatchTerminal;
   final List<Duration> reconnectBackoff;
   final _progressController =
       StreamController<PhoneTransferProgress>.broadcast();
@@ -305,6 +307,7 @@ class PhoneTransferSender {
   Future<void> _sendTail = Future<void>.value();
   final _sendPredecessors = <String, Future<void>>{};
   final _sendTurnCompleters = <String, Completer<void>>{};
+  final _terminalCallbacksSent = <String>{};
 
   Stream<PhoneTransferProgress> get progress => _progressController.stream;
   Stream<PhoneTransferBatch> get batchesCreated =>
@@ -2162,6 +2165,17 @@ class PhoneTransferSender {
 
   void _publishSnapshot(PhoneTransferBatch batch) {
     if (!_snapshotController.isClosed) _snapshotController.add(batch);
+    final terminal =
+        batch.files.isNotEmpty &&
+        batch.files.every((file) => _isTerminal(file.status));
+    if (!terminal) {
+      _terminalCallbacksSent.remove(batch.transferId);
+    } else if (_terminalCallbacksSent.add(batch.transferId)) {
+      final callback = onBatchTerminal;
+      if (callback != null) {
+        unawaited(Future<void>.sync(() => callback(batch)));
+      }
+    }
   }
 
   void _cleanupTrackingForBatch(PhoneTransferBatch batch) {

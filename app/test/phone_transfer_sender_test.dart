@@ -12,11 +12,13 @@ import 'package:vidyut/src/transfer/transfer_history.dart';
 
 void main() {
   test('rejects sending when the active network policy disallows it', () async {
+    PhoneTransferBatch? terminal;
     final sender = PhoneTransferSender(
       pairingRepository: PairingRepository(MemoryPairingStorage()),
       connectionFactory: (_) => throw UnimplementedError(),
       history: TransferHistoryRepository(MemoryTransferHistoryStorage()),
       networkAllowed: () async => false,
+      onBatchTerminal: (batch) => terminal = batch,
     );
 
     final admitted = await sender.enqueue([
@@ -28,6 +30,8 @@ void main() {
     ]);
     final failed = await sender.waitForTerminal(admitted.transferId);
     expect(failed.files.single.errorCode, 'transfer_failed');
+    expect(terminal?.transferId, admitted.transferId);
+    expect(terminal?.status, PhoneTransferStatus.failed);
   });
 
   test('offers and uploads a file while persisting progress history', () async {
