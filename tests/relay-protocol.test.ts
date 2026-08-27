@@ -170,7 +170,7 @@ describe("relay protocol", () => {
       secret,
     );
     phone.send({ v: 1, kind: "publish", frame });
-    await expect(phone.next()).resolves.toMatchObject({ kind: "ack", ts: 1_800_000_000_040 });
+    await expect(phone.next((m) => m.kind === "ack")).resolves.toMatchObject({ kind: "ack", ts: 1_800_000_000_040 });
 
     phone.close();
   });
@@ -215,7 +215,7 @@ describe("relay protocol", () => {
       secret,
     );
     await laptop.publish(frame);
-    await expect(phone.next()).resolves.toMatchObject({
+    await expect(phone.next((m) => m.kind === "payload")).resolves.toMatchObject({
       kind: "payload",
       frame: { origin: "laptop", ts: 1_800_000_000_050 },
     });
@@ -224,7 +224,7 @@ describe("relay protocol", () => {
     const phoneAgain = await connectRawWebSocket(relay.url);
     await authenticateRawClient(phoneAgain, secret, "phone");
 
-    await expect(phoneAgain.next()).resolves.toMatchObject({
+    await expect(phoneAgain.next((m) => m.kind === "payload")).resolves.toMatchObject({
       kind: "payload",
       frame: { origin: "laptop", ts: 1_800_000_000_050 },
     });

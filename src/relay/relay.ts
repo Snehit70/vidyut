@@ -7,10 +7,12 @@ import {
   isTransferControlMessage,
   type PayloadFrame,
   type RelayHealth,
+  type LaptopTelemetry,
   type RelayMessage,
   type TransferControlMessage,
 } from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
+import { sampleLaptopTelemetry } from "./telemetry";
 
 interface RelayOptions {
   hostname: string;
@@ -36,6 +38,7 @@ interface RelayOptions {
     request: Request,
     context: { isLoopback: boolean },
   ) => Promise<Response | undefined>;
+  telemetry?: () => Promise<LaptopTelemetry>;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -104,6 +107,12 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       socket.ping();
     }
   }, heartbeatIntervalMs);
+  const telemetryInterval = setInterval(() => {
+    if (![...devices].some((socket) => socket.data.authenticated)) return;
+    void (options.telemetry ?? sampleLaptopTelemetry)().then((telemetry) => {
+      broadcast(devices, undefined, telemetry);
+    });
+  }, 5_000);
 
   const server = Bun.serve<DeviceSocketData>({
     hostname: options.hostname,
@@ -176,6 +185,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
               socket.data.deviceId,
               (message) => send(socket, message),
             );
+            void (options.telemetry ?? sampleLaptopTelemetry)().then((telemetry) => send(socket, telemetry));
           }
           return;
         }
@@ -300,6 +310,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
     },
     async stop() {
       clearInterval(heartbeat);
+      clearInterval(telemetryInterval);
       unsubscribe();
       server.stop(true);
       devices.clear();
