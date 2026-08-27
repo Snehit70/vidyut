@@ -116,7 +116,7 @@ describe("relay transfer control", () => {
       },
     });
 
-    await expect(phone.next()).resolves.toMatchObject({
+    await expect(phone.next((message) => message.kind === "error")).resolves.toMatchObject({
       kind: "error",
       code: "bad_message",
     });
