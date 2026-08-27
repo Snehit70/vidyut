@@ -23,6 +23,13 @@ to every connected device. It runs on the laptop and is reachable only over the
 local WiFi network; nothing leaves the LAN.
 _Avoid_: server, hub, broker
 
+**Telemetry**:
+A live snapshot of the paired laptop's operating state — battery, memory usage,
+storage usage, CPU usage, and CPU temperature — shown on the phone without
+being retained as history. Telemetry is informational and may be unavailable
+when the laptop operating system cannot provide a metric.
+_Avoid_: device history, monitoring log, analytics
+
 **Device**:
 One participant in the pool — currently the Linux laptop or the Android phone.
 Each device both publishes and receives payloads.

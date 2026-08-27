@@ -30,6 +30,62 @@ class PayloadMetadata {
   final int ts;
 }
 
+class LaptopTelemetry {
+  const LaptopTelemetry({
+    required this.ts,
+    this.batteryPercent,
+    this.batteryState,
+    this.memoryUsedBytes,
+    this.memoryTotalBytes,
+    this.storageUsedBytes,
+    this.storageTotalBytes,
+    this.cpuUsagePercent,
+    this.cpuTemperatureCelsius,
+  });
+
+  final int ts;
+  final double? batteryPercent;
+  final String? batteryState;
+  final int? memoryUsedBytes;
+  final int? memoryTotalBytes;
+  final int? storageUsedBytes;
+  final int? storageTotalBytes;
+  final double? cpuUsagePercent;
+  final double? cpuTemperatureCelsius;
+
+  Map<String, Object?> toJson() => {
+    'ts': ts,
+    'batteryPercent': batteryPercent,
+    'batteryState': batteryState,
+    'memoryUsedBytes': memoryUsedBytes,
+    'memoryTotalBytes': memoryTotalBytes,
+    'storageUsedBytes': storageUsedBytes,
+    'storageTotalBytes': storageTotalBytes,
+    'cpuUsagePercent': cpuUsagePercent,
+    'cpuTemperatureCelsius': cpuTemperatureCelsius,
+  };
+
+  static LaptopTelemetry? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final map = value.cast<Object?, Object?>();
+    final ts = map['ts'];
+    if (ts is! int) return null;
+    double? number(Object? value) => value is num ? value.toDouble() : null;
+    int? integer(Object? value) => value is int ? value : null;
+    return LaptopTelemetry(
+      ts: ts,
+      batteryPercent: number(map['batteryPercent']),
+      batteryState: map['batteryState'] is String ? map['batteryState'] as String : null,
+      memoryUsedBytes: integer(map['memoryUsedBytes']),
+      memoryTotalBytes: integer(map['memoryTotalBytes']),
+      storageUsedBytes: integer(map['storageUsedBytes']),
+      storageTotalBytes: integer(map['storageTotalBytes']),
+      cpuUsagePercent: number(map['cpuUsagePercent']),
+      cpuTemperatureCelsius: number(map['cpuTemperatureCelsius']),
+    );
+  }
+}
+
 class PayloadFrame {
   const PayloadFrame({
     required this.type,
