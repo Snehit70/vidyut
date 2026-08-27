@@ -7,6 +7,7 @@ import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/home/home_screen.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/wire.dart';
 
 void main() {
   testWidgets('prioritizes sync, sending files, and latest activity', (
@@ -233,5 +234,91 @@ void main() {
     expect(find.text('Notifications are off'), findsOneWidget);
     await tester.tap(find.text('Notifications are off'));
     expect(setupOpened, isTrue);
+  });
+
+  testWidgets('renders live laptop telemetry when available', (tester) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            batteryPercent: 88,
+            batteryState: 'charging',
+            cpuTemperatureCelsius: 65.4,
+            memoryUsedBytes: 4 * 1073741824,
+            memoryTotalBytes: 16 * 1073741824,
+            storageUsedBytes: 250 * 1073741824,
+            storageTotalBytes: 500 * 1073741824,
+            cpuUsagePercent: 32.5,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Laptop telemetry'), findsOneWidget);
+    expect(find.text('88%'), findsOneWidget);
+    expect(find.text('Charging'), findsOneWidget);
+    expect(find.text('65.4°C'), findsOneWidget);
+    expect(find.text('Normal'), findsOneWidget);
+    expect(find.text('4.0 GB'), findsOneWidget);
+    expect(find.text('25% used'), findsOneWidget);
+    expect(find.text('250.0 GB'), findsOneWidget);
+    expect(find.text('50% used'), findsOneWidget);
+    expect(find.text('33%'), findsOneWidget);
+    expect(find.text('Low'), findsOneWidget);
+  });
+
+  testWidgets('renders stale laptop telemetry as unavailable', (tester) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch - 15000,
+            batteryPercent: 88,
+            batteryState: 'charging',
+            cpuTemperatureCelsius: 65.4,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Laptop telemetry'), findsOneWidget);
+    expect(find.text('88%'), findsNothing);
+    expect(find.text('Unavailable'), findsWidgets);
+    expect(find.text('Laptop disconnected'), findsWidgets);
   });
 }
