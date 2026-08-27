@@ -860,8 +860,7 @@ class ServiceRelayController {
     // Connection state only, zero-tap copy (#33 decision 3): no per-event
     // text updates.
     final text = switch (status) {
-      ConnectionStatus.connected =>
-        'Synced with laptop — clipboard and screenshots.',
+      ConnectionStatus.connected => 'Syncing clipboard & screenshots',
       ConnectionStatus.searching => 'Looking for the laptop relay...',
       ConnectionStatus.offline =>
         'Relay unreachable. Open the app to reconnect.',
