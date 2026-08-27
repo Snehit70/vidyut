@@ -163,7 +163,8 @@ class _LaptopTelemetrySection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isStale = !connected ||
+    final isStale =
+        !connected ||
         telemetry == null ||
         (DateTime.now().millisecondsSinceEpoch - telemetry!.ts > 10000);
 
@@ -173,48 +174,80 @@ class _LaptopTelemetrySection extends StatelessWidget {
     }
 
     String resolveDetail(String detail, Object? metric) {
-      if (!connected || (telemetry != null && DateTime.now().millisecondsSinceEpoch - telemetry!.ts > 10000)) {
+      if (!connected) {
         return 'Laptop disconnected';
       }
-      if (metric == null) return 'Unavailable';
+      if (isStale || metric == null) return 'Unavailable';
       return detail;
     }
 
     final batteryCard = _TelemetryCard(
       label: 'Battery',
-      value: resolveValue(_percent(telemetry?.batteryPercent), telemetry?.batteryPercent),
-      detail: resolveDetail(_batteryState(telemetry?.batteryState), telemetry?.batteryState),
+      value: resolveValue(
+        _percent(telemetry?.batteryPercent),
+        telemetry?.batteryPercent,
+      ),
+      detail: resolveDetail(
+        _batteryState(telemetry?.batteryState),
+        telemetry?.batteryState,
+      ),
       color: theme.colorScheme.primary,
     );
 
     final tempCard = _TelemetryCard(
       label: 'CPU temperature',
-      value: resolveValue(_temp(telemetry?.cpuTemperatureCelsius), telemetry?.cpuTemperatureCelsius),
-      detail: resolveDetail(_temperatureState(telemetry?.cpuTemperatureCelsius), telemetry?.cpuTemperatureCelsius),
-      color: _temperatureColor(theme, isStale ? null : telemetry?.cpuTemperatureCelsius),
+      value: resolveValue(
+        _temp(telemetry?.cpuTemperatureCelsius),
+        telemetry?.cpuTemperatureCelsius,
+      ),
+      detail: resolveDetail(
+        _temperatureState(telemetry?.cpuTemperatureCelsius),
+        telemetry?.cpuTemperatureCelsius,
+      ),
+      color: _temperatureColor(
+        theme,
+        isStale ? null : telemetry?.cpuTemperatureCelsius,
+      ),
     );
 
     final memoryCard = _TelemetryCard(
       label: 'Memory',
-      value: resolveValue(_bytes(telemetry?.memoryUsedBytes), telemetry?.memoryUsedBytes),
-      detail: resolveDetail(_ratio(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes), telemetry?.memoryUsedBytes),
+      value: resolveValue(
+        _bytes(telemetry?.memoryUsedBytes),
+        telemetry?.memoryUsedBytes,
+      ),
+      detail: resolveDetail(
+        _ratio(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
+        telemetry?.memoryUsedBytes,
+      ),
       color: theme.colorScheme.primary,
     );
 
     final storageCard = _TelemetryCard(
       label: 'Storage',
-      value: resolveValue(_bytes(telemetry?.storageUsedBytes), telemetry?.storageUsedBytes),
-      detail: resolveDetail(_ratio(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes), telemetry?.storageUsedBytes),
+      value: resolveValue(
+        _bytes(telemetry?.storageUsedBytes),
+        telemetry?.storageUsedBytes,
+      ),
+      detail: resolveDetail(
+        _ratio(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
+        telemetry?.storageUsedBytes,
+      ),
       color: theme.colorScheme.secondary,
     );
 
     final cpuCard = _TelemetryCard(
       label: 'CPU usage',
       value: resolveValue(
-        telemetry?.cpuUsagePercent == null ? 'Unavailable' : '${telemetry!.cpuUsagePercent!.round()}%',
+        telemetry?.cpuUsagePercent == null
+            ? 'Unavailable'
+            : '${telemetry!.cpuUsagePercent!.round()}%',
         telemetry?.cpuUsagePercent,
       ),
-      detail: resolveDetail(_cpuState(telemetry?.cpuUsagePercent), telemetry?.cpuUsagePercent),
+      detail: resolveDetail(
+        _cpuState(telemetry?.cpuUsagePercent),
+        telemetry?.cpuUsagePercent,
+      ),
       color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
     );
 
@@ -311,32 +344,41 @@ String _batteryState(String? value) => switch (value) {
   'on_battery' => 'On battery',
   _ => 'Unavailable',
 };
-String _bytes(int? used) =>
-    used == null ? 'Unavailable' : '${(used / 1073741824).toStringAsFixed(1)} GB';
+String _bytes(int? used) => used == null
+    ? 'Unavailable'
+    : '${(used / 1073741824).toStringAsFixed(1)} GB';
 String _ratio(int? used, int? total) =>
     used == null || total == null || total == 0
-        ? 'Unavailable'
-        : '${(used / total * 100).round()}% used';
-String _cpuState(double? value) =>
-    value == null ? 'Unavailable' : value < 50 ? 'Low' : value <= 80 ? 'Moderate' : 'High';
-String _temperatureState(double? value) =>
-    value == null ? 'Unavailable' : value >= 82 ? 'Critical' : value >= 70 ? 'Warning' : 'Normal';
-Color _cpuColor(ThemeData theme, double? value) =>
-    value == null
-        ? theme.colorScheme.onSurfaceVariant
-        : value > 80
-            ? theme.colorScheme.error
-            : value >= 50
-                ? theme.colorScheme.tertiary
-                : theme.colorScheme.primary;
-Color _temperatureColor(ThemeData theme, double? value) =>
-    value == null
-        ? theme.colorScheme.onSurfaceVariant
-        : value >= 82
-            ? theme.colorScheme.error
-            : value >= 70
-                ? theme.colorScheme.tertiary
-                : theme.colorScheme.primary;
+    ? 'Unavailable'
+    : '${(used / total * 100).round()}% used';
+String _cpuState(double? value) => value == null
+    ? 'Unavailable'
+    : value < 50
+    ? 'Low'
+    : value <= 80
+    ? 'Moderate'
+    : 'High';
+String _temperatureState(double? value) => value == null
+    ? 'Unavailable'
+    : value >= 82
+    ? 'Critical'
+    : value >= 70
+    ? 'Warning'
+    : 'Normal';
+Color _cpuColor(ThemeData theme, double? value) => value == null
+    ? theme.colorScheme.onSurfaceVariant
+    : value > 80
+    ? theme.colorScheme.error
+    : value >= 50
+    ? theme.colorScheme.tertiary
+    : theme.colorScheme.primary;
+Color _temperatureColor(ThemeData theme, double? value) => value == null
+    ? theme.colorScheme.onSurfaceVariant
+    : value >= 82
+    ? theme.colorScheme.error
+    : value >= 70
+    ? theme.colorScheme.tertiary
+    : theme.colorScheme.primary;
 
 class _HomeAppBarAction extends StatelessWidget {
   const _HomeAppBarAction({

@@ -109,9 +109,12 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
   }, heartbeatIntervalMs);
   const telemetryInterval = setInterval(() => {
     if (![...devices].some((socket) => socket.data.authenticated)) return;
-    void (options.telemetry ?? sampleLaptopTelemetry)().then((telemetry) => {
-      broadcast(devices, undefined, telemetry);
-    });
+    void (options.telemetry ?? sampleLaptopTelemetry)().then(
+      (telemetry) => broadcast(devices, undefined, telemetry),
+      (error) => logger.error("telemetry_sampling_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }, 5_000);
 
   const server = Bun.serve<DeviceSocketData>({

@@ -14,8 +14,11 @@ export async function sampleLaptopTelemetry(now = Date.now()): Promise<LaptopTel
     readWaybarTemperature(),
   ]);
   const currentCpu = cpuCounters();
-  const cpuUsagePercent = previousCpu && currentCpu
-    ? clamp((1 - (currentCpu.idle - previousCpu.idle) / (currentCpu.total - previousCpu.total)) * 100)
+  const totalDelta = previousCpu && currentCpu
+    ? currentCpu.total - previousCpu.total
+    : 0;
+  const cpuUsagePercent = previousCpu && currentCpu && totalDelta > 0
+    ? clamp((1 - (currentCpu.idle - previousCpu.idle) / totalDelta) * 100)
     : null;
   previousCpu = currentCpu;
   return {

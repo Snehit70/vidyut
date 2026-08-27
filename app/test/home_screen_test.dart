@@ -319,6 +319,6 @@ void main() {
     expect(find.text('Laptop telemetry'), findsOneWidget);
     expect(find.text('88%'), findsNothing);
     expect(find.text('Unavailable'), findsWidgets);
-    expect(find.text('Laptop disconnected'), findsWidgets);
+    expect(find.text('Laptop disconnected'), findsNothing);
   });
 }
