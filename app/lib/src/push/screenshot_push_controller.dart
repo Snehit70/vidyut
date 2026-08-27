@@ -5,6 +5,7 @@ import 'package:screenshot_observer/screenshot_observer.dart';
 
 import '../activity/last_activity.dart';
 import '../shared/payload_crypto.dart';
+import '../shared/format.dart';
 import '../shared/relay_connection.dart';
 import '../shared/wire.dart';
 
@@ -303,7 +304,7 @@ class ScreenshotPushController {
           () => recorder(
             LastActivity(
               direction: ActivityDirection.sent,
-              summary: 'screenshot (${_formatBytes(pending.plaintextBytes)})',
+              summary: 'screenshot (${formatBytes(pending.plaintextBytes)})',
               counterpart: 'laptop',
               timestamp: _clock(),
               payloadId: pending.frame.nonce,
@@ -362,10 +363,4 @@ class ScreenshotPushController {
   }
 
   int _nowMs() => _clock().millisecondsSinceEpoch;
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
 }

@@ -12,6 +12,7 @@ import '../settings/app_settings.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
 import '../shared/relay_connection.dart';
+import '../shared/format.dart';
 import '../shared/wire.dart';
 import '../transfer/phone_transfer_receiver.dart';
 
@@ -515,12 +516,6 @@ class ServiceRelayController {
     await connection.start();
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-
   Future<void> _handleReceiveResult(
     PayloadFrame frame,
     PayloadReceiveResult result,
@@ -530,13 +525,14 @@ class ServiceRelayController {
     await recordActivity(
       LastActivity(
         direction: ActivityDirection.received,
-        summary: '$type (${_formatBytes(size)})',
+        summary: '$type (${formatBytes(size)})',
         counterpart: frame.origin,
         timestamp: DateTime.now(),
         payloadId: frame.nonce,
         outcome: result.received
             ? ActivityOutcome.completed
             : ActivityOutcome.failed,
+        excerpt: result.excerpt,
         previewPath: result.imagePath,
       ),
     );
@@ -549,6 +545,7 @@ class ServiceRelayController {
       'origin': frame.origin,
       'payloadId': frame.nonce,
       'activityHandled': true,
+      if (result.excerpt != null) 'excerpt': result.excerpt,
       if (result.imagePath != null) 'previewPath': result.imagePath,
     });
   }

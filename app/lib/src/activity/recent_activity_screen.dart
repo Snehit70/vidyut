@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../design/palette.dart';
+import '../shared/format.dart';
 import 'last_activity.dart';
 
 class RecentActivityScreen extends StatefulWidget {
@@ -11,6 +11,7 @@ class RecentActivityScreen extends StatefulWidget {
     super.key,
     required this.activities,
     required this.onCopy,
+    this.deviceName = 'Laptop (Linux)',
     this.onRetry,
     this.activityChanges,
     this.loadActivities,
@@ -18,6 +19,7 @@ class RecentActivityScreen extends StatefulWidget {
 
   final List<LastActivity> activities;
   final Future<void> Function(LastActivity activity) onCopy;
+  final String deviceName;
   final Future<void> Function(LastActivity activity)? onRetry;
   final Stream<List<LastActivity>>? activityChanges;
   final Future<List<LastActivity>> Function()? loadActivities;
@@ -100,12 +102,17 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
       body: _activities.isEmpty
           ? const Center(child: Text('No shared items yet.'))
           : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               itemCount: _activities.length + 1,
               separatorBuilder: (_, index) =>
                   SizedBox(height: index == 0 ? 16 : 12),
               itemBuilder: (context, index) {
-                if (index == 0) return _DeviceSummary(count: todayCount);
+                if (index == 0) {
+                  return _DeviceSummary(
+                    count: todayCount,
+                    deviceName: widget.deviceName,
+                  );
+                }
                 return _ActivityTimelineItem(
                   activity: _activities[index - 1],
                   onCopy: widget.onCopy,
@@ -118,9 +125,10 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
 }
 
 class _DeviceSummary extends StatelessWidget {
-  const _DeviceSummary({required this.count});
+  const _DeviceSummary({required this.count, required this.deviceName});
 
   final int count;
+  final String deviceName;
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +143,7 @@ class _DeviceSummary extends StatelessWidget {
             color: colors.onSurfaceVariant,
           ),
           const SizedBox(width: 12),
-          Text('Laptop (Linux)', style: Theme.of(context).textTheme.titleSmall),
+          Text(deviceName, style: Theme.of(context).textTheme.titleSmall),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text('•', style: TextStyle(color: colors.onSurfaceVariant)),
@@ -219,7 +227,7 @@ class _ActivityTimelineItem extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          style: Theme.of(context).textTheme.titleLarge,
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
                         if (activity.excerpt != null) ...[
                           const SizedBox(height: 4),
@@ -246,8 +254,8 @@ class _ActivityTimelineItem extends StatelessWidget {
                           children: [
                             _StatusPill(label: status, failed: failed),
                             Text(
-                              '${_clockTime(activity.timestamp)}  •  '
-                              '${_relative(activity.timestamp)}',
+                              '${clockTime(activity.timestamp)}  •  '
+                              '${relativeTime(activity.timestamp, capitalize: true)}',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(color: colors.onSurfaceVariant),
                             ),
@@ -328,7 +336,9 @@ class _StatusPill extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: failed ? colors.error.withValues(alpha: 0.12) : Palette.petal,
+        color: failed
+            ? colors.error.withValues(alpha: 0.12)
+            : colors.primaryContainer,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -420,22 +430,4 @@ String _titleFromSummary(String summary) {
   if (lower.startsWith('text')) return 'Text';
   if (lower.startsWith('image')) return 'Image';
   return summary;
-}
-
-String _clockTime(DateTime timestamp) {
-  final hour = timestamp.hour == 0
-      ? 12
-      : timestamp.hour > 12
-      ? timestamp.hour - 12
-      : timestamp.hour;
-  final minute = timestamp.minute.toString().padLeft(2, '0');
-  return '$hour:$minute ${timestamp.hour >= 12 ? 'PM' : 'AM'}';
-}
-
-String _relative(DateTime timestamp) {
-  final delta = DateTime.now().difference(timestamp);
-  if (delta.inSeconds < 45) return 'Just now';
-  if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
-  if (delta.inHours < 24) return '${delta.inHours}h ago';
-  return '${delta.inDays}d ago';
 }

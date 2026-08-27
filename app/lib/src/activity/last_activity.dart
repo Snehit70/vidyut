@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../shared/format.dart';
+
 /// Which way the most recent payload moved through the pool.
 enum ActivityDirection { sent, received }
 
@@ -50,15 +52,8 @@ class LastActivity {
   /// One line for the dashboard row, e.g. "text (14 chars) to laptop · 2m ago".
   String describe({DateTime? now}) {
     final preposition = direction == ActivityDirection.sent ? 'to' : 'from';
-    return '$summary $preposition $counterpart · ${_relative(now ?? DateTime.now())}';
-  }
-
-  String _relative(DateTime now) {
-    final delta = now.difference(timestamp);
-    if (delta.inSeconds < 45) return 'just now';
-    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
-    if (delta.inHours < 24) return '${delta.inHours}h ago';
-    return '${delta.inDays}d ago';
+    return '$summary $preposition $counterpart · '
+        '${relativeTime(timestamp, now: now)}';
   }
 
   Map<String, Object?> toJson() => {

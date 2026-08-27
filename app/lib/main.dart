@@ -40,6 +40,7 @@ import 'src/settings/app_settings_repository.dart';
 import 'src/settings/settings_screen.dart';
 import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
+import 'src/shared/format.dart';
 import 'src/shared/relay_connection.dart';
 import 'src/shared/wire.dart';
 import 'src/transfer/phone_transfer_sender.dart';
@@ -461,6 +462,8 @@ class _PairingScreenState extends State<PairingScreen>
       MaterialPageRoute(
         builder: (_) => RecentActivityScreen(
           activities: _activities,
+          deviceName:
+              _relayHealth?.relayName ?? _pairing?.name ?? 'Laptop (Linux)',
           activityChanges: widget.lastActivityRepository.changes,
           loadActivities: widget.lastActivityRepository.loadAll,
           onCopy: (activity) async {
@@ -492,7 +495,7 @@ class _PairingScreenState extends State<PairingScreen>
     final size = data['size'];
     final origin = data['origin'];
     final summary = (type is String && size is int)
-        ? '$type (${_formatBytes(size)})'
+        ? '$type (${formatBytes(size)})'
         : message;
     return _record(
       LastActivity(
@@ -506,6 +509,7 @@ class _PairingScreenState extends State<PairingScreen>
         previewPath: data['previewPath'] is String
             ? data['previewPath'] as String
             : null,
+        excerpt: data['excerpt'] is String ? data['excerpt'] as String : null,
       ),
     );
   }
@@ -558,26 +562,16 @@ class _PairingScreenState extends State<PairingScreen>
         timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
         payloadId: batch.transferId,
         outcome: failed ? ActivityOutcome.failed : ActivityOutcome.completed,
-        retryable: true,
+        retryable: failed,
         title: batch.files.length == 1 ? batch.files.single.filename : null,
         detail: batch.files.length == 1
-            ? '${_formatBytes(batch.files.single.size)}  •  ${batch.files.single.mime}'
+            ? '${formatBytes(batch.files.single.size)}  •  ${batch.files.single.mime}'
             : null,
-        previewPath:
-            batch.files.length == 1 &&
-                batch.files.single.mime.toLowerCase().startsWith('image/')
-            ? _sourcePreviewPath(batch.files.single)
+        previewPath: batch.files.length == 1
+            ? transferSourcePreviewPath(batch.files.single)
             : null,
       ),
     );
-  }
-
-  String? _sourcePreviewPath(PhoneTransferFile file) {
-    final source = file.sourceReference;
-    if (source?.kind == PhoneTransferSourceKind.externalPath) {
-      return source!.reference;
-    }
-    return file.sourcePath;
   }
 
   LastActivity? _decodeActivity(Map<Object?, Object?> data) {
@@ -593,13 +587,7 @@ class _PairingScreenState extends State<PairingScreen>
     final size = data['size'];
     final origin = data['origin'];
     if (type is! String || size is! int || origin is! String) return message;
-    return '$type (${_formatBytes(size)}) from $origin: $message';
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '$type (${formatBytes(size)}) from $origin: $message';
   }
 
   Future<void> _loadPairing() async {

@@ -80,6 +80,7 @@ void main() {
 
       expect(result.received, isTrue);
       expect(result.message, 'Text copied from laptop.');
+      expect(result.excerpt, 'hello phone');
       expect(clipboard.text, 'hello phone');
       expect(await ReceivedTextRepository(storage).loadLatest(), 'hello phone');
       expect(notifier.textReceipts.single, (
@@ -232,6 +233,7 @@ void main() {
 
       expect(result.received, isTrue);
       expect(result.message, 'Image copied from laptop.');
+      expect(result.excerpt, isNull);
       expect(notifier.imageReceipts.single, (mime: 'image/png', copied: true));
       final written = imageClipboard.images.single;
       expect(written.mime, 'image/png');

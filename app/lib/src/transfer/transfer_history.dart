@@ -456,6 +456,20 @@ class PhoneTransferFile {
   }
 }
 
+String? transferSourcePreviewPath(PhoneTransferFile file) {
+  if (!file.mime.toLowerCase().startsWith('image/')) return null;
+  final source = file.sourceReference;
+  if (source?.kind == PhoneTransferSourceKind.externalPath) {
+    return source!.reference;
+  }
+  return file.sourcePath;
+}
+
+String? transferDestinationPreviewPath(PhoneTransferFile file) {
+  if (!file.mime.toLowerCase().startsWith('image/')) return null;
+  return file.destinationPath;
+}
+
 PhoneTransferPreparationPhase? _preparationPhase(Object? value) {
   if (value is! String) return null;
   try {

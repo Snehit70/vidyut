@@ -20,6 +20,7 @@ import '../settings/app_settings_repository.dart';
 import '../share/share_publisher.dart';
 import '../shared/payload_crypto.dart';
 import '../shared/relay_connection.dart';
+import '../shared/format.dart';
 import '../transfer/phone_transfer_receiver.dart';
 import '../transfer/transfer_history.dart';
 import 'foreground_service_client.dart';
@@ -123,16 +124,23 @@ class VidyutForegroundTaskHandler extends TaskHandler {
                 )
                 ? ActivityOutcome.failed
                 : ActivityOutcome.completed,
-            retryable: batch.direction == PhoneTransferDirection.sent,
+            retryable:
+                batch.direction == PhoneTransferDirection.sent &&
+                batch.files.any(
+                  (file) => switch (file.status) {
+                    PhoneTransferStatus.failed ||
+                    PhoneTransferStatus.cancelled ||
+                    PhoneTransferStatus.expired => true,
+                    _ => false,
+                  },
+                ),
             title: batch.files.length == 1 ? batch.files.single.filename : null,
             detail: batch.files.length == 1
-                ? '${_formatTransferBytes(batch.files.single.size)}  •  '
+                ? '${formatBytes(batch.files.single.size)}  •  '
                       '${batch.files.single.mime}'
                 : null,
-            previewPath:
-                batch.files.length == 1 &&
-                    batch.files.single.mime.toLowerCase().startsWith('image/')
-                ? batch.files.single.destinationPath
+            previewPath: batch.files.length == 1
+                ? transferDestinationPreviewPath(batch.files.single)
                 : null,
           ),
         ),
@@ -241,12 +249,6 @@ class VidyutForegroundTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {}
-}
-
-String _formatTransferBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 /// Wraps the real clipboard so every received-text write is recorded for the
