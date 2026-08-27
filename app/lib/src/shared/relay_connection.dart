@@ -150,6 +150,7 @@ class RelayConnection implements RelaySession {
   final _events = StreamController<RelayEvent>.broadcast();
   final _acks = StreamController<int>.broadcast();
   final _health = StreamController<RelayHealth>.broadcast();
+  final _telemetry = StreamController<LaptopTelemetry>.broadcast();
   final _transferControls = StreamController<Map<String, Object?>>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
@@ -165,6 +166,7 @@ class RelayConnection implements RelaySession {
   /// `{kind: "ack", ts}`; the push pipeline clears its pending slot on these.
   Stream<int> get acks => _acks.stream;
   Stream<RelayHealth> get health => _health.stream;
+  Stream<LaptopTelemetry> get telemetry => _telemetry.stream;
   Stream<Map<String, Object?>> get transferControls => _transferControls.stream;
 
   /// The cap advertised by the relay hello, measured on the decoded
@@ -222,6 +224,7 @@ class RelayConnection implements RelaySession {
     await _guardedClose(_events.close());
     await _guardedClose(_acks.close());
     await _guardedClose(_health.close());
+    await _guardedClose(_telemetry.close());
     await _guardedClose(_transferControls.close());
   }
 
@@ -262,6 +265,9 @@ class RelayConnection implements RelaySession {
       case 'health':
         final health = RelayHealth.fromJson(message['health']);
         if (health != null) _health.add(health);
+      case 'telemetry':
+        final telemetry = LaptopTelemetry.fromJson(message);
+        if (telemetry != null) _telemetry.add(telemetry);
       case 'payload':
         _payloads.add(PayloadFrame.fromJson(message['frame']));
       case 'ack':

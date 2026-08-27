@@ -13,7 +13,7 @@ import type { RelayMessage } from "../../src/shared/wire";
  */
 export interface RawWebSocketClient {
   /** Next JSON text message from the relay (pings are handled separately). */
-  next(): Promise<RelayMessage>;
+  next(predicate?: (message: RelayMessage) => boolean): Promise<RelayMessage>;
   send(message: unknown): void;
   /** Sends a client-initiated WebSocket ping control frame. */
   ping(): void;
@@ -32,7 +32,7 @@ export async function connectRawWebSocket(url: string, options: RawWebSocketOpti
   const { hostname, port } = new URL(url.replace(/^ws:/, "http:"));
 
   const messages: RelayMessage[] = [];
-  const waiters: Array<(message: RelayMessage) => void> = [];
+  const waiters: Array<(message: RelayMessage) => boolean | void> = [];
   let closedFlag = false;
   let resolveClosed: () => void = () => {};
   const closed = new Promise<void>((resolve) => {
@@ -68,9 +68,17 @@ export async function connectRawWebSocket(url: string, options: RawWebSocketOpti
           }
           if (frame.opcode !== 0x1) continue;
           const message = JSON.parse(new TextDecoder().decode(frame.payload)) as RelayMessage;
-          const waiter = waiters.shift();
-          if (waiter) waiter(message);
-          else messages.push(message);
+          let handled = false;
+          for (let i = 0; i < waiters.length; i++) {
+            const waiter = waiters[i]!;
+            const consumed = waiter(message);
+            if (consumed !== false) {
+              waiters.splice(i, 1);
+              handled = true;
+              break;
+            }
+          }
+          if (!handled) messages.push(message);
         }
       },
       close() {
@@ -95,10 +103,26 @@ export async function connectRawWebSocket(url: string, options: RawWebSocketOpti
   );
 
   return {
-    next() {
-      const message = messages.shift();
-      if (message) return Promise.resolve(message);
-      return new Promise<RelayMessage>((resolve) => waiters.push(resolve));
+    next(predicate) {
+      if (!predicate) {
+        const message = messages.shift();
+        if (message) return Promise.resolve(message);
+        return new Promise<RelayMessage>((resolve) => waiters.push((msg) => resolve(msg)));
+      }
+      const index = messages.findIndex(predicate);
+      if (index !== -1) {
+        const [message] = messages.splice(index, 1);
+        return Promise.resolve(message!);
+      }
+      return new Promise<RelayMessage>((resolve) => {
+        waiters.push((msg) => {
+          if (predicate(msg)) {
+            resolve(msg);
+            return true;
+          }
+          return false;
+        });
+      });
     },
     send(message) {
       socket.write(encodeClientFrame(0x1, new TextEncoder().encode(JSON.stringify(message))));

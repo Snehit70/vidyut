@@ -28,6 +28,20 @@ export interface RelayHealth {
   };
 }
 
+export interface LaptopTelemetry {
+  v: 1;
+  kind: "telemetry";
+  ts: number;
+  batteryPercent: number | null;
+  batteryState: "charging" | "on_battery" | "plugged_in" | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  storageUsedBytes: number | null;
+  storageTotalBytes: number | null;
+  cpuUsagePercent: number | null;
+  cpuTemperatureCelsius: number | null;
+}
+
 export type TransferDirection = "laptop_to_phone" | "phone_to_laptop";
 
 export interface TransferTimingSummary {
@@ -104,6 +118,7 @@ export type RelayMessage =
   | { v: 1; kind: "auth"; deviceId: string; proof: string }
   | { v: 1; kind: "auth_ok"; health?: RelayHealth }
   | { v: 1; kind: "health"; health: RelayHealth }
+  | LaptopTelemetry
   | { v: 1; kind: "publish"; frame: PayloadFrame }
   | { v: 1; kind: "payload"; frame: PayloadFrame }
   | { v: 1; kind: "ack"; ts: number }

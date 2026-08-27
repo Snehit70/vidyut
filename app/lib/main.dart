@@ -41,6 +41,7 @@ import 'src/settings/settings_screen.dart';
 import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
 import 'src/shared/relay_connection.dart';
+import 'src/shared/wire.dart';
 import 'src/transfer/phone_transfer_sender.dart';
 import 'src/transfer/transfer_file_actions.dart';
 import 'src/transfer/transfer_files_screen.dart';
@@ -279,6 +280,7 @@ class _PairingScreenState extends State<PairingScreen>
   Timer? _relativeTimeTimer;
   SetupStatus? _setupStatus;
   RelayHealth? _relayHealth;
+  LaptopTelemetry? _laptopTelemetry;
   String? _connectionDetail;
   String? _discoveryError;
 
@@ -303,7 +305,7 @@ class _PairingScreenState extends State<PairingScreen>
       _activityLoadGeneration++;
       if (mounted) setState(() => _activities = activities);
     });
-    _relativeTimeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _relativeTimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) setState(() {});
     });
     final tapHandler = widget.receiveNotificationTapHandler;
@@ -358,6 +360,7 @@ class _PairingScreenState extends State<PairingScreen>
           _connectedNotifier.value = status == ConnectionStatus.connected;
           setState(() {
             _connectionStatus = status;
+            if (status == ConnectionStatus.offline) _laptopTelemetry = null;
             if (status == ConnectionStatus.connected) {
               _connectionDetail = null;
             }
@@ -376,6 +379,9 @@ class _PairingScreenState extends State<PairingScreen>
             );
           });
         }
+      case 'telemetry':
+        final telemetry = LaptopTelemetry.fromJson(data);
+        if (telemetry != null) setState(() => _laptopTelemetry = telemetry);
       case 'receive':
         final message = data['message'];
         if (message is String) {
@@ -852,6 +858,7 @@ class _PairingScreenState extends State<PairingScreen>
       return HomeScreen(
         connectionStatus: _connectionStatus,
         relayHealth: _relayHealth,
+        laptopTelemetry: _laptopTelemetry,
         lastActivity: _lastActivity,
         onOpenFiles: () => unawaited(_openFiles()),
         onOpenSettings: () => unawaited(_openSettings()),

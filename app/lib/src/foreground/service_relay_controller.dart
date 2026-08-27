@@ -151,6 +151,7 @@ class ServiceRelayController {
   StreamSubscription<ConnectionStatus>? _statusSubscription;
   StreamSubscription<RelayEvent>? _eventSubscription;
   StreamSubscription<RelayHealth>? _healthSubscription;
+  StreamSubscription<LaptopTelemetry>? _telemetrySubscription;
   StreamSubscription<ScreenshotEvent>? _screenshotEventsSubscription;
   StreamSubscription<String>? _screenshotDiagnosticsSubscription;
   StreamSubscription<void>? _screenOnSubscription;
@@ -499,6 +500,9 @@ class ServiceRelayController {
         );
       }
     });
+    _telemetrySubscription = connection.telemetry.listen((telemetry) {
+      emit({'kind': 'telemetry', ...telemetry.toJson()});
+    });
     _receiveController = PayloadReceiveController(
       frames: connection.payloads.where(_shouldHandleFrame),
       pairingSecret: pairing.secret,
@@ -806,6 +810,8 @@ class ServiceRelayController {
     _eventSubscription = null;
     await _healthSubscription?.cancel();
     _healthSubscription = null;
+    await _telemetrySubscription?.cancel();
+    _telemetrySubscription = null;
     await _receiveController?.dispose();
     _receiveController = null;
     await _transferReceiver?.dispose();
@@ -854,8 +860,7 @@ class ServiceRelayController {
     // Connection state only, zero-tap copy (#33 decision 3): no per-event
     // text updates.
     final text = switch (status) {
-      ConnectionStatus.connected =>
-        'Synced with laptop — clipboard and screenshots.',
+      ConnectionStatus.connected => 'Syncing clipboard & screenshots',
       ConnectionStatus.searching => 'Looking for the laptop relay...',
       ConnectionStatus.offline =>
         'Relay unreachable. Open the app to reconnect.',

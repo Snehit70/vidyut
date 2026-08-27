@@ -83,7 +83,7 @@ describe("relay transfer control", () => {
       confirmedOffset: 0,
     });
 
-    await expect(phone.next()).resolves.toEqual({
+    await expect(phone.next((m) => m.kind === "transfer_accept")).resolves.toEqual({
       v: 1,
       kind: "transfer_accept",
       transferId: offer.transferId,
@@ -116,7 +116,7 @@ describe("relay transfer control", () => {
       },
     });
 
-    await expect(phone.next()).resolves.toMatchObject({
+    await expect(phone.next((message) => message.kind === "error")).resolves.toMatchObject({
       kind: "error",
       code: "bad_message",
     });

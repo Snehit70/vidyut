@@ -4,6 +4,7 @@ import '../activity/last_activity.dart';
 import '../design/motion.dart';
 import '../design/palette.dart';
 import '../shared/relay_connection.dart';
+import '../shared/wire.dart';
 
 /// The paired operational surface: sync truth, one explicit file action, and
 /// the latest activity. Pairing and setup recovery stay outside this surface.
@@ -12,6 +13,7 @@ class HomeScreen extends StatelessWidget {
     super.key,
     required this.connectionStatus,
     this.relayHealth,
+    this.laptopTelemetry,
     this.lastActivity,
     required this.onOpenFiles,
     required this.onOpenSettings,
@@ -24,6 +26,7 @@ class HomeScreen extends StatelessWidget {
 
   final ConnectionStatus connectionStatus;
   final RelayHealth? relayHealth;
+  final LaptopTelemetry? laptopTelemetry;
   final LastActivity? lastActivity;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenSettings;
@@ -77,28 +80,34 @@ class HomeScreen extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final content = ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               children: [
                 _SyncStatusPanel(state: state, onTap: onOpenConnectionDetails),
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
                 FilledButton.icon(
                   onPressed: onSendFiles,
                   icon: const Icon(Icons.folder_outlined),
                   label: const Text('Send files'),
                 ),
-                const SizedBox(height: 28),
+                if (laptopTelemetry != null) ...[
+                  _LaptopTelemetrySection(
+                    telemetry: laptopTelemetry,
+                    connected: connectionStatus == ConnectionStatus.connected,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _LatestActivitySection(
                   activity: lastActivity,
                   onTap: onOpenRecentActivity,
                 ),
                 if (setupBannerLabel != null && onOpenSetup != null) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 10),
                   _HomeSetupBanner(
                     label: setupBannerLabel!,
                     onTap: onOpenSetup!,
                   ),
                 ],
-                if (constraints.maxWidth >= 600) const SizedBox(height: 16),
+                if (constraints.maxWidth >= 600) const SizedBox(height: 8),
               ],
             );
             final constrainedContent = Align(
@@ -141,6 +150,235 @@ class HomeScreen extends StatelessWidget {
     );
   }
 }
+
+class _LaptopTelemetrySection extends StatelessWidget {
+  const _LaptopTelemetrySection({
+    required this.telemetry,
+    required this.connected,
+  });
+
+  final LaptopTelemetry? telemetry;
+  final bool connected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isStale =
+        !connected ||
+        telemetry == null ||
+        (DateTime.now().millisecondsSinceEpoch - telemetry!.ts > 10000);
+
+    String resolveValue(String text, Object? metric) {
+      if (isStale || metric == null) return 'Unavailable';
+      return text;
+    }
+
+    String resolveDetail(String detail, Object? metric) {
+      if (!connected) {
+        return 'Laptop disconnected';
+      }
+      if (isStale || metric == null) return 'Unavailable';
+      return detail;
+    }
+
+    final batteryCard = _TelemetryCard(
+      label: 'Battery',
+      value: resolveValue(
+        _percent(telemetry?.batteryPercent),
+        telemetry?.batteryPercent,
+      ),
+      detail: resolveDetail(
+        _batteryState(telemetry?.batteryState),
+        telemetry?.batteryState,
+      ),
+      color: theme.colorScheme.primary,
+    );
+
+    final tempCard = _TelemetryCard(
+      label: 'CPU temperature',
+      value: resolveValue(
+        _temp(telemetry?.cpuTemperatureCelsius),
+        telemetry?.cpuTemperatureCelsius,
+      ),
+      detail: resolveDetail(
+        _temperatureState(telemetry?.cpuTemperatureCelsius),
+        telemetry?.cpuTemperatureCelsius,
+      ),
+      color: _temperatureColor(
+        theme,
+        isStale ? null : telemetry?.cpuTemperatureCelsius,
+      ),
+    );
+
+    final memoryCard = _TelemetryCard(
+      label: 'Memory',
+      value: resolveValue(
+        _bytes(telemetry?.memoryUsedBytes),
+        telemetry?.memoryUsedBytes,
+      ),
+      detail: resolveDetail(
+        _ratio(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
+        telemetry?.memoryUsedBytes,
+      ),
+      color: theme.colorScheme.primary,
+    );
+
+    final storageCard = _TelemetryCard(
+      label: 'Storage',
+      value: resolveValue(
+        _bytes(telemetry?.storageUsedBytes),
+        telemetry?.storageUsedBytes,
+      ),
+      detail: resolveDetail(
+        _ratio(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
+        telemetry?.storageUsedBytes,
+      ),
+      color: theme.colorScheme.secondary,
+    );
+
+    final cpuCard = _TelemetryCard(
+      label: 'CPU usage',
+      value: resolveValue(
+        telemetry?.cpuUsagePercent == null
+            ? 'Unavailable'
+            : '${telemetry!.cpuUsagePercent!.round()}%',
+        telemetry?.cpuUsagePercent,
+      ),
+      detail: resolveDetail(
+        _cpuState(telemetry?.cpuUsagePercent),
+        telemetry?.cpuUsagePercent,
+      ),
+      color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Laptop telemetry', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: batteryCard),
+            const SizedBox(width: 8),
+            Expanded(child: tempCard),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: memoryCard),
+            const SizedBox(width: 8),
+            Expanded(child: storageCard),
+          ],
+        ),
+        const SizedBox(height: 8),
+        cpuCard,
+      ],
+    );
+  }
+}
+
+class _TelemetryCard extends StatelessWidget {
+  const _TelemetryCard({
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final String detail;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: '$label: $value, $detail',
+      child: Card(
+        margin: EdgeInsets.zero,
+        color: theme.colorScheme.surfaceContainerLow,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                detail,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _percent(double? value) =>
+    value == null ? 'Unavailable' : '${value.round()}%';
+String _temp(double? value) =>
+    value == null ? 'Unavailable' : '${value.toStringAsFixed(1)}°C';
+String _batteryState(String? value) => switch (value) {
+  'charging' => 'Charging',
+  'plugged_in' => 'Plugged in',
+  'on_battery' => 'On battery',
+  _ => 'Unavailable',
+};
+String _bytes(int? used) => used == null
+    ? 'Unavailable'
+    : '${(used / 1073741824).toStringAsFixed(1)} GB';
+String _ratio(int? used, int? total) =>
+    used == null || total == null || total == 0
+    ? 'Unavailable'
+    : '${(used / total * 100).round()}% used';
+String _cpuState(double? value) => value == null
+    ? 'Unavailable'
+    : value < 50
+    ? 'Low'
+    : value <= 80
+    ? 'Moderate'
+    : 'High';
+String _temperatureState(double? value) => value == null
+    ? 'Unavailable'
+    : value >= 82
+    ? 'Critical'
+    : value >= 70
+    ? 'Warning'
+    : 'Normal';
+Color _cpuColor(ThemeData theme, double? value) => value == null
+    ? theme.colorScheme.onSurfaceVariant
+    : value > 80
+    ? theme.colorScheme.error
+    : value >= 50
+    ? theme.colorScheme.tertiary
+    : theme.colorScheme.primary;
+Color _temperatureColor(ThemeData theme, double? value) => value == null
+    ? theme.colorScheme.onSurfaceVariant
+    : value >= 82
+    ? theme.colorScheme.error
+    : value >= 70
+    ? theme.colorScheme.tertiary
+    : theme.colorScheme.primary;
 
 class _HomeAppBarAction extends StatelessWidget {
   const _HomeAppBarAction({
@@ -268,7 +506,7 @@ class _SyncStatusPanel extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -279,13 +517,13 @@ class _SyncStatusPanel extends StatelessWidget {
                       !disableAnimations &&
                       Motion.loopsEnabled,
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(state.label, style: textTheme.titleLarge),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         state.description,
                         style: textTheme.bodyMedium?.copyWith(
@@ -315,8 +553,8 @@ class _StatusGlyph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 64,
-      height: 64,
+      width: 52,
+      height: 52,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: state.containerColor,
@@ -325,13 +563,13 @@ class _StatusGlyph extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            Icon(state.icon, size: 30, color: state.color),
+            Icon(state.icon, size: 26, color: state.color),
             if (animate &&
                 Motion.loopsEnabled &&
                 !MediaQuery.disableAnimationsOf(context))
               Positioned(
-                right: 8,
-                top: 8,
+                right: 6,
+                top: 6,
                 child: _SearchDot(color: state.color),
               ),
           ],
