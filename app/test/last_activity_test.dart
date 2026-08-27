@@ -12,6 +12,11 @@ void main() {
         counterpart: 'laptop',
         timestamp: DateTime.fromMillisecondsSinceEpoch(1720000000000),
         outcome: ActivityOutcome.failed,
+        retryable: true,
+        title: 'Screenshot',
+        detail: '320.1 KB  •  PNG  •  1080 × 2400',
+        excerpt: 'A useful note',
+        previewPath: '/tmp/preview.png',
       );
 
       final decoded = LastActivity.decode(activity.encode())!;
@@ -21,6 +26,11 @@ void main() {
       expect(decoded.counterpart, 'laptop');
       expect(decoded.timestamp, activity.timestamp);
       expect(decoded.outcome, ActivityOutcome.failed);
+      expect(decoded.retryable, isTrue);
+      expect(decoded.title, 'Screenshot');
+      expect(decoded.detail, '320.1 KB  •  PNG  •  1080 × 2400');
+      expect(decoded.excerpt, 'A useful note');
+      expect(decoded.previewPath, '/tmp/preview.png');
     });
 
     test('decode returns null for empty or malformed input', () {

@@ -123,6 +123,17 @@ class VidyutForegroundTaskHandler extends TaskHandler {
                 )
                 ? ActivityOutcome.failed
                 : ActivityOutcome.completed,
+            retryable: batch.direction == PhoneTransferDirection.sent,
+            title: batch.files.length == 1 ? batch.files.single.filename : null,
+            detail: batch.files.length == 1
+                ? '${_formatTransferBytes(batch.files.single.size)}  •  '
+                      '${batch.files.single.mime}'
+                : null,
+            previewPath:
+                batch.files.length == 1 &&
+                    batch.files.single.mime.toLowerCase().startsWith('image/')
+                ? batch.files.single.destinationPath
+                : null,
           ),
         ),
         receiveEnabled: () async =>
@@ -230,6 +241,12 @@ class VidyutForegroundTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {}
+}
+
+String _formatTransferBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 /// Wraps the real clipboard so every received-text write is recorded for the

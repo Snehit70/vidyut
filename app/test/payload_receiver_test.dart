@@ -236,6 +236,7 @@ void main() {
       final written = imageClipboard.images.single;
       expect(written.mime, 'image/png');
       expect(await File(written.path).readAsBytes(), [1, 2, 3, 4]);
+      expect(result.imagePath, written.path);
       final stored = await imageRepository(storage).loadLatest();
       expect(stored?.path, written.path);
     },

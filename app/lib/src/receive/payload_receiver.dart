@@ -222,14 +222,16 @@ class LocalPayloadNotifier implements PayloadNotifier {
 }
 
 class PayloadReceiveResult {
-  const PayloadReceiveResult._(this.received, this.message);
+  const PayloadReceiveResult._(this.received, this.message, {this.imagePath});
 
-  const PayloadReceiveResult.received(String message) : this._(true, message);
+  const PayloadReceiveResult.received(String message, {String? imagePath})
+    : this._(true, message, imagePath: imagePath);
 
   const PayloadReceiveResult.failed(String message) : this._(false, message);
 
   final bool received;
   final String message;
+  final String? imagePath;
 }
 
 typedef PayloadReceiverLog = void Function(String message, {bool isError});
@@ -304,7 +306,10 @@ class PayloadReceiver {
             copied: outcome == ClipboardWriteOutcome.confirmed,
           );
           await _maybeShowMiuiHint(outcome);
-          return PayloadReceiveResult.received(_message('Image', outcome));
+          return PayloadReceiveResult.received(
+            _message('Image', outcome),
+            imagePath: image.path,
+          );
       }
     } on Object catch (error) {
       return PayloadReceiveResult.failed('Receive failed: $error');

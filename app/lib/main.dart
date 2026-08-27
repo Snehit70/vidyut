@@ -467,6 +467,20 @@ class _PairingScreenState extends State<PairingScreen>
             if (activity.direction != ActivityDirection.received) return;
             await widget.receiveNotificationTapHandler?.copyActivity(activity);
           },
+          onRetry: (activity) async {
+            if (activity.direction != ActivityDirection.sent ||
+                activity.payloadId == null) {
+              return;
+            }
+            final batch = (await _transferHistory.load())
+                .where((item) => item.transferId == activity.payloadId)
+                .firstOrNull;
+            if (batch == null) return;
+            await _runTransferFileAction(
+              'Retry transfer',
+              () => _transferSender.retry(batch),
+            );
+          },
         ),
       ),
     );
@@ -488,6 +502,9 @@ class _PairingScreenState extends State<PairingScreen>
         timestamp: DateTime.now(),
         payloadId: data['payloadId'] is String
             ? data['payloadId'] as String
+            : null,
+        previewPath: data['previewPath'] is String
+            ? data['previewPath'] as String
             : null,
       ),
     );
@@ -541,8 +558,26 @@ class _PairingScreenState extends State<PairingScreen>
         timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
         payloadId: batch.transferId,
         outcome: failed ? ActivityOutcome.failed : ActivityOutcome.completed,
+        retryable: true,
+        title: batch.files.length == 1 ? batch.files.single.filename : null,
+        detail: batch.files.length == 1
+            ? '${_formatBytes(batch.files.single.size)}  •  ${batch.files.single.mime}'
+            : null,
+        previewPath:
+            batch.files.length == 1 &&
+                batch.files.single.mime.toLowerCase().startsWith('image/')
+            ? _sourcePreviewPath(batch.files.single)
+            : null,
       ),
     );
+  }
+
+  String? _sourcePreviewPath(PhoneTransferFile file) {
+    final source = file.sourceReference;
+    if (source?.kind == PhoneTransferSourceKind.externalPath) {
+      return source!.reference;
+    }
+    return file.sourcePath;
   }
 
   LastActivity? _decodeActivity(Map<Object?, Object?> data) {

@@ -537,6 +537,7 @@ class ServiceRelayController {
         outcome: result.received
             ? ActivityOutcome.completed
             : ActivityOutcome.failed,
+        previewPath: result.imagePath,
       ),
     );
     emit({
@@ -548,6 +549,7 @@ class ServiceRelayController {
       'origin': frame.origin,
       'payloadId': frame.nonce,
       'activityHandled': true,
+      if (result.imagePath != null) 'previewPath': result.imagePath,
     });
   }
 

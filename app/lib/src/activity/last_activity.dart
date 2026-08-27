@@ -6,9 +6,7 @@ enum ActivityDirection { sent, received }
 /// Whether the user-visible operation completed or needs attention.
 enum ActivityOutcome { completed, failed }
 
-/// The single most recent sync event, persisted so the home dashboard can
-/// answer "when did this last work?" after an app restart (ADR 0004). Only
-/// the newest event is kept — latest-write-wins, like the pool itself.
+/// A sync event persisted for the home dashboard and recent-activity timeline.
 class LastActivity {
   const LastActivity({
     required this.direction,
@@ -17,6 +15,11 @@ class LastActivity {
     required this.timestamp,
     this.payloadId,
     this.outcome = ActivityOutcome.completed,
+    this.retryable = false,
+    this.title,
+    this.detail,
+    this.excerpt,
+    this.previewPath,
   });
 
   /// Whether the phone sent this payload or received it.
@@ -33,6 +36,16 @@ class LastActivity {
   final String? payloadId;
 
   final ActivityOutcome outcome;
+
+  /// Whether the event has a supported retry action.
+  final bool retryable;
+
+  /// Optional factual display data for the activity timeline. These fields
+  /// are deliberately separate from [summary] so older events remain valid.
+  final String? title;
+  final String? detail;
+  final String? excerpt;
+  final String? previewPath;
 
   /// One line for the dashboard row, e.g. "text (14 chars) to laptop · 2m ago".
   String describe({DateTime? now}) {
@@ -55,6 +68,11 @@ class LastActivity {
     'ts': timestamp.millisecondsSinceEpoch,
     'outcome': outcome.name,
     if (payloadId != null) 'payloadId': payloadId,
+    if (retryable) 'retryable': true,
+    if (title != null) 'title': title,
+    if (detail != null) 'detail': detail,
+    if (excerpt != null) 'excerpt': excerpt,
+    if (previewPath != null) 'previewPath': previewPath,
   };
 
   static LastActivity? fromJson(Map<String, Object?> json) {
@@ -82,6 +100,13 @@ class LastActivity {
       timestamp: DateTime.fromMillisecondsSinceEpoch(ts),
       payloadId: payloadId is String ? payloadId : null,
       outcome: outcome ?? ActivityOutcome.completed,
+      retryable: json['retryable'] == true,
+      title: json['title'] is String ? json['title'] as String : null,
+      detail: json['detail'] is String ? json['detail'] as String : null,
+      excerpt: json['excerpt'] is String ? json['excerpt'] as String : null,
+      previewPath: json['previewPath'] is String
+          ? json['previewPath'] as String
+          : null,
     );
   }
 

@@ -150,6 +150,18 @@ issues. Activity events include meaningful failures when they explain why a
 share did not complete, but do not represent every progress update.
 _Avoid_: log line, progress tick, notification
 
+**Activity presentation data**:
+Optional factual details attached to an Activity event for quick recognition,
+such as a filename, media type, dimensions, text excerpt, or preview image.
+Missing presentation data is rendered conservatively rather than inferred.
+_Avoid_: fabricated metadata, full transfer record
+
+**Activity timeline rail**:
+The compact visual sequence connecting Activity events in chronological order.
+It communicates recency and outcome without replacing the event cards or
+their actions.
+_Avoid_: progress bar, transfer queue
+
 **Completed with issues**:
 A terminal batch outcome in which at least one file completed and at least one
 file did not. The completed files remain available, while unsuccessful files
