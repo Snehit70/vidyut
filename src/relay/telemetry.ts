@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { readdir } from "node:fs/promises";
 import { statfs } from "node:fs/promises";
-import { cpus, freemem, totalmem } from "node:os";
+import { cpus, totalmem } from "node:os";
 import type { LaptopTelemetry } from "../shared/wire";
 
 type CpuSample = { idle: number; total: number };
@@ -13,6 +13,7 @@ export async function sampleLaptopTelemetry(now = Date.now()): Promise<LaptopTel
     readStorage(),
     readWaybarTemperature(),
   ]);
+  const memory = await readMemory();
   const currentCpu = cpuCounters();
   const totalDelta = previousCpu && currentCpu
     ? currentCpu.total - previousCpu.total
@@ -27,13 +28,34 @@ export async function sampleLaptopTelemetry(now = Date.now()): Promise<LaptopTel
     ts: now,
     batteryPercent: battery?.percent ?? null,
     batteryState: battery?.state ?? null,
-    memoryUsedBytes: totalmem() - freemem(),
-    memoryTotalBytes: totalmem(),
+    memoryUsedBytes: memory?.used ?? null,
+    memoryTotalBytes: memory?.total ?? totalmem(),
     storageUsedBytes: storage?.used ?? null,
     storageTotalBytes: storage?.total ?? null,
     cpuUsagePercent,
     cpuTemperatureCelsius: temperature,
   };
+}
+
+async function readMemory(): Promise<{ used: number; total: number } | undefined> {
+  try {
+    const values = new Map(
+      (await readFile("/proc/meminfo", "utf8"))
+        .split("\n")
+        .map((line) => {
+          const match = /^(MemTotal|MemAvailable):\s+(\d+)\s+kB$/.exec(line);
+          return match ? [match[1], Number(match[2]) * 1024] : [];
+        })
+        .filter((entry): entry is [string, number] => entry.length === 2),
+    );
+    const total = values.get("MemTotal");
+    const available = values.get("MemAvailable");
+    return total !== undefined && available !== undefined
+      ? { used: Math.max(0, total - available), total }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readBattery(): Promise<{ percent: number; state: LaptopTelemetry["batteryState"] } | undefined> {
