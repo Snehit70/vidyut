@@ -182,6 +182,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     }
 
     final batteryCard = _TelemetryCard(
+      icon: Icons.battery_full_outlined,
       label: 'Battery',
       value: resolveValue(
         _percent(telemetry?.batteryPercent),
@@ -195,6 +196,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final tempCard = _TelemetryCard(
+      icon: Icons.thermostat_outlined,
       label: 'CPU temperature',
       value: resolveValue(
         _temp(telemetry?.cpuTemperatureCelsius),
@@ -211,6 +213,13 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final memoryCard = _TelemetryCard(
+      icon: Icons.memory_outlined,
+      progress: isStale
+          ? null
+          : _ratioValue(
+              telemetry?.memoryUsedBytes,
+              telemetry?.memoryTotalBytes,
+            ),
       label: 'Memory',
       value: resolveValue(
         _bytes(telemetry?.memoryUsedBytes),
@@ -224,6 +233,13 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final storageCard = _TelemetryCard(
+      icon: Icons.storage_outlined,
+      progress: isStale
+          ? null
+          : _ratioValue(
+              telemetry?.storageUsedBytes,
+              telemetry?.storageTotalBytes,
+            ),
       label: 'Storage',
       value: resolveValue(
         _bytes(telemetry?.storageUsedBytes),
@@ -233,10 +249,13 @@ class _LaptopTelemetrySection extends StatelessWidget {
         _ratio(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
         telemetry?.storageUsedBytes,
       ),
-      color: theme.colorScheme.secondary,
+      // Storage is a primary metric; use the readable brand role instead of
+      // the pale secondary/petal role, which is reserved for containers.
+      color: theme.colorScheme.primary,
     );
 
     final cpuCard = _TelemetryCard(
+      icon: Icons.developer_board_outlined,
       label: 'CPU usage',
       value: resolveValue(
         telemetry?.cpuUsagePercent == null
@@ -254,25 +273,85 @@ class _LaptopTelemetrySection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Laptop telemetry', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: batteryCard),
-            const SizedBox(width: 8),
-            Expanded(child: tempCard),
-          ],
+        Card(
+          color: theme.colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+            child: Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Laptop telemetry',
+                    style: theme.textTheme.titleLarge,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: 104,
+                  height: 104,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.laptop_mac_outlined,
+                    size: 56,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Laptop is running smoothly',
+                  style: theme.textTheme.titleLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.check_circle,
+                      size: 16,
+                      color:
+                          theme.extension<VidyutStatusColors>()?.success ??
+                          Colors.green,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Everything looks good.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(child: cpuCard),
+                    const SizedBox(width: 8),
+                    Expanded(child: tempCard),
+                    const SizedBox(width: 8),
+                    Expanded(child: batteryCard),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(child: memoryCard),
+                    const SizedBox(width: 8),
+                    Expanded(child: storageCard),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: memoryCard),
-            const SizedBox(width: 8),
-            Expanded(child: storageCard),
-          ],
-        ),
-        const SizedBox(height: 8),
-        cpuCard,
       ],
     );
   }
@@ -280,6 +359,8 @@ class _LaptopTelemetrySection extends StatelessWidget {
 
 class _TelemetryCard extends StatelessWidget {
   const _TelemetryCard({
+    required this.icon,
+    this.progress,
     required this.label,
     required this.value,
     required this.detail,
@@ -287,6 +368,8 @@ class _TelemetryCard extends StatelessWidget {
   });
 
   final String label;
+  final IconData icon;
+  final double? progress;
   final String value;
   final String detail;
   final Color color;
@@ -298,12 +381,18 @@ class _TelemetryCard extends StatelessWidget {
       label: '$label: $value, $detail',
       child: Card(
         margin: EdgeInsets.zero,
-        color: theme.colorScheme.surfaceContainerLow,
+        color: theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Icon(icon, size: 24, color: color),
+              const SizedBox(height: 8),
               Text(
                 label,
                 style: theme.textTheme.labelSmall?.copyWith(
@@ -326,6 +415,18 @@ class _TelemetryCard extends StatelessWidget {
                   fontSize: 11,
                 ),
               ),
+              if (progress != null) ...[
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    minHeight: 6,
+                    value: progress,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    color: color,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -351,6 +452,10 @@ String _ratio(int? used, int? total) =>
     used == null || total == null || total == 0
     ? 'Unavailable'
     : '${(used / total * 100).round()}% used';
+double? _ratioValue(int? used, int? total) =>
+    used == null || total == null || total == 0
+    ? null
+    : (used / total).clamp(0, 1);
 String _cpuState(double? value) => value == null
     ? 'Unavailable'
     : value < 50
