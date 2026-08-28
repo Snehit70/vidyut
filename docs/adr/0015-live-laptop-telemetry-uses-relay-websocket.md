@@ -10,11 +10,15 @@ values every five seconds. Android treats a value as live for ten seconds;
 after that, the Home telemetry surface presents it as unavailable and explains
 that the laptop is disconnected or the metric is unavailable.
 
-CPU temperature follows the laptop's existing Waybar source where available:
-the `coretemp` hardware monitor's `temp1_input` value. Warning and critical
-thresholds mirror Waybar at 70°C and 82°C. Other virtual or unrelated sensors
-are not used for the primary CPU temperature card; if this source is missing,
-the temperature card is explicitly unavailable with no sensor fallback.
+CPU temperature is read from Linux's hardware-monitor interface, preferring
+`k10temp`, `coretemp`, `zenpower`, and `acpitz` in that order, using each
+sensor's `temp1_input` value. The hwmon number is not stable, so sensors are
+identified by their `name`. A legacy `coretemp.0` path is retained for older
+systems. If no usable hwmon value exists, the Relay may use a thermal zone whose
+`type` identifies a CPU package/thermal sensor; unrelated zones such as `acpitz`
+are not treated as CPU temperature. Warning and critical thresholds mirror
+Waybar at 70°C and 82°C. If no CPU sensor is available, the temperature card is
+explicitly unavailable.
 
 Home presents five telemetry metrics beneath the single `Send files` action:
 battery and CPU temperature on the first row, memory and storage on the second

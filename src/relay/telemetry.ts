@@ -11,7 +11,7 @@ export async function sampleLaptopTelemetry(now = Date.now()): Promise<LaptopTel
   const [battery, storage, temperature] = await Promise.all([
     readBattery(),
     readStorage(),
-    readWaybarTemperature(),
+    readCpuTemperature(),
   ]);
   const memory = await readMemory();
   const currentCpu = cpuCounters();
@@ -85,15 +85,87 @@ async function readStorage(): Promise<{ used: number; total: number } | undefine
   } catch { return undefined; }
 }
 
-async function readWaybarTemperature(): Promise<number | null> {
+export async function readCpuTemperature(sysfsRoot = "/sys"): Promise<number | null> {
+  const preferredSensors = ["k10temp", "coretemp", "zenpower", "acpitz"];
+
+  // /sys/class/hwmon is the stable kernel interface across CPU vendors. The
+  // hwmon number is not stable, so identify sensors by their name instead.
   try {
-    const roots = await readdir("/sys/devices/platform/coretemp.0/hwmon");
+    const entries = await readdir(`${sysfsRoot}/class/hwmon`);
+    const sensors = await Promise.all(entries.map(async (entry) => {
+      try {
+        const name = (await readFile(`${sysfsRoot}/class/hwmon/${entry}/name`, "utf8")).trim();
+        return { entry, name };
+      } catch {
+        return undefined;
+      }
+    }));
+
+    for (const name of preferredSensors) {
+      for (const sensor of sensors) {
+        if (sensor?.name !== name) continue;
+        try {
+          const value = parseTemperature(await readFile(
+            `${sysfsRoot}/class/hwmon/${sensor.entry}/temp1_input`,
+            "utf8",
+          ));
+          if (value !== null) return value;
+        } catch {
+          // Try the next matching sensor or fallback.
+        }
+      }
+    }
+  } catch {
+    // Try legacy and thermal-zone paths below.
+  }
+
+  // Preserve compatibility with systems exposing the old Waybar path.
+  try {
+    const roots = await readdir(`${sysfsRoot}/devices/platform/coretemp.0/hwmon`);
     const hwmon = roots.find((entry) => entry.startsWith("hwmon"));
-    if (!hwmon) return null;
-    const raw = await readFile(`/sys/devices/platform/coretemp.0/hwmon/${hwmon}/temp1_input`, "utf8");
-    const value = Number(raw.trim()) / 1000;
-    return Number.isFinite(value) ? value : null;
-  } catch { return null; }
+    if (hwmon) {
+      const value = parseTemperature(await readFile(
+        `${sysfsRoot}/devices/platform/coretemp.0/hwmon/${hwmon}/temp1_input`,
+        "utf8",
+      ));
+      if (value !== null) return value;
+    }
+  } catch {
+    // Try the generic thermal zone below.
+  }
+
+  try {
+    const entries = await readdir(`${sysfsRoot}/class/thermal`);
+    const cpuThermalTypes = new Set([
+      "x86_pkg_temp",
+      "cpu-thermal",
+      "cpu_thermal",
+      "k10temp",
+    ]);
+    for (const entry of entries.filter((value) => value.startsWith("thermal_zone"))) {
+      try {
+        const type = (await readFile(`${sysfsRoot}/class/thermal/${entry}/type`, "utf8")).trim();
+        if (!cpuThermalTypes.has(type)) continue;
+        const value = parseTemperature(await readFile(
+          `${sysfsRoot}/class/thermal/${entry}/temp`,
+          "utf8",
+        ));
+        if (value !== null) return value;
+      } catch {
+        // Try the next thermal zone.
+      }
+    }
+  } catch {
+    // No usable CPU thermal zone.
+  }
+  return null;
+}
+
+function parseTemperature(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const value = Number(trimmed) / 1000;
+  return Number.isFinite(value) && value >= -100 && value <= 200 ? value : null;
 }
 
 function cpuCounters(): CpuSample | undefined {
