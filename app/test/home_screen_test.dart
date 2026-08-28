@@ -277,10 +277,10 @@ void main() {
     expect(find.text('Charging'), findsOneWidget);
     expect(find.text('65.4°C'), findsOneWidget);
     expect(find.text('Normal'), findsOneWidget);
-    expect(find.text('4.0 GB'), findsOneWidget);
-    expect(find.text('25% used'), findsOneWidget);
-    expect(find.text('250.0 GB'), findsOneWidget);
-    expect(find.text('50% used'), findsOneWidget);
+    expect(find.text('4.0 GB / 16.0 GB'), findsOneWidget);
+    expect(find.text('25% used • 12.0 GB free'), findsOneWidget);
+    expect(find.text('250.0 GB / 500.0 GB'), findsOneWidget);
+    expect(find.text('50% used • 250.0 GB free'), findsOneWidget);
     expect(find.text('33%'), findsOneWidget);
     expect(find.text('Low'), findsOneWidget);
   });

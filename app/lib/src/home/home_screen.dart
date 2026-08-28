@@ -222,11 +222,17 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Memory',
       value: resolveValue(
-        _bytes(telemetry?.memoryUsedBytes),
+        _usageValue(
+          telemetry?.memoryUsedBytes,
+          telemetry?.memoryTotalBytes,
+        ),
         telemetry?.memoryUsedBytes,
       ),
       detail: resolveDetail(
-        _ratio(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
+        _usageDetail(
+          telemetry?.memoryUsedBytes,
+          telemetry?.memoryTotalBytes,
+        ),
         telemetry?.memoryUsedBytes,
       ),
       color: theme.colorScheme.primary,
@@ -242,11 +248,17 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Storage',
       value: resolveValue(
-        _bytes(telemetry?.storageUsedBytes),
+        _usageValue(
+          telemetry?.storageUsedBytes,
+          telemetry?.storageTotalBytes,
+        ),
         telemetry?.storageUsedBytes,
       ),
       detail: resolveDetail(
-        _ratio(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
+        _usageDetail(
+          telemetry?.storageUsedBytes,
+          telemetry?.storageTotalBytes,
+        ),
         telemetry?.storageUsedBytes,
       ),
       // Storage is a primary metric; use the readable brand role instead of
@@ -448,10 +460,18 @@ String _batteryState(String? value) => switch (value) {
 String _bytes(int? used) => used == null
     ? 'Unavailable'
     : '${(used / 1073741824).toStringAsFixed(1)} GB';
+String _usageValue(int? used, int? total) =>
+    used == null || total == null || total <= 0
+    ? 'Unavailable'
+    : '${_bytes(used)} / ${_bytes(total)}';
 String _ratio(int? used, int? total) =>
     used == null || total == null || total == 0
     ? 'Unavailable'
     : '${(used / total * 100).round()}% used';
+String _usageDetail(int? used, int? total) =>
+    used == null || total == null || total <= 0
+    ? 'Unavailable'
+    : '${_ratio(used, total)} • ${_bytes((total - used).clamp(0, total))} free';
 double? _ratioValue(int? used, int? total) =>
     used == null || total == null || total == 0
     ? null
