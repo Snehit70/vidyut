@@ -306,7 +306,7 @@ void main() {
     expect(File(activity.previewPath!).existsSync(), isTrue);
     expect(activity.detail, contains('PNG'));
     expect(activity.detail, contains(formatBytes(64)));
-    expect(activity.title, 'Screenshot_21.png');
+    expect(activity.title, 'Screenshot');
   });
 }
 

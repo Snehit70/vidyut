@@ -233,6 +233,8 @@ class _ActivityTimelineItem extends StatelessWidget {
                       children: [
                         Text(
                           title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         if (activity.excerpt != null) ...[

@@ -411,9 +411,5 @@ class ScreenshotPushController {
 
   int _nowMs() => _clock().millisecondsSinceEpoch;
 
-  String _screenshotTitle(String? displayName) {
-    final name = displayName?.trim();
-    if (name == null || name.isEmpty) return 'Screenshot';
-    return name;
-  }
+  String _screenshotTitle(String? displayName) => 'Screenshot';
 }
