@@ -133,7 +133,13 @@ class _VidyutAppState extends State<VidyutApp> {
 
   Future<void> _loadPairingName() async {
     final pairing = await widget.pairingRepository.load();
-    if (mounted) _pairingName = pairing?.name;
+    if (!mounted) return;
+    setState(() => _pairingName = pairing?.name);
+  }
+
+  void _onPairingNameChanged(String? name) {
+    if (!mounted) return;
+    setState(() => _pairingName = name);
   }
 
   Future<void> _loadThemeMode() async {
@@ -199,6 +205,7 @@ class _VidyutAppState extends State<VidyutApp> {
             debugLog: log,
             setupActions: widget.setupActions,
             onThemeModeChanged: _setThemeMode,
+            onPairingChanged: _onPairingNameChanged,
           ),
           settings: settings,
         );
@@ -229,6 +236,7 @@ class PairingScreen extends StatefulWidget {
     this.debugLog,
     this.setupActions,
     this.onThemeModeChanged,
+    this.onPairingChanged,
   });
 
   final AppSettingsRepository appSettingsRepository;
@@ -242,6 +250,7 @@ class PairingScreen extends StatefulWidget {
   final DebugLog? debugLog;
   final SetupActions? setupActions;
   final ValueChanged<AppThemeMode>? onThemeModeChanged;
+  final ValueChanged<String?>? onPairingChanged;
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -691,6 +700,7 @@ class _PairingScreenState extends State<PairingScreen>
           ),
           savePairing: (pairing) async {
             await widget.pairingRepository.save(pairing);
+            widget.onPairingChanged?.call(pairing.name);
             if (mounted) {
               setState(() {
                 _pairing = pairing;
@@ -752,6 +762,7 @@ class _PairingScreenState extends State<PairingScreen>
         secret: _secretController.text,
       );
       await widget.pairingRepository.save(pairing);
+      widget.onPairingChanged?.call(pairing.name);
       if (!mounted) return;
       setState(() {
         _pairing = pairing;
@@ -772,6 +783,7 @@ class _PairingScreenState extends State<PairingScreen>
     try {
       final pairing = PairingCode.parse(rawCode);
       await widget.pairingRepository.save(pairing);
+      widget.onPairingChanged?.call(pairing.name);
       if (!mounted) return;
       setState(() {
         _pairing = pairing;
@@ -790,6 +802,7 @@ class _PairingScreenState extends State<PairingScreen>
   /// Triggered from Settings behind a confirmation, never from home.
   Future<void> _forgetPairing() async {
     await widget.pairingRepository.reset();
+    widget.onPairingChanged?.call(null);
     if (!mounted) return;
     setState(() {
       _connectionStatus = ConnectionStatus.offline;

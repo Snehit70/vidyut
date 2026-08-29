@@ -61,7 +61,10 @@ class ImageProbe {
       final type = String.fromCharCodes(bytes.sublist(offset + 4, typeEnd));
       final dataStart = typeEnd;
       if (type == 'IHDR') {
-        if (length < 8 || dataStart + 8 > bytes.length) {
+        if (length != 13) {
+          return const ImageProbe();
+        }
+        if (dataStart + length + 4 > bytes.length) {
           return const ImageProbe();
         }
         final width = _be32(bytes, dataStart);
@@ -70,6 +73,9 @@ class ImageProbe {
           return const ImageProbe();
         }
         return ImageProbe(width: width, height: height);
+      }
+      if (dataStart + length + 4 > bytes.length) {
+        return const ImageProbe();
       }
       final next = dataStart + length + 4;
       if (next <= offset) return const ImageProbe();
@@ -98,8 +104,11 @@ class ImageProbe {
       if (offset + 1 >= bytes.length) return const ImageProbe();
       final segmentLength = _be16(bytes, offset);
       if (segmentLength == null || segmentLength < 2) return const ImageProbe();
+      if (offset + segmentLength > bytes.length) return const ImageProbe();
       final dataStart = offset + 2;
       if (marker == 0xC0 || marker == 0xC2) {
+        if (segmentLength < 8) return const ImageProbe();
+        if (dataStart + 5 > offset + segmentLength) return const ImageProbe();
         if (dataStart + 5 > bytes.length) return const ImageProbe();
         final height = _be16(bytes, dataStart + 1);
         final width = _be16(bytes, dataStart + 3);
