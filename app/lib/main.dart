@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:cryptography/cryptography.dart' show Cryptography;
@@ -41,6 +42,7 @@ import 'src/settings/settings_screen.dart';
 import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
 import 'src/shared/format.dart';
+import 'src/shared/image_probe.dart';
 import 'src/shared/relay_connection.dart';
 import 'src/shared/wire.dart';
 import 'src/transfer/phone_transfer_sender.dart';
@@ -120,11 +122,18 @@ class VidyutApp extends StatefulWidget {
 class _VidyutAppState extends State<VidyutApp> {
   AppThemeMode _themeMode = AppThemeMode.system;
   var _themeModeRevision = 0;
+  String? _pairingName;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadThemeMode());
+    unawaited(_loadPairingName());
+  }
+
+  Future<void> _loadPairingName() async {
+    final pairing = await widget.pairingRepository.load();
+    if (mounted) _pairingName = pairing?.name;
   }
 
   Future<void> _loadThemeMode() async {
@@ -171,6 +180,7 @@ class _VidyutAppState extends State<VidyutApp> {
                 ),
               ),
               lastActivityRepository: widget.lastActivityRepository,
+              counterpart: _pairingName,
               debugLog: log,
             ),
             settings: settings,
@@ -457,6 +467,16 @@ class _PairingScreenState extends State<PairingScreen>
 
   LastActivity? get _lastActivity => _activities.firstOrNull;
 
+  String get _knownCounterpart =>
+      activityCounterpart(_relayHealth?.relayName ?? _pairing?.name);
+
+  String _counterpartForOrigin(Object? origin) {
+    if (origin is String && origin.isNotEmpty && origin != 'laptop') {
+      return origin;
+    }
+    return _knownCounterpart;
+  }
+
   Future<void> _openRecentActivity() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -497,11 +517,15 @@ class _PairingScreenState extends State<PairingScreen>
     final summary = (type is String && size is int)
         ? '$type (${formatBytes(size)})'
         : message;
+    final byteSize = data['byteSize'];
+    final mime = data['mime'];
+    final width = data['width'];
+    final height = data['height'];
     return _record(
       LastActivity(
         direction: ActivityDirection.received,
         summary: summary,
-        counterpart: origin is String ? origin : 'laptop',
+        counterpart: _counterpartForOrigin(origin),
         timestamp: DateTime.now(),
         payloadId: data['payloadId'] is String
             ? data['payloadId'] as String
@@ -510,6 +534,14 @@ class _PairingScreenState extends State<PairingScreen>
             ? data['previewPath'] as String
             : null,
         excerpt: data['excerpt'] is String ? data['excerpt'] as String : null,
+        detail: byteSize is int
+            ? formatMediaDetail(
+                bytes: byteSize,
+                mime: mime is String ? mime : null,
+                width: width is int ? width : null,
+                height: height is int ? height : null,
+              )
+            : null,
       ),
     );
   }
@@ -523,13 +555,31 @@ class _PairingScreenState extends State<PairingScreen>
       SharePayloadType.image => 'image',
       SharePayloadType.file => 'file',
     };
+    String? previewPath;
+    String? detail;
+    if (payload.type == SharePayloadType.image) {
+      final path = payload.path;
+      if (path != null && File(path).existsSync()) {
+        previewPath = path;
+        final probe = ImageProbe.fromFile(path);
+        detail = formatMediaDetail(
+          bytes: File(path).lengthSync(),
+          mime: payload.mime.isEmpty ? null : payload.mime,
+          width: probe.width,
+          height: probe.height,
+        );
+      }
+    }
     return _record(
       LastActivity(
         direction: ActivityDirection.sent,
         summary: summary,
-        counterpart: 'laptop',
+        counterpart: _knownCounterpart,
         timestamp: DateTime.now(),
         outcome: outcome,
+        excerpt: payload.type == SharePayloadType.text ? payload.text : null,
+        previewPath: previewPath,
+        detail: detail,
       ),
     );
   }
@@ -558,7 +608,7 @@ class _PairingScreenState extends State<PairingScreen>
       LastActivity(
         direction: ActivityDirection.sent,
         summary: '${batch.files.length} $noun${failed ? ' (with issues)' : ''}',
-        counterpart: 'laptop',
+        counterpart: _knownCounterpart,
         timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
         payloadId: batch.transferId,
         outcome: failed ? ActivityOutcome.failed : ActivityOutcome.completed,

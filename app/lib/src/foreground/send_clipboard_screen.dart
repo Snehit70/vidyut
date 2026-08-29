@@ -9,6 +9,7 @@ import '../debug/debug_log.dart';
 import '../design/widgets.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
+import '../shared/format.dart';
 
 abstract interface class ClipboardReader {
   Future<String?> readText();
@@ -45,6 +46,7 @@ class SendClipboardScreen extends StatefulWidget {
     required this.publisher,
     this.debugLog,
     this.lastActivityRepository,
+    this.counterpart,
     this.readRetryAttempts = 10,
     this.readRetryDelay = const Duration(milliseconds: 250),
   });
@@ -53,6 +55,7 @@ class SendClipboardScreen extends StatefulWidget {
   final ClipboardSharePublisher publisher;
   final DebugLog? debugLog;
   final LastActivityRepository? lastActivityRepository;
+  final String? counterpart;
   final int readRetryAttempts;
   final Duration readRetryDelay;
 
@@ -178,8 +181,9 @@ class _SendClipboardScreenState extends State<SendClipboardScreen> {
         LastActivity(
           direction: ActivityDirection.sent,
           summary: 'text (${text.length} chars)',
-          counterpart: 'laptop',
+          counterpart: activityCounterpart(widget.counterpart),
           timestamp: DateTime.now(),
+          excerpt: text,
         ),
       );
     }

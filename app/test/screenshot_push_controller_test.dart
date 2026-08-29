@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:screenshot_observer/screenshot_observer.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/push/screenshot_push_controller.dart';
+import 'package:vidyut/src/shared/format.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
 
@@ -276,6 +278,36 @@ void main() {
     expect(harness.published, isEmpty);
     expect(harness.logs, contains(contains('no pairing attached yet')));
   });
+
+  test('persists a filesystem preview and media detail on ack', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'vidyut_screenshot_preview',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+
+    final harness = _Harness(
+      persistPreview: ({required id, required bytes, required mime}) async {
+        final file = File('${directory.path}/preview_$id.png');
+        await file.writeAsBytes(bytes);
+        return file.path;
+      },
+    );
+    await harness.connect();
+
+    harness.controller.handleEvent(_event(id: 21, detectedAt: 4000));
+    await _waitUntil(() => harness.published.length == 1);
+    harness.transport.receive({'v': 1, 'kind': 'ack', 'ts': 4000});
+    await _waitUntil(() => harness.activities.isNotEmpty);
+
+    final activity = harness.activities.single;
+    expect(activity.previewPath, '${directory.path}/preview_21.png');
+    expect(File(activity.previewPath!).existsSync(), isTrue);
+    expect(activity.detail, contains('PNG'));
+    expect(activity.detail, contains(formatBytes(64)));
+    expect(activity.title, 'Screenshot_21.png');
+  });
 }
 
 Future<void> _drain() => pumpEventQueue(times: 200);
@@ -313,7 +345,10 @@ ScreenshotEvent _event({
 }
 
 class _Harness {
-  _Harness({ScreenshotImageReader? readImage}) {
+  _Harness({
+    ScreenshotImageReader? readImage,
+    ScreenshotPreviewPersister? persistPreview,
+  }) {
     controller = ScreenshotPushController(
       readImage: readImage ?? (id) async => _bytes(),
       crypto: PayloadCrypto(),
@@ -321,6 +356,7 @@ class _Harness {
         if (message['kind'] == 'log') logs.add(message['message'] as String);
       },
       onActivity: activities.add,
+      persistPreview: persistPreview,
       // Fast retries keep the read_failed test quick.
       readRetryDelay: const Duration(milliseconds: 5),
     );

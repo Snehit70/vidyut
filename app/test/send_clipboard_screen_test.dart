@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vidyut/src/activity/last_activity.dart';
+import 'package:vidyut/src/activity/last_activity_repository.dart';
 import 'package:vidyut/src/foreground/send_clipboard_screen.dart';
 import 'package:vidyut/src/share/share_payload.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
@@ -78,6 +80,27 @@ void main() {
     await tester.pump();
 
     expect(find.text('Relay is offline.'), findsOneWidget);
+  });
+
+  testWidgets('records the sent text as an excerpt', (tester) async {
+    final repo = LastActivityRepository(MemoryLastActivityStorage());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SendClipboardScreen(
+          clipboardReader: const FakeClipboardReader('hello from phone'),
+          publisher: FakeSharePublisher(),
+          lastActivityRepository: repo,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final activity = await repo.load();
+    expect(activity, isNotNull);
+    expect(activity!.excerpt, 'hello from phone');
+    expect(activity.direction, ActivityDirection.sent);
   });
 }
 

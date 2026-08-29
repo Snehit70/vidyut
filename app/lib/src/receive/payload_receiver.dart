@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
+import '../shared/image_probe.dart';
 import '../shared/payload_crypto.dart';
 import '../shared/wire.dart';
 import 'received_image_repository.dart';
@@ -227,13 +228,30 @@ class PayloadReceiveResult {
     this.message, {
     this.excerpt,
     this.imagePath,
+    this.mime,
+    this.byteSize,
+    this.width,
+    this.height,
   });
 
   const PayloadReceiveResult.received(
     String message, {
     String? excerpt,
     String? imagePath,
-  }) : this._(true, message, excerpt: excerpt, imagePath: imagePath);
+    String? mime,
+    int? byteSize,
+    int? width,
+    int? height,
+  }) : this._(
+         true,
+         message,
+         excerpt: excerpt,
+         imagePath: imagePath,
+         mime: mime,
+         byteSize: byteSize,
+         width: width,
+         height: height,
+       );
 
   const PayloadReceiveResult.failed(String message) : this._(false, message);
 
@@ -241,6 +259,10 @@ class PayloadReceiveResult {
   final String message;
   final String? excerpt;
   final String? imagePath;
+  final String? mime;
+  final int? byteSize;
+  final int? width;
+  final int? height;
 }
 
 typedef PayloadReceiverLog = void Function(String message, {bool isError});
@@ -318,9 +340,14 @@ class PayloadReceiver {
             copied: outcome == ClipboardWriteOutcome.confirmed,
           );
           await _maybeShowMiuiHint(outcome);
+          final probe = ImageProbe.fromBytes(plaintext);
           return PayloadReceiveResult.received(
             _message('Image', outcome),
             imagePath: image.path,
+            mime: frame.mime.isEmpty ? null : frame.mime,
+            byteSize: plaintext.length,
+            width: probe.width,
+            height: probe.height,
           );
       }
     } on Object catch (error) {

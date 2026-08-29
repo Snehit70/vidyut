@@ -8,6 +8,7 @@ import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
+import '../activity/activity_preview_store.dart';
 import '../activity/last_activity.dart';
 import '../activity/last_activity_repository.dart';
 import '../pairing/pairing_repository.dart';
@@ -78,6 +79,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
     // `late` so the receive-clipboard wrapper can call back into the controller's
     // echo-guard record (D4) — the closure runs long after construction.
     late final ServiceRelayController controller;
+    final previewStore = ActivityPreviewStore();
     controller = ServiceRelayController(
       loadPairing: pairingRepository.load,
       loadSettings: settingsRepository.load,
@@ -87,6 +89,10 @@ class VidyutForegroundTaskHandler extends TaskHandler {
         crypto: crypto,
         emit: FlutterForegroundTask.sendDataToMain,
         onActivity: (activity) => controller.recordActivity(activity),
+        counterpart: () => controller.knownCounterpart,
+        persistPreview: ({required id, required bytes, required mime}) {
+          return previewStore.save(bytes: bytes, mime: mime, id: '$id');
+        },
       ),
       screenOnEvents: ScreenOnEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
@@ -110,7 +116,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
                 ? ActivityDirection.received
                 : ActivityDirection.sent,
             summary: _transferActivitySummary(batch.files.length),
-            counterpart: 'laptop',
+            counterpart: controller.knownCounterpart,
             timestamp: DateTime.fromMillisecondsSinceEpoch(batch.updatedAtMs),
             payloadId: batch.transferId,
             outcome:
