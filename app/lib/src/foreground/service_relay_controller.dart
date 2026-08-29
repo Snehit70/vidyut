@@ -185,6 +185,12 @@ class ServiceRelayController {
   /// payload (D4). An auto-read equal to it is dropped before publish, then the
   /// record is cleared so a genuine re-copy of the same text still sends.
   String? _lastReceivedClipboardWrite;
+  String? _lastRelayName;
+  String? _pairingName;
+
+  /// Hostname from the last health frame, else the pairing name, else laptop.
+  String get knownCounterpart =>
+      activityCounterpart(_lastRelayName ?? _pairingName);
 
   Future<void> start() {
     _screenOnSubscription ??= screenOnEvents?.listen((_) => _onScreenOn());
@@ -330,12 +336,9 @@ class ServiceRelayController {
       );
       unawaited(
         recordActivity(
-          LastActivity(
-            direction: ActivityDirection.sent,
-            summary: 'text (${text.length} chars)',
-            counterpart: 'laptop',
-            timestamp: DateTime.now(),
-            outcome: publishResult.published
+          _sentTextActivity(
+            text,
+            publishResult.published
                 ? ActivityOutcome.completed
                 : ActivityOutcome.failed,
           ),
@@ -357,15 +360,7 @@ class ServiceRelayController {
     } catch (error) {
       _log('Manual clipboard send failed: $error', isError: true);
       unawaited(
-        recordActivity(
-          LastActivity(
-            direction: ActivityDirection.sent,
-            summary: 'text (${text.length} chars)',
-            counterpart: 'laptop',
-            timestamp: DateTime.now(),
-            outcome: ActivityOutcome.failed,
-          ),
-        ),
+        recordActivity(_sentTextActivity(text, ActivityOutcome.failed)),
       );
       await updateNotification('Vidyut could not send', 'Tap to try again.');
     } finally {
@@ -459,6 +454,8 @@ class ServiceRelayController {
     final pairing = await _bounded(loadPairing(), 'load pairing');
     if (generation != _syncGeneration) return;
     _unpaired = pairing == null;
+    _pairingName = pairing?.name;
+    if (_unpaired) _lastRelayName = null;
     if (pairing == null) {
       _log('No pairing stored; staying offline.');
       await _bounded(
@@ -486,6 +483,8 @@ class ServiceRelayController {
       _log(event.message, isError: event.isError);
     });
     _healthSubscription = connection.health.listen((health) {
+      final relayName = health.relayName.trim();
+      _lastRelayName = relayName.isEmpty ? null : relayName;
       emit({
         'kind': 'health',
         'status': health.status,
@@ -522,11 +521,20 @@ class ServiceRelayController {
   ) async {
     final type = frame.type.wireName;
     final size = _payloadSizeBytes(frame.payload);
+    final counterpart = _counterpartForOrigin(frame.origin);
+    final detail = result.byteSize == null
+        ? null
+        : formatMediaDetail(
+            bytes: result.byteSize!,
+            mime: result.mime,
+            width: result.width,
+            height: result.height,
+          );
     await recordActivity(
       LastActivity(
         direction: ActivityDirection.received,
         summary: '$type (${formatBytes(size)})',
-        counterpart: frame.origin,
+        counterpart: counterpart,
         timestamp: DateTime.now(),
         payloadId: frame.nonce,
         outcome: result.received
@@ -534,6 +542,7 @@ class ServiceRelayController {
             : ActivityOutcome.failed,
         excerpt: result.excerpt,
         previewPath: result.imagePath,
+        detail: detail,
       ),
     );
     emit({
@@ -542,11 +551,15 @@ class ServiceRelayController {
       'message': result.message,
       'type': type,
       'size': size,
-      'origin': frame.origin,
+      'origin': counterpart,
       'payloadId': frame.nonce,
       'activityHandled': true,
       if (result.excerpt != null) 'excerpt': result.excerpt,
       if (result.imagePath != null) 'previewPath': result.imagePath,
+      if (result.mime != null) 'mime': result.mime,
+      if (result.byteSize != null) 'byteSize': result.byteSize,
+      if (result.width != null) 'width': result.width,
+      if (result.height != null) 'height': result.height,
     });
   }
 
@@ -739,12 +752,9 @@ class ServiceRelayController {
       );
       unawaited(
         recordActivity(
-          LastActivity(
-            direction: ActivityDirection.sent,
-            summary: 'text (${text.length} chars)',
-            counterpart: 'laptop',
-            timestamp: DateTime.now(),
-            outcome: result.published
+          _sentTextActivity(
+            text,
+            result.published
                 ? ActivityOutcome.completed
                 : ActivityOutcome.failed,
           ),
@@ -753,15 +763,7 @@ class ServiceRelayController {
     } catch (error) {
       _log('Clipboard auto-send publish failed: $error', isError: true);
       unawaited(
-        recordActivity(
-          LastActivity(
-            direction: ActivityDirection.sent,
-            summary: 'text (${text.length} chars)',
-            counterpart: 'laptop',
-            timestamp: DateTime.now(),
-            outcome: ActivityOutcome.failed,
-          ),
-        ),
+        recordActivity(_sentTextActivity(text, ActivityOutcome.failed)),
       );
     }
   }
@@ -821,6 +823,22 @@ class ServiceRelayController {
 
   void _log(String message, {bool isError = false}) {
     emit({'kind': 'log', 'message': message, 'error': isError});
+  }
+
+  LastActivity _sentTextActivity(String text, ActivityOutcome outcome) {
+    return LastActivity(
+      direction: ActivityDirection.sent,
+      summary: 'text (${text.length} chars)',
+      counterpart: knownCounterpart,
+      timestamp: DateTime.now(),
+      outcome: outcome,
+      excerpt: text,
+    );
+  }
+
+  String _counterpartForOrigin(String origin) {
+    if (origin == 'laptop' || origin.trim().isEmpty) return knownCounterpart;
+    return origin;
   }
 
   /// Decoded size of the base64 ciphertext — the bytes that crossed the wire.

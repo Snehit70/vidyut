@@ -234,6 +234,10 @@ void main() {
       expect(result.received, isTrue);
       expect(result.message, 'Image copied from laptop.');
       expect(result.excerpt, isNull);
+      expect(result.mime, 'image/png');
+      expect(result.byteSize, 4);
+      expect(result.width, isNull);
+      expect(result.height, isNull);
       expect(notifier.imageReceipts.single, (mime: 'image/png', copied: true));
       final written = imageClipboard.images.single;
       expect(written.mime, 'image/png');

@@ -115,6 +115,7 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
                 }
                 return _ActivityTimelineItem(
                   activity: _activities[index - 1],
+                  deviceName: widget.deviceName,
                   onCopy: widget.onCopy,
                   onRetry: widget.onRetry,
                 );
@@ -163,11 +164,13 @@ class _DeviceSummary extends StatelessWidget {
 class _ActivityTimelineItem extends StatelessWidget {
   const _ActivityTimelineItem({
     required this.activity,
+    required this.deviceName,
     required this.onCopy,
     required this.onRetry,
   });
 
   final LastActivity activity;
+  final String deviceName;
   final Future<void> Function(LastActivity activity) onCopy;
   final Future<void> Function(LastActivity activity)? onRetry;
 
@@ -184,13 +187,16 @@ class _ActivityTimelineItem extends StatelessWidget {
         activity.payloadId != null;
     final title = activity.title ?? _titleFromSummary(activity.summary);
     final detail = activity.detail ?? activity.summary;
+    final counterpart = activity.counterpart == 'laptop'
+        ? deviceName
+        : activity.counterpart;
     final status = failed
         ? received
-              ? 'Failed from ${activity.counterpart}'
-              : 'Failed to ${activity.counterpart}'
+              ? 'Failed from $counterpart'
+              : 'Failed to $counterpart'
         : received
-        ? 'Received from ${activity.counterpart}'
-        : 'Sent to ${activity.counterpart}';
+        ? 'Received from $counterpart'
+        : 'Sent to $counterpart';
     final dotColor = failed
         ? colors.error
         : received

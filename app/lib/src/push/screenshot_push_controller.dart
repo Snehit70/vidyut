@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
 import '../activity/last_activity.dart';
+import '../shared/image_probe.dart';
 import '../shared/payload_crypto.dart';
 import '../shared/format.dart';
 import '../shared/relay_connection.dart';
@@ -21,6 +22,13 @@ typedef PushActivityRecorder = FutureOr<void> Function(LastActivity activity);
 const _gcmTagBytes = 16;
 
 /// The encrypted frame occupying the single pending slot (push spec §5/§6).
+typedef ScreenshotPreviewPersister =
+    Future<String?> Function({
+      required int id,
+      required Uint8List bytes,
+      required String mime,
+    });
+
 class _PendingFrame {
   _PendingFrame({
     required this.frame,
@@ -28,11 +36,21 @@ class _PendingFrame {
     required this.plaintextBytes,
     required this.detectedAtMs,
     required this.queuedAtMs,
+    this.displayName,
+    this.mime,
+    this.width,
+    this.height,
+    this.previewPath,
   });
 
   final PayloadFrame frame;
   final int id;
   final int plaintextBytes;
+  final String? displayName;
+  final String? mime;
+  final int? width;
+  final int? height;
+  final String? previewPath;
   final int detectedAtMs;
 
   /// When the frame entered the slot — the held-since mark for `heldForMs`.
@@ -57,6 +75,8 @@ class ScreenshotPushController {
     required this.crypto,
     required this.emit,
     this.onActivity,
+    this.persistPreview,
+    this.counterpart,
     this.deviceId = 'phone',
     this.readAttempts = 3,
     this.readRetryDelay = const Duration(milliseconds: 300),
@@ -67,6 +87,8 @@ class ScreenshotPushController {
   final PayloadCrypto crypto;
   final PushEmit emit;
   final PushActivityRecorder? onActivity;
+  final ScreenshotPreviewPersister? persistPreview;
+  final String Function()? counterpart;
   final String deviceId;
 
   /// MIUI's scanner can publish rows ahead of stable reads (spec §2): retry
@@ -214,11 +236,23 @@ class ScreenshotPushController {
     if (ts <= _lastFrameTs) ts = _lastFrameTs + 1;
     _lastFrameTs = ts;
 
+    final mime = event.mimeType.isEmpty ? 'image/png' : event.mimeType;
+    String? previewPath;
+    final persist = persistPreview;
+    if (persist != null) {
+      try {
+        previewPath = await persist(id: event.id, bytes: bytes, mime: mime);
+      } on Object {
+        previewPath = null;
+      }
+    }
+    final probe = ImageProbe.fromBytes(bytes);
+
     final encryptStart = _nowMs();
     final frame = await crypto.encrypt(
       metadata: PayloadMetadata(
         type: PayloadType.image,
-        mime: event.mimeType.isEmpty ? 'image/png' : event.mimeType,
+        mime: mime,
         origin: deviceId,
         ts: ts,
       ),
@@ -245,6 +279,11 @@ class ScreenshotPushController {
       frame: frame,
       id: event.id,
       plaintextBytes: bytes.length,
+      displayName: event.displayName,
+      mime: mime,
+      width: probe.width,
+      height: probe.height,
+      previewPath: previewPath,
       detectedAtMs: event.detectedAtEpochMillis,
       queuedAtMs: _nowMs(),
     );
@@ -305,9 +344,17 @@ class ScreenshotPushController {
             LastActivity(
               direction: ActivityDirection.sent,
               summary: 'screenshot (${formatBytes(pending.plaintextBytes)})',
-              counterpart: 'laptop',
+              counterpart: activityCounterpart(counterpart?.call()),
               timestamp: _clock(),
               payloadId: pending.frame.nonce,
+              title: _screenshotTitle(pending.displayName),
+              detail: formatMediaDetail(
+                bytes: pending.plaintextBytes,
+                mime: pending.mime,
+                width: pending.width,
+                height: pending.height,
+              ),
+              previewPath: pending.previewPath,
             ),
           ),
         ),
@@ -339,7 +386,7 @@ class ScreenshotPushController {
             summary: reason == 'too_large'
                 ? 'screenshot (too large)'
                 : 'screenshot (unavailable)',
-            counterpart: 'laptop',
+            counterpart: activityCounterpart(counterpart?.call()),
             timestamp: _clock(),
             payloadId: 'screenshot:$id:$reason',
             outcome: ActivityOutcome.failed,
@@ -363,4 +410,10 @@ class ScreenshotPushController {
   }
 
   int _nowMs() => _clock().millisecondsSinceEpoch;
+
+  String _screenshotTitle(String? displayName) {
+    final name = displayName?.trim();
+    if (name == null || name.isEmpty) return 'Screenshot';
+    return name;
+  }
 }
