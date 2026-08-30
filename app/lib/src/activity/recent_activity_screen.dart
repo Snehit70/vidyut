@@ -89,90 +89,77 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final todayCount = _activities.where((activity) {
-      final timestamp = activity.timestamp;
-      return timestamp.year == today.year &&
-          timestamp.month == today.month &&
-          timestamp.day == today.day;
+    final visibleActivities = _activities
+        .where((activity) => !_isTransfer(activity))
+        .toList(growable: false);
+    final todayCount = visibleActivities.where((activity) {
+      return DateUtils.isSameDay(activity.timestamp, DateTime.now());
     }).length;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Recent activity')),
-      body: _activities.isEmpty
+      body: visibleActivities.isEmpty
           ? const Center(child: Text('No shared items yet.'))
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              itemCount: _activities.length + 1,
-              separatorBuilder: (_, index) =>
-                  SizedBox(height: index == 0 ? 16 : 12),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return _DeviceSummary(
-                    count: todayCount,
-                    deviceName: widget.deviceName,
-                  );
-                }
-                return _ActivityTimelineItem(
-                  activity: _activities[index - 1],
-                  deviceName: widget.deviceName,
-                  onCopy: widget.onCopy,
-                  onRetry: widget.onRetry,
-                );
-              },
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 0, 28),
+                  child: Text(
+                    '$todayCount shared today',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                for (final group in _groupByDay(visibleActivities)) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      group.label,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  for (final activity in group.activities)
+                    _ActivityListItem(
+                      activity: activity,
+                      deviceName: widget.deviceName,
+                      onCopy: widget.onCopy,
+                      onRetry: widget.onRetry,
+                      onPreview: () => _showPreview(context, activity),
+                    ),
+                  const SizedBox(height: 28),
+                ],
+              ],
             ),
     );
   }
-}
 
-class _DeviceSummary extends StatelessWidget {
-  const _DeviceSummary({required this.count, required this.deviceName});
-
-  final int count;
-  final String deviceName;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        children: [
-          Icon(
-            Icons.laptop_mac_outlined,
-            size: 22,
-            color: colors.onSurfaceVariant,
-          ),
-          const SizedBox(width: 12),
-          Text(deviceName, style: Theme.of(context).textTheme.titleSmall),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('•', style: TextStyle(color: colors.onSurfaceVariant)),
-          ),
-          Text(
-            '$count shared today',
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-          ),
-        ],
-      ),
+  Future<void> _showPreview(BuildContext context, LastActivity activity) {
+    final path = activity.previewPath;
+    if (path == null) return Future<void>.value();
+    return showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => _PreviewViewer(activity: activity, path: path),
     );
   }
 }
 
-class _ActivityTimelineItem extends StatelessWidget {
-  const _ActivityTimelineItem({
+class _ActivityListItem extends StatelessWidget {
+  const _ActivityListItem({
     required this.activity,
     required this.deviceName,
     required this.onCopy,
     required this.onRetry,
+    required this.onPreview,
   });
 
   final LastActivity activity;
   final String deviceName;
   final Future<void> Function(LastActivity activity) onCopy;
   final Future<void> Function(LastActivity activity)? onRetry;
+  final VoidCallback onPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -180,16 +167,12 @@ class _ActivityTimelineItem extends StatelessWidget {
     final received = activity.direction == ActivityDirection.received;
     final failed = activity.outcome == ActivityOutcome.failed;
     final copyable = received && !failed && _isCopyable(activity);
-    final retryable =
-        failed &&
-        activity.retryable &&
-        onRetry != null &&
-        activity.payloadId != null;
-    final title = activity.title ?? _titleFromSummary(activity.summary);
-    final detail = activity.detail ?? activity.summary;
+    final previewable = activity.previewPath != null && !failed;
+    final retryable = failed && activity.retryable && onRetry != null;
     final counterpart = activity.counterpart == 'laptop'
         ? deviceName
         : activity.counterpart;
+    final title = activity.title ?? _titleFromSummary(activity.summary);
     final status = failed
         ? received
               ? 'Failed from $counterpart'
@@ -197,100 +180,135 @@ class _ActivityTimelineItem extends StatelessWidget {
         : received
         ? 'Received from $counterpart'
         : 'Sent to $counterpart';
-    final dotColor = failed
-        ? colors.error
-        : received
-        ? colors.primary
-        : colors.onSurfaceVariant;
 
-    return IntrinsicHeight(
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.outlineVariant)),
+      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 28,
-            child: CustomPaint(
-              painter: _TimelineRailPainter(dotColor: dotColor),
+            width: 60,
+            child: Text(
+              clockTime(activity.timestamp),
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: colors.onSurfaceVariant),
             ),
           ),
-          const SizedBox(width: 8),
+          _DirectionIcon(received: received, failed: failed),
+          const SizedBox(width: 12),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
-              decoration: BoxDecoration(
-                color: failed
-                    ? colors.errorContainer
-                    : colors.secondaryContainer,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                children: [
-                  _DirectionIcon(received: received, failed: failed),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        status,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: failed ? colors.error : colors.primary,
                         ),
-                        if (activity.excerpt != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '“${activity.excerpt}”',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                        const SizedBox(height: 6),
-                        Text(
-                          detail,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: colors.onSurfaceVariant),
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 6,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            _StatusPill(label: status, failed: failed),
-                            Text(
-                              '${clockTime(activity.timestamp)}  •  '
-                              '${relativeTime(activity.timestamp, capitalize: true)}',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: colors.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ],
+                      ),
+                    ),
+                    if (previewable)
+                      _PreviewThumbnail(
+                        path: activity.previewPath!,
+                        onTap: onPreview,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (activity.excerpt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '“${activity.excerpt}”',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+                if (activity.detail != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    activity.detail!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
                     ),
                   ),
-                  if (activity.previewPath != null)
-                    _Preview(path: activity.previewPath!),
+                ],
+                if (failed) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'This share could not be completed.',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: colors.error),
+                  ),
+                ],
+                if (copyable || previewable || retryable) ...[
+                  const SizedBox(height: 12),
                   if (copyable)
-                    IconButton(
-                      tooltip: 'Copy item',
+                    _ActivityAction(
+                      label: activity.summary.toLowerCase().startsWith('image')
+                          ? 'Copy image'
+                          : 'Copy text',
+                      icon: Icons.content_copy_outlined,
                       onPressed: () => onCopy(activity),
-                      icon: const Icon(Icons.content_copy_outlined),
+                    )
+                  else if (previewable)
+                    _ActivityAction(
+                      label: 'View preview',
+                      icon: Icons.open_in_new_rounded,
+                      onPressed: onPreview,
                     )
                   else if (retryable)
-                    IconButton(
-                      tooltip: 'Retry transfer',
+                    _ActivityAction(
+                      label: 'Try again',
+                      icon: Icons.refresh_rounded,
                       onPressed: () => onRetry!(activity),
-                      icon: const Icon(Icons.refresh_rounded),
                     ),
                 ],
-              ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ActivityAction extends StatelessWidget {
+  const _ActivityAction({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Align(alignment: Alignment.centerLeft, child: Text(label)),
       ),
     );
   }
@@ -306,14 +324,10 @@ class _DirectionIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Container(
-      width: 56,
-      height: 56,
+      width: 36,
+      height: 36,
       decoration: BoxDecoration(
-        color: failed
-            ? colors.surface
-            : received
-            ? colors.primaryContainer
-            : colors.surface,
+        color: failed ? colors.errorContainer : colors.primaryContainer,
         shape: BoxShape.circle,
       ),
       child: Icon(
@@ -322,39 +336,43 @@ class _DirectionIcon extends StatelessWidget {
             : received
             ? Icons.south_west
             : Icons.north_east,
-        size: 30,
-        color: failed
-            ? colors.error
-            : received
-            ? colors.primary
-            : colors.onSurface,
+        size: 20,
+        color: failed ? colors.error : colors.primary,
       ),
     );
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.label, required this.failed});
+class _PreviewThumbnail extends StatelessWidget {
+  const _PreviewThumbnail({required this.path, required this.onTap});
 
-  final String label;
-  final bool failed;
+  final String path;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: failed
-            ? colors.error.withValues(alpha: 0.12)
-            : colors.primaryContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: failed ? colors.error : colors.primary,
+    return Semantics(
+      button: true,
+      label: 'View image preview',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: Image.file(
+              File(path),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const _MediaPlaceholder(),
+            ),
           ),
         ),
       ),
@@ -362,21 +380,55 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-class _Preview extends StatelessWidget {
-  const _Preview({required this.path});
+class _PreviewViewer extends StatelessWidget {
+  const _PreviewViewer({required this.activity, required this.path});
 
+  final LastActivity activity;
   final String path;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.file(
-        File(path),
-        width: 72,
-        height: 72,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => const _MediaPlaceholder(),
+    return Dialog.fullscreen(
+      backgroundColor: Colors.black,
+      child: SafeArea(
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4,
+              child: Center(
+                child: Image.file(
+                  File(path),
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => const _ViewerPlaceholder(),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              left: 8,
+              child: IconButton.filledTonal(
+                tooltip: 'Close preview',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ),
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 16,
+              child: Text(
+                activity.title ?? 'Image preview',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -387,10 +439,8 @@ class _MediaPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 72,
-      height: 72,
-      color: Theme.of(context).colorScheme.surface,
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Icon(
         Icons.image_not_supported_outlined,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -399,32 +449,52 @@ class _MediaPlaceholder extends StatelessWidget {
   }
 }
 
-class _TimelineRailPainter extends CustomPainter {
-  const _TimelineRailPainter({required this.dotColor});
-
-  final Color dotColor;
+class _ViewerPlaceholder extends StatelessWidget {
+  const _ViewerPlaceholder();
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, 20);
-    final line = Paint()
-      ..color = dotColor.withValues(alpha: 0.28)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-    for (var y = 38.0; y < size.height; y += 8) {
-      canvas.drawLine(Offset(center.dx, y), Offset(center.dx, y + 4), line);
-    }
-    canvas.drawCircle(
-      center,
-      12,
-      Paint()..color = dotColor.withValues(alpha: 0.12),
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(24),
+      child: Text('Preview unavailable', style: TextStyle(color: Colors.white)),
     );
-    canvas.drawCircle(center, 5, Paint()..color = dotColor);
   }
+}
 
-  @override
-  bool shouldRepaint(_TimelineRailPainter oldDelegate) =>
-      oldDelegate.dotColor != dotColor;
+class _ActivityGroup {
+  const _ActivityGroup(this.label, this.activities);
+
+  final String label;
+  final List<LastActivity> activities;
+}
+
+List<_ActivityGroup> _groupByDay(List<LastActivity> activities) {
+  final groups = <String, List<LastActivity>>{};
+  for (final activity in activities) {
+    final label = _dayLabel(activity.timestamp);
+    groups.putIfAbsent(label, () => []).add(activity);
+  }
+  return [
+    for (final entry in groups.entries) _ActivityGroup(entry.key, entry.value),
+  ];
+}
+
+String _dayLabel(DateTime timestamp) {
+  final now = DateTime.now();
+  if (DateUtils.isSameDay(timestamp, now)) return 'Today';
+  if (DateUtils.isSameDay(timestamp, now.subtract(const Duration(days: 1)))) {
+    return 'Yesterday';
+  }
+  return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
+}
+
+bool _isTransfer(LastActivity activity) {
+  final summary = activity.summary.trim().toLowerCase();
+  return summary == 'file' ||
+      summary.endsWith(' file') ||
+      summary.endsWith(' files') ||
+      summary.contains(' file (') ||
+      summary.contains(' files (');
 }
 
 bool _isCopyable(LastActivity activity) {

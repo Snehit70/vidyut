@@ -1,6 +1,6 @@
 # Activity is a cross-product outcome timeline
 
-> Status: accepted
+> Status: superseded by [ADR 0017](0017-activity-separates-clipboard-and-file-surfaces.md)
 
 Vidyut's **Activity** surface is a lightweight timeline of meaningful sharing
 outcomes across the product. It includes clipboard Payloads, screenshots, and

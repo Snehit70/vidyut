@@ -137,17 +137,17 @@ _Avoid_: file library, activity feed, file browser
 
 **Activity**:
 A lightweight timeline of meaningful sharing outcomes across Vidyut. It may
-include clipboard Payloads, screenshots, and Transfer summaries. Activity is
-the quick answer to "what just happened?"; it is not the detailed source of
-truth for Transfer progress, recovery, or file actions, which remain in Files
-and Transfer history.
+include clipboard Payloads and screenshots, but not file Transfer summaries.
+Activity is the quick answer to "what clipboard or screenshot share just
+happened?"; file progress, recovery, and file actions remain in Files and
+Transfer history.
 _Avoid_: clipboard history, transfer history, debug log
 
 **Activity event**:
 One user-visible outcome in Activity, such as a Payload being published or
-received, a screenshot being sent, or a file Batch completing with or without
-issues. Activity events include meaningful failures when they explain why a
-share did not complete, but do not represent every progress update.
+received, or a screenshot being sent. Activity events include meaningful
+failures when they explain why a share did not complete, but do not represent
+file Transfer progress or every progress update.
 _Avoid_: log line, progress tick, notification
 
 **Activity presentation data**:
@@ -157,10 +157,9 @@ Missing presentation data is rendered conservatively rather than inferred.
 _Avoid_: fabricated metadata, full transfer record
 
 **Activity timeline rail**:
-The compact visual sequence connecting Activity events in chronological order.
-It communicates recency and outcome without replacing the event cards or
-their actions.
-_Avoid_: progress bar, transfer queue
+There is no separate rail component on the Recent activity surface. Activity
+events use a chronological list with day sections and lightweight separators.
+_Avoid_: progress bar, transfer queue, file Transfer timeline
 
 **Completed with issues**:
 A terminal batch outcome in which at least one file completed and at least one
