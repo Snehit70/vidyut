@@ -137,10 +137,10 @@ _Avoid_: file library, activity feed, file browser
 
 **Activity**:
 A lightweight timeline of meaningful sharing outcomes across Vidyut. It may
-include clipboard Payloads, screenshots, and Transfer summaries. Activity is
-the quick answer to "what just happened?"; it is not the detailed source of
-truth for Transfer progress, recovery, or file actions, which remain in Files
-and Transfer history.
+include clipboard Payloads and screenshots, but not file Transfer summaries.
+Activity is the quick answer to "what clipboard or screenshot share just
+happened?"; file progress, recovery, and file actions remain in Files and
+Transfer history.
 _Avoid_: clipboard history, transfer history, debug log
 
 **Activity event**:
