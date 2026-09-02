@@ -47,6 +47,9 @@ install -m 644 "$repo_root/packaging/systemd/vidyut-relay.service" "$unit_dir/vi
 sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
   "$repo_root/packaging/desktop/vidyut-send.desktop" \
   >"$applications_dir/vidyut-send.desktop"
+if command -v update-desktop-database >/dev/null; then
+  update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+fi
 sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
   "$repo_root/packaging/kde/vidyut-send.desktop" \
   >"$kde_services_dir/vidyut-send.desktop"
