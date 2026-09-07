@@ -85,7 +85,9 @@ void main() {
 
     expect(find.text('No activity yet'), findsOneWidget);
     expect(
-      find.text('Send a file from Home, or copy something to the clipboard.'),
+      find.text(
+        'Copy something to the clipboard. File transfers live in Files.',
+      ),
       findsOneWidget,
     );
     expect(find.text('Try again'), findsNothing);

@@ -112,7 +112,7 @@ class _RecentActivityScreenState extends State<RecentActivityScreen>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Send a file from Home, or copy something to the clipboard.',
+                      'Copy something to the clipboard. File transfers live in Files.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
