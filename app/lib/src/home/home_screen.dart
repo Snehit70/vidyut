@@ -89,17 +89,18 @@ class HomeScreen extends StatelessWidget {
                   icon: const Icon(Icons.folder_outlined),
                   label: const Text('Send files'),
                 ),
-                if (laptopTelemetry != null) ...[
-                  _LaptopTelemetrySection(
-                    telemetry: laptopTelemetry,
-                    connected: connectionStatus == ConnectionStatus.connected,
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                const SizedBox(height: 12),
                 _LatestActivitySection(
                   activity: lastActivity,
                   onTap: onOpenRecentActivity,
                 ),
+                if (laptopTelemetry != null) ...[
+                  const SizedBox(height: 12),
+                  _LaptopTelemetrySection(
+                    telemetry: laptopTelemetry,
+                    connected: connectionStatus == ConnectionStatus.connected,
+                  ),
+                ],
                 if (setupBannerLabel != null && onOpenSetup != null) ...[
                   const SizedBox(height: 10),
                   _HomeSetupBanner(
@@ -270,6 +271,16 @@ class _LaptopTelemetrySection extends StatelessWidget {
       color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
     );
 
+    Widget pair(_TelemetryCard left, _TelemetryCard right) {
+      return Row(
+        children: [
+          Expanded(child: left),
+          const SizedBox(width: 8),
+          Expanded(child: right),
+        ],
+      );
+    }
+
     final headline = _TelemetryHeadline.from(
       connected: connected,
       isStale: isStale,
@@ -335,22 +346,36 @@ class _LaptopTelemetrySection extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(child: cpuCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: tempCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: batteryCard),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(child: memoryCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: storageCard),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 520;
+                    if (compact) {
+                      return Column(
+                        children: [
+                          pair(cpuCard, tempCard),
+                          const SizedBox(height: 8),
+                          pair(memoryCard, storageCard),
+                          const SizedBox(height: 8),
+                          batteryCard,
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: cpuCard),
+                            const SizedBox(width: 8),
+                            Expanded(child: tempCard),
+                            const SizedBox(width: 8),
+                            Expanded(child: batteryCard),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        pair(memoryCard, storageCard),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -813,7 +838,7 @@ class _LatestActivitySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final activityLabel = activity == null
-        ? 'Nothing shared yet'
+        ? 'Send a file or copy something to get started.'
         : activity!.outcome == ActivityOutcome.failed
         ? 'Failed: ${activity!.describe()}'
         : activity!.describe();
@@ -925,15 +950,17 @@ class _ActivityRow extends StatelessWidget {
                     ? failed
                           ? 'Failed: ${activity!.describe()}'
                           : activity!.describe()
-                    : 'Nothing shared yet',
+                    : 'Send a file or copy something to get started.',
                 style: textTheme.bodyMedium,
               ),
             ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.chevron_right,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            if (hasActivity) ...[
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
           ],
         ),
       ),

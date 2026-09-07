@@ -142,6 +142,11 @@ void main() {
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Files'), findsOneWidget);
     expect(find.byTooltip('Files'), findsNothing);
+    expect(
+      find.text('Send a file or copy something to get started.'),
+      findsOneWidget,
+    );
+    expect(find.text('Nothing shared yet'), findsNothing);
 
     await tester.tap(find.text('Files'));
     expect(filesOpened, isTrue);
@@ -327,6 +332,47 @@ void main() {
     expect(find.text('88%'), findsNothing);
     expect(find.text('Unavailable'), findsWidgets);
     expect(find.text('Laptop disconnected'), findsNothing);
+  });
+
+  testWidgets('uses two telemetry columns on a compact width', (tester) async {
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            batteryPercent: 88,
+            batteryState: 'charging',
+            cpuTemperatureCelsius: 65.4,
+            memoryUsedBytes: 4 * 1073741824,
+            memoryTotalBytes: 16 * 1073741824,
+            storageUsedBytes: 250 * 1073741824,
+            storageTotalBytes: 500 * 1073741824,
+            cpuUsagePercent: 32.5,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('CPU temperature'), findsOneWidget);
+    expect(find.text('4.0 GB / 16.0 GB'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
