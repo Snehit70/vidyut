@@ -312,7 +312,7 @@ void main() {
 
       final semanticsHandle = tester.ensureSemantics();
       final data = tester.getSemantics(row).getSemanticsData();
-      expect(data.hasFlag(ui.SemanticsFlag.isFocusable), isTrue);
+      expect(data.flagsCollection.isFocused, isNot(ui.Tristate.none));
       expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
       expect(data.hasAction(ui.SemanticsAction.focus), isTrue);
       semanticsHandle.dispose();
