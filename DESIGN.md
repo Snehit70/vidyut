@@ -2,13 +2,13 @@
 name: Vidyut
 description: A quiet, precise Android utility for moving clipboard content and files between a phone and laptop.
 colors:
-  primary: "#D9486E"
+  primary: "#C83861"
   primary-container: "#F8D3DE"
   surface: "#FFFFFF"
   surface-container-low: "#FDF0F4"
   on-surface: "#33202B"
-  on-surface-variant: "#8F717E"
-  outline: "#E9CBD5"
+  on-surface-variant: "#856774"
+  outline: "#9D878F"
   error: "#B3283E"
   success: "#2D8A4A"
   warning: "#A05A00"
@@ -112,8 +112,9 @@ semantic Material color roles so light and dark schemes remain coherent.
 
 ### Primary
 
-- **Raspberry** (`#D9486E`): primary actions, active navigation, focused
-  controls, and positive brand emphasis.
+- **Raspberry** (`#C83861`): primary actions, active navigation, focused
+  controls, and positive brand emphasis. Measures 5.01:1 on white and 4.52:1
+  on mist (WCAG AA for filled-button labels and 14sp status text).
 - **Petal** (`#F8D3DE`): primary-container tone for selected or emphasized
   surfaces; never use it as a substitute for every card background.
 
@@ -122,8 +123,10 @@ semantic Material color roles so light and dark schemes remain coherent.
 - **White** (`#FFFFFF`): light app background and elevated content ground.
 - **Mist** (`#FDF0F4`): low tonal surface for grouped content and cards.
 - **Plum ink** (`#33202B`): primary text and high-contrast icons.
-- **Muted plum** (`#8F717E`): supporting text and low-priority metadata.
-- **Petal outline** (`#E9CBD5`): restrained dividers and field outlines.
+- **Muted plum** (`#856774`): supporting text and low-priority metadata.
+  Measures 5.01:1 on white and 4.52:1 on mist (WCAG AA for body text).
+- **Petal outline** (`#9D878F`): restrained dividers and field outlines.
+  Measures 3.34:1 on white and 3.01:1 on mist (WCAG AA for UI chrome).
 
 ### Semantic states
 

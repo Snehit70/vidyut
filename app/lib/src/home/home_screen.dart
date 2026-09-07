@@ -89,17 +89,18 @@ class HomeScreen extends StatelessWidget {
                   icon: const Icon(Icons.folder_outlined),
                   label: const Text('Send files'),
                 ),
-                if (laptopTelemetry != null) ...[
-                  _LaptopTelemetrySection(
-                    telemetry: laptopTelemetry,
-                    connected: connectionStatus == ConnectionStatus.connected,
-                  ),
-                  const SizedBox(height: 12),
-                ],
+                const SizedBox(height: 12),
                 _LatestActivitySection(
                   activity: lastActivity,
                   onTap: onOpenRecentActivity,
                 ),
+                if (laptopTelemetry != null) ...[
+                  const SizedBox(height: 12),
+                  _LaptopTelemetrySection(
+                    telemetry: laptopTelemetry,
+                    connected: connectionStatus == ConnectionStatus.connected,
+                  ),
+                ],
                 if (setupBannerLabel != null && onOpenSetup != null) ...[
                   const SizedBox(height: 10),
                   _HomeSetupBanner(
@@ -222,17 +223,11 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Memory',
       value: resolveValue(
-        _usageValue(
-          telemetry?.memoryUsedBytes,
-          telemetry?.memoryTotalBytes,
-        ),
+        _usageValue(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
         telemetry?.memoryUsedBytes,
       ),
       detail: resolveDetail(
-        _usageDetail(
-          telemetry?.memoryUsedBytes,
-          telemetry?.memoryTotalBytes,
-        ),
+        _usageDetail(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
         telemetry?.memoryUsedBytes,
       ),
       color: theme.colorScheme.primary,
@@ -248,17 +243,11 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Storage',
       value: resolveValue(
-        _usageValue(
-          telemetry?.storageUsedBytes,
-          telemetry?.storageTotalBytes,
-        ),
+        _usageValue(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
         telemetry?.storageUsedBytes,
       ),
       detail: resolveDetail(
-        _usageDetail(
-          telemetry?.storageUsedBytes,
-          telemetry?.storageTotalBytes,
-        ),
+        _usageDetail(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
         telemetry?.storageUsedBytes,
       ),
       // Storage is a primary metric; use the readable brand role instead of
@@ -280,6 +269,24 @@ class _LaptopTelemetrySection extends StatelessWidget {
         telemetry?.cpuUsagePercent,
       ),
       color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
+    );
+
+    Widget pair(_TelemetryCard left, _TelemetryCard right) {
+      return Row(
+        children: [
+          Expanded(child: left),
+          const SizedBox(width: 8),
+          Expanded(child: right),
+        ],
+      );
+    }
+
+    final headline = _TelemetryHeadline.from(
+      connected: connected,
+      isStale: isStale,
+      telemetry: telemetry,
+      scheme: theme.colorScheme,
+      statusColors: VidyutStatusColors.of(context),
     );
 
     return Column(
@@ -318,47 +325,57 @@ class _LaptopTelemetrySection extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Laptop is running smoothly',
+                  headline.title,
                   style: theme.textTheme.titleLarge,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 4),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.check_circle,
-                      size: 16,
-                      color:
-                          theme.extension<VidyutStatusColors>()?.success ??
-                          Colors.green,
-                    ),
+                    Icon(headline.icon, size: 16, color: headline.color),
                     const SizedBox(width: 6),
-                    Text(
-                      'Everything looks good.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                    Flexible(
+                      child: Text(
+                        headline.detail,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(child: cpuCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: tempCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: batteryCard),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(child: memoryCard),
-                    const SizedBox(width: 8),
-                    Expanded(child: storageCard),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxWidth < 520;
+                    if (compact) {
+                      return Column(
+                        children: [
+                          pair(cpuCard, tempCard),
+                          const SizedBox(height: 8),
+                          pair(memoryCard, storageCard),
+                          const SizedBox(height: 8),
+                          batteryCard,
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: cpuCard),
+                            const SizedBox(width: 8),
+                            Expanded(child: tempCard),
+                            const SizedBox(width: 8),
+                            Expanded(child: batteryCard),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        pair(memoryCard, storageCard),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -504,6 +521,79 @@ Color _temperatureColor(ThemeData theme, double? value) => value == null
     : value >= 70
     ? theme.colorScheme.tertiary
     : theme.colorScheme.primary;
+
+class _TelemetryHeadline {
+  const _TelemetryHeadline({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  factory _TelemetryHeadline.from({
+    required bool connected,
+    required bool isStale,
+    required LaptopTelemetry? telemetry,
+    required ColorScheme scheme,
+    required VidyutStatusColors statusColors,
+  }) {
+    if (!connected) {
+      return _TelemetryHeadline(
+        title: 'Laptop disconnected',
+        detail: 'Telemetry pauses until it reconnects.',
+        icon: Icons.cloud_off_outlined,
+        color: scheme.error,
+      );
+    }
+    if (isStale) {
+      return _TelemetryHeadline(
+        title: 'Telemetry unavailable',
+        detail: 'Waiting for a fresh reading.',
+        icon: Icons.sync_outlined,
+        color: scheme.onSurfaceVariant,
+      );
+    }
+
+    final temp = telemetry?.cpuTemperatureCelsius;
+    final cpu = telemetry?.cpuUsagePercent;
+    if (_temperatureState(temp) == 'Critical') {
+      return _TelemetryHeadline(
+        title: 'CPU is too hot',
+        detail: '${_temp(temp)}. The laptop may slow down.',
+        icon: Icons.warning_amber_rounded,
+        color: scheme.error,
+      );
+    }
+    if (cpu != null && _cpuState(cpu) == 'High') {
+      return _TelemetryHeadline(
+        title: 'CPU is under load',
+        detail: '${cpu.round()}% in use.',
+        icon: Icons.warning_amber_rounded,
+        color: scheme.error,
+      );
+    }
+    if (_temperatureState(temp) == 'Warning') {
+      return _TelemetryHeadline(
+        title: 'CPU is warm',
+        detail: '${_temp(temp)}.',
+        icon: Icons.warning_amber_rounded,
+        color: statusColors.warning,
+      );
+    }
+
+    return _TelemetryHeadline(
+      title: 'Readings look normal',
+      detail: 'Live from the laptop.',
+      icon: Icons.check_circle,
+      color: statusColors.success,
+    );
+  }
+}
 
 class _HomeAppBarAction extends StatelessWidget {
   const _HomeAppBarAction({
@@ -748,7 +838,7 @@ class _LatestActivitySection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final activityLabel = activity == null
-        ? 'Nothing shared yet'
+        ? 'Send a file or copy something to get started.'
         : activity!.outcome == ActivityOutcome.failed
         ? 'Failed: ${activity!.describe()}'
         : activity!.describe();
@@ -860,15 +950,17 @@ class _ActivityRow extends StatelessWidget {
                     ? failed
                           ? 'Failed: ${activity!.describe()}'
                           : activity!.describe()
-                    : 'Nothing shared yet',
+                    : 'Send a file or copy something to get started.',
                 style: textTheme.bodyMedium,
               ),
             ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.chevron_right,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            if (hasActivity) ...[
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
           ],
         ),
       ),

@@ -5,10 +5,10 @@
   --ground: #FFFFFF;      /* scaffold + app bar background */
   --mist: #FDF0F4;        /* flat surface: cards, inputs, icon-button chips */
   --petal: #F8D3DE;       /* secondary surface: banners, badges, leading icons */
-  --raspberry: #D9486E;   /* primary: CTAs, active states, accent icons */
+  --raspberry: #C83861;   /* primary: CTAs, active states, accent icons; ≥4.5:1 as white labels and as text on ground/mist */
   --ink: #33202B;         /* plum text ink, snackbar background */
-  --muted: #A88794;       /* secondary text, inactive thumbs */
-  --hairline: #F4DBE4;    /* dividers, input borders, unselected track outline */
+  --muted: #856774;       /* secondary text, inactive thumbs; ≥4.5:1 on ground and mist */
+  --hairline: #9D878F;    /* dividers, input borders, unselected track outline; ≥3:1 on ground and mist */
   --error: #B3283E;       /* error text + borders */
 
   /* Semantic aliases */

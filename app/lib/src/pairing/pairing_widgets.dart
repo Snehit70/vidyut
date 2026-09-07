@@ -138,31 +138,39 @@ class ManualPairingForm extends StatelessWidget {
         const SizedBox(height: 12),
         TextField(
           controller: hostController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Relay IP',
-            prefixIcon: Icon(Icons.router),
+            prefixIcon: const Icon(Icons.router),
+            errorText: error == 'Host is required.' ? error : null,
           ),
           keyboardType: TextInputType.url,
         ),
         const SizedBox(height: 12),
         TextField(
           controller: portController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Port',
-            prefixIcon: Icon(Icons.settings_ethernet),
+            prefixIcon: const Icon(Icons.settings_ethernet),
+            errorText: error == 'Port must be between 1 and 65535.'
+                ? error
+                : null,
           ),
           keyboardType: TextInputType.number,
         ),
         const SizedBox(height: 12),
         TextField(
           controller: secretController,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Pairing secret',
-            prefixIcon: Icon(Icons.key),
+            prefixIcon: const Icon(Icons.key),
+            errorText: error == 'Pairing secret is required.' ? error : null,
           ),
           obscureText: true,
         ),
-        if (error != null) ...[
+        if (error != null &&
+            error != 'Host is required.' &&
+            error != 'Port must be between 1 and 65535.' &&
+            error != 'Pairing secret is required.') ...[
           const SizedBox(height: 12),
           DecoratedBox(
             decoration: BoxDecoration(

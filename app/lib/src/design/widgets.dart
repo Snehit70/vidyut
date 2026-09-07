@@ -103,7 +103,7 @@ class _PulsingDotState extends State<PulsingDot>
   }
 }
 
-/// Squash-on-press wrapper: 0.93 down, spring overshoot back up (~300ms).
+/// Squash-on-press wrapper: 0.96 down, 100–150ms, no overshoot.
 class PressableScale extends StatefulWidget {
   const PressableScale({super.key, required this.child});
 
@@ -124,9 +124,9 @@ class _PressableScaleState extends State<PressableScale> {
       onPointerUp: (_) => setState(() => _pressed = false),
       onPointerCancel: (_) => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.93 : 1,
+        scale: _pressed ? 0.96 : 1,
         duration: _pressed ? Motion.pressDown : Motion.pressUp,
-        curve: _pressed ? Curves.easeOutCubic : Motion.spring,
+        curve: Curves.easeOutCubic,
         child: widget.child,
       ),
     );

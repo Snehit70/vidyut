@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
 
 import 'package:vidyut/src/design/motion.dart';
+import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/onboarding/onboarding_wizard.dart';
 import 'package:vidyut/src/onboarding/setup_actions.dart';
 import 'package:vidyut/src/onboarding/setup_checklist_screen.dart';
@@ -187,6 +188,10 @@ void main() {
       await tester.pumpWidget(wizard());
       await tester.pumpAndSettle();
 
+      final semanticsHandle = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('Step 1 of 4'), findsOneWidget);
+      semanticsHandle.dispose();
+
       expect(find.text('Stay in the loop'), findsOneWidget);
       await tester.tap(find.text('Skip'));
       await tester.pumpAndSettle();
@@ -293,6 +298,9 @@ void main() {
 
   group('SetupChecklistScreen', () {
     testWidgets('shows live rows and the MIUI section', (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       final actions = FakeSetupActions()
         ..miui = true
         ..notifications = true
@@ -341,6 +349,35 @@ void main() {
 
       final flags = await settingsRepository.loadMiuiSetupFlags();
       expect(flags[MiuiSetupFlag.autostart], isTrue);
+    });
+
+    testWidgets('keeps recovery actions at the 48dp tap target', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final actions = FakeSetupActions()..miui = true;
+      final loader = SetupStatusLoader(
+        actions: actions,
+        settingsRepository: AppSettingsRepository(MemoryAppSettingsStorage()),
+        pairingRepository: PairingRepository(MemoryPairingStorage()),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: SetupChecklistScreen(loader: loader),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final label in ['Allow', 'How?']) {
+        final size = tester.getSize(
+          find.widgetWithText(TextButton, label).first,
+        );
+        expect(size.height, greaterThanOrEqualTo(48));
+        expect(size.width, greaterThanOrEqualTo(48));
+      }
     });
   });
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/pairing/pairing_repository.dart';
@@ -210,43 +212,42 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     });
 
-    testWidgets(
-      'live card shows preparation progress from preparation bytes',
-      (tester) async {
-        final history = MemoryTransferHistoryStorage();
-        await _seed(history, [
-          _batch(
-            filename: 'previous.pdf',
-            status: PhoneTransferStatus.completed,
-            createdAtMs: 1,
-          ),
-        ]);
-        final sender = _ProgressControlledSender(
-          history: TransferHistoryRepository(history),
-        );
-        await tester.pumpWidget(_screen(history, sender: sender));
-        await tester.pump();
+    testWidgets('live card shows preparation progress from preparation bytes', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'previous.pdf',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 1,
+        ),
+      ]);
+      final sender = _ProgressControlledSender(
+        history: TransferHistoryRepository(history),
+      );
+      await tester.pumpWidget(_screen(history, sender: sender));
+      await tester.pump();
 
-        sender.emit(
-          PhoneTransferProgress(
-            stage: PhoneTransferProgressStage.hashing,
-            fileCount: 1,
-            totalBytes: 1000,
-            transferredBytes: 0,
-            currentFileIndex: 0,
-            currentFilename: 'photo.jpg',
-            preparedBytes: 25,
-            preparationTotalBytes: 100,
-            preparationStartedAt: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
-        await tester.pump();
+      sender.emit(
+        PhoneTransferProgress(
+          stage: PhoneTransferProgressStage.hashing,
+          fileCount: 1,
+          totalBytes: 1000,
+          transferredBytes: 0,
+          currentFileIndex: 0,
+          currentFilename: 'photo.jpg',
+          preparedBytes: 25,
+          preparationTotalBytes: 100,
+          preparationStartedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      await tester.pump();
 
-        expect(find.text('25%'), findsOneWidget);
-        expect(find.text('25 B of 100 B'), findsOneWidget);
-        expect(find.text('0 B of 1000 B'), findsNothing);
-      },
-    );
+      expect(find.text('25%'), findsOneWidget);
+      expect(find.text('25 B of 100 B'), findsOneWidget);
+      expect(find.text('0 B of 1000 B'), findsNothing);
+    });
 
     testWidgets('opens completed batch details from its history row', (
       tester,
@@ -287,6 +288,43 @@ void main() {
       expect(opened.single.filename, 'report.pdf');
       expect(shared, isEmpty);
       expect(resent, isEmpty);
+    });
+
+    testWidgets('opens transfer details from keyboard focus', (tester) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'report.pdf',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 1,
+          destinationPathPrefix: 'content://provider/report',
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+
+      final row = find.ancestor(
+        of: find.text('report.pdf'),
+        matching: find.byType(InkWell),
+      );
+      expect(row, findsOneWidget);
+
+      final semanticsHandle = tester.ensureSemantics();
+      final data = tester.getSemantics(row).getSemanticsData();
+      expect(data.flagsCollection.isFocused, isNot(ui.Tristate.none));
+      expect(data.hasAction(ui.SemanticsAction.tap), isTrue);
+      expect(data.hasAction(ui.SemanticsAction.focus), isTrue);
+      semanticsHandle.dispose();
+
+      final focus = Focus.maybeOf(tester.element(find.text('report.pdf')));
+      expect(focus, isNotNull);
+      focus!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Saved on your laptop'), findsOneWidget);
     });
 
     testWidgets('hides file actions for non-completed batches', (tester) async {

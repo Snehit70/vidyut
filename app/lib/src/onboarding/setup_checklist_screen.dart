@@ -195,11 +195,6 @@ class _ChecklistRow extends StatelessWidget {
                   ),
                   if (actionLabel != null)
                     TextButton(
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
                       onPressed: () async {
                         await onAction?.call();
                         await reloadAfterAction?.call();

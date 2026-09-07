@@ -622,24 +622,27 @@ class _StepDots extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        for (var i = 0; i < count; i++)
-          AnimatedContainer(
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : Motion.state,
-            curve: Curves.easeOutCubic,
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            width: i == index ? 22 : 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: i == index ? scheme.primary : scheme.primaryContainer,
-              borderRadius: BorderRadius.circular(999),
+    return Semantics(
+      label: 'Step ${index + 1} of $count',
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < count; i++)
+            AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : Motion.state,
+              curve: Curves.easeOutCubic,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              width: i == index ? 22 : 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: i == index ? scheme.primary : scheme.primaryContainer,
+                borderRadius: BorderRadius.circular(999),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

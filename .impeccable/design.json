@@ -7,14 +7,14 @@
       "primary": {
         "role": "primary",
         "displayName": "Raspberry",
-        "canonical": "#D9486E",
-        "tonalRamp": ["#FFF7F9", "#FDF0F4", "#F8D3DE", "#D9486E", "#8F2949"]
+        "canonical": "#C83861",
+        "tonalRamp": ["#FFF7F9", "#FDF0F4", "#F8D3DE", "#C83861", "#8F2949"]
       },
       "on-surface": {
         "role": "neutral",
         "displayName": "Plum Ink",
         "canonical": "#33202B",
-        "tonalRamp": ["#FFFFFF", "#FDF0F4", "#E9CBD5", "#8F717E", "#33202B"]
+        "tonalRamp": ["#FFFFFF", "#FDF0F4", "#9D878F", "#8F717E", "#33202B"]
       },
       "dark-surface": {
         "role": "surface",
