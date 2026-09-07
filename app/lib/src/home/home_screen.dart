@@ -222,17 +222,11 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Memory',
       value: resolveValue(
-        _usageValue(
-          telemetry?.memoryUsedBytes,
-          telemetry?.memoryTotalBytes,
-        ),
+        _usageValue(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
         telemetry?.memoryUsedBytes,
       ),
       detail: resolveDetail(
-        _usageDetail(
-          telemetry?.memoryUsedBytes,
-          telemetry?.memoryTotalBytes,
-        ),
+        _usageDetail(telemetry?.memoryUsedBytes, telemetry?.memoryTotalBytes),
         telemetry?.memoryUsedBytes,
       ),
       color: theme.colorScheme.primary,
@@ -248,17 +242,11 @@ class _LaptopTelemetrySection extends StatelessWidget {
             ),
       label: 'Storage',
       value: resolveValue(
-        _usageValue(
-          telemetry?.storageUsedBytes,
-          telemetry?.storageTotalBytes,
-        ),
+        _usageValue(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
         telemetry?.storageUsedBytes,
       ),
       detail: resolveDetail(
-        _usageDetail(
-          telemetry?.storageUsedBytes,
-          telemetry?.storageTotalBytes,
-        ),
+        _usageDetail(telemetry?.storageUsedBytes, telemetry?.storageTotalBytes),
         telemetry?.storageUsedBytes,
       ),
       // Storage is a primary metric; use the readable brand role instead of
@@ -280,6 +268,14 @@ class _LaptopTelemetrySection extends StatelessWidget {
         telemetry?.cpuUsagePercent,
       ),
       color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
+    );
+
+    final headline = _TelemetryHeadline.from(
+      connected: connected,
+      isStale: isStale,
+      telemetry: telemetry,
+      scheme: theme.colorScheme,
+      statusColors: VidyutStatusColors.of(context),
     );
 
     return Column(
@@ -318,26 +314,22 @@ class _LaptopTelemetrySection extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Laptop is running smoothly',
+                  headline.title,
                   style: theme.textTheme.titleLarge,
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 4),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.check_circle,
-                      size: 16,
-                      color:
-                          theme.extension<VidyutStatusColors>()?.success ??
-                          Colors.green,
-                    ),
+                    Icon(headline.icon, size: 16, color: headline.color),
                     const SizedBox(width: 6),
-                    Text(
-                      'Everything looks good.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                    Flexible(
+                      child: Text(
+                        headline.detail,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],
@@ -504,6 +496,79 @@ Color _temperatureColor(ThemeData theme, double? value) => value == null
     : value >= 70
     ? theme.colorScheme.tertiary
     : theme.colorScheme.primary;
+
+class _TelemetryHeadline {
+  const _TelemetryHeadline({
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+
+  factory _TelemetryHeadline.from({
+    required bool connected,
+    required bool isStale,
+    required LaptopTelemetry? telemetry,
+    required ColorScheme scheme,
+    required VidyutStatusColors statusColors,
+  }) {
+    if (!connected) {
+      return _TelemetryHeadline(
+        title: 'Laptop disconnected',
+        detail: 'Telemetry pauses until it reconnects.',
+        icon: Icons.cloud_off_outlined,
+        color: scheme.error,
+      );
+    }
+    if (isStale) {
+      return _TelemetryHeadline(
+        title: 'Telemetry unavailable',
+        detail: 'Waiting for a fresh reading.',
+        icon: Icons.sync_outlined,
+        color: scheme.onSurfaceVariant,
+      );
+    }
+
+    final temp = telemetry?.cpuTemperatureCelsius;
+    final cpu = telemetry?.cpuUsagePercent;
+    if (_temperatureState(temp) == 'Critical') {
+      return _TelemetryHeadline(
+        title: 'CPU is too hot',
+        detail: '${_temp(temp)}. The laptop may slow down.',
+        icon: Icons.warning_amber_rounded,
+        color: scheme.error,
+      );
+    }
+    if (cpu != null && _cpuState(cpu) == 'High') {
+      return _TelemetryHeadline(
+        title: 'CPU is under load',
+        detail: '${cpu.round()}% in use.',
+        icon: Icons.warning_amber_rounded,
+        color: scheme.error,
+      );
+    }
+    if (_temperatureState(temp) == 'Warning') {
+      return _TelemetryHeadline(
+        title: 'CPU is warm',
+        detail: '${_temp(temp)}.',
+        icon: Icons.warning_amber_rounded,
+        color: statusColors.warning,
+      );
+    }
+
+    return _TelemetryHeadline(
+      title: 'Readings look normal',
+      detail: 'Live from the laptop.',
+      icon: Icons.check_circle,
+      color: statusColors.success,
+    );
+  }
+}
 
 class _HomeAppBarAction extends StatelessWidget {
   const _HomeAppBarAction({

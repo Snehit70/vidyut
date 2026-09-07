@@ -273,6 +273,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Laptop telemetry'), findsOneWidget);
+    expect(find.text('Readings look normal'), findsOneWidget);
+    expect(find.text('Live from the laptop.'), findsOneWidget);
+    expect(find.text('Laptop is running smoothly'), findsNothing);
+    expect(find.text('Everything looks good.'), findsNothing);
     expect(find.text('88%'), findsOneWidget);
     expect(find.text('Charging'), findsOneWidget);
     expect(find.text('65.4°C'), findsOneWidget);
@@ -317,8 +321,158 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Laptop telemetry'), findsOneWidget);
+    expect(find.text('Telemetry unavailable'), findsOneWidget);
+    expect(find.text('Waiting for a fresh reading.'), findsOneWidget);
+    expect(find.text('Readings look normal'), findsNothing);
     expect(find.text('88%'), findsNothing);
     expect(find.text('Unavailable'), findsWidgets);
     expect(find.text('Laptop disconnected'), findsNothing);
+  });
+
+  testWidgets(
+    'prefers disconnected over hot readings when the laptop is offline',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: HomeScreen(
+            connectionStatus: ConnectionStatus.offline,
+            laptopTelemetry: LaptopTelemetry(
+              ts: DateTime.now().millisecondsSinceEpoch,
+              cpuTemperatureCelsius: 90,
+              cpuUsagePercent: 95,
+            ),
+            onOpenFiles: () {},
+            onOpenSettings: () {},
+            onOpenRecentActivity: () {},
+            onOpenConnectionDetails: () {},
+            onSendFiles: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Laptop disconnected'), findsWidgets);
+      expect(
+        find.text('Telemetry pauses until it reconnects.'),
+        findsOneWidget,
+      );
+      expect(find.text('CPU is too hot'), findsNothing);
+      expect(find.text('Readings look normal'), findsNothing);
+    },
+  );
+
+  testWidgets('reports a critical CPU temperature in the telemetry headline', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            cpuTemperatureCelsius: 84.2,
+            cpuUsagePercent: 91,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('CPU is too hot'), findsOneWidget);
+    expect(find.text('84.2°C. The laptop may slow down.'), findsOneWidget);
+    expect(find.text('CPU is under load'), findsNothing);
+    expect(find.text('Readings look normal'), findsNothing);
+  });
+
+  testWidgets('reports high CPU usage in the telemetry headline', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            cpuTemperatureCelsius: 64,
+            cpuUsagePercent: 88,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('CPU is under load'), findsOneWidget);
+    expect(find.text('88% in use.'), findsOneWidget);
+    expect(find.text('Readings look normal'), findsNothing);
+  });
+
+  testWidgets('reports a warm CPU in the telemetry headline', (tester) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            cpuTemperatureCelsius: 73.1,
+            cpuUsagePercent: 40,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('CPU is warm'), findsOneWidget);
+    expect(find.text('73.1°C.'), findsOneWidget);
+    expect(find.text('Readings look normal'), findsNothing);
   });
 }
