@@ -1253,12 +1253,24 @@ class _QrPairingScreenState extends State<QrPairingScreen> {
       });
     } on Exception catch (error) {
       if (!mounted) return;
-      setState(() => _cameraError = 'Could not start the camera: $error');
+      sharedDebugLog.add(
+        'pairing',
+        'Could not start the camera: $error',
+        isError: true,
+      );
+      setState(
+        () => _cameraError = 'Could not start the camera. Use manual pairing.',
+      );
     }
   }
 
   void _handleCameraError(Object error, StackTrace stackTrace) {
     if (!mounted) return;
+    sharedDebugLog.add(
+      'pairing',
+      'Could not start the camera: $error',
+      isError: true,
+    );
     setState(
       () => _cameraError = 'Could not start the camera. Use manual pairing.',
     );

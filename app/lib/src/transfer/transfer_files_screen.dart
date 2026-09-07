@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 
+import '../debug/debug_log.dart';
 import '../design/palette.dart';
 import 'phone_transfer_sender.dart';
 import 'transfer_history.dart';
@@ -117,10 +118,11 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     try {
       selected = await const VidyutFiles().pickFiles();
     } on Object catch (error) {
+      sharedDebugLog.add('files', 'Selection failed: $error', isError: true);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Selection failed: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't select files. Try again.")),
+        );
       }
       return;
     }
@@ -144,10 +146,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
             .toList(),
       );
     } on Object catch (error) {
+      sharedDebugLog.add('files', 'Transfer failed: $error', isError: true);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Transfer failed: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Couldn't start the transfer. Try again."),
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -166,10 +171,13 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     try {
       await widget.sender.retry(batch);
     } on Object catch (error) {
+      sharedDebugLog.add('files', 'Retry failed: $error', isError: true);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Retry failed: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Couldn't retry the transfer. Try again."),
+          ),
+        );
       }
     } finally {
       if (mounted) {
