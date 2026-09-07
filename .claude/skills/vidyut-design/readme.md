@@ -27,7 +27,7 @@ Screens: onboarding wizard (permission steps + pairing finale), home/pairing (st
 
 ## VISUAL FOUNDATIONS
 
-- **Color**: two pinks on pure white with plum ink. White page (`--ground`), flat mist `#FDF0F4` cards, petal `#F8D3DE` emphasis surfaces, raspberry `#D9486E` as the only strong accent, ink `#33202B` text, muted mauve `#A88794` secondary text, hairline `#F4DBE4` borders, deep `#B3283E` errors. No gradients, no imagery, no dark mode.
+- **Color**: two pinks on pure white with plum ink. White page (`--ground`), flat mist `#FDF0F4` cards, petal `#F8D3DE` emphasis surfaces, raspberry `#C83861` as the only strong accent, ink `#33202B` text, muted plum `#856774` secondary text, hairline `#9D878F` borders, deep `#B3283E` errors. No gradients, no imagery, no dark mode.
 - **Elevation: none.** Everything is flat — zero shadows, zero surface tints. Hierarchy comes from surface color (white → mist → petal) and hairlines.
 - **Type**: Plus Jakarta Sans only. Weight-driven hierarchy: 800 with tight −0.03em tracking for display/titles (26px) and app-bar (20px); 600 for section titles/labels/buttons; 500 for body. Line-height 1.3 everywhere. Muted color = secondary.
 - **Radii**: 20px cards, 16px inputs/tiles, 14px app-bar icon chips, 13px list leading icons, full pill (999) for buttons, chips, snackbar, step dots.

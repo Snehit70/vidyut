@@ -6,10 +6,14 @@ abstract final class Palette {
   static const ground = Color(0xFFFFFFFF);
   static const mist = Color(0xFFFDF0F4);
   static const petal = Color(0xFFF8D3DE);
-  static const raspberry = Color(0xFFD9486E);
+  /// Primary action color. Tuned for ≥4.5:1 as white labels and as text on
+  /// [ground] and [mist].
+  static const raspberry = Color(0xFFC83861);
   static const ink = Color(0xFF33202B);
-  static const muted = Color(0xFFA88794);
-  static const hairline = Color(0xFFF4DBE4);
+  /// Supporting text. Tuned for ≥4.5:1 on [ground] and [mist].
+  static const muted = Color(0xFF856774);
+  /// Borders and field outlines. Tuned for ≥3:1 on [ground] and [mist].
+  static const hairline = Color(0xFF9D878F);
   static const error = Color(0xFFB3283E);
   static const active = Color(0xFFA85B00);
   static const activeMist = Color(0xFFFFF7ED);
@@ -24,7 +28,8 @@ abstract final class Palette {
   static const darkRaspberry = Color(0xFFFFB1C3);
   static const darkInk = Color(0xFFF8EAF0);
   static const darkMuted = Color(0xFFD4B8C4);
-  static const darkHairline = Color(0xFF5A3B48);
+  /// Borders and field outlines. Tuned for ≥3:1 on [darkGround] and [darkMist].
+  static const darkHairline = Color(0xFF805F6C);
   static const darkError = Color(0xFFFFB3BD);
   static const darkSuccess = Color(0xFF8DDB9F);
   static const darkWarning = Color(0xFFFFB870);
