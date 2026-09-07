@@ -121,21 +121,11 @@ class _MiuiItemState extends State<_MiuiItem> {
                   ],
                   if (widget.actionLabel != null)
                     TextButton(
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
                       onPressed: () => widget.onAction?.call(),
                       child: Text(widget.actionLabel!),
                     ),
                   if (widget.expandableHow != null) ...[
                     TextButton(
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 32),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
                       onPressed: () => setState(() => _expanded = !_expanded),
                       child: Text(_expanded ? 'Hide' : 'How?'),
                     ),
