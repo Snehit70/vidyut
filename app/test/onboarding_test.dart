@@ -188,6 +188,10 @@ void main() {
       await tester.pumpWidget(wizard());
       await tester.pumpAndSettle();
 
+      final semanticsHandle = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('Step 1 of 4'), findsOneWidget);
+      semanticsHandle.dispose();
+
       expect(find.text('Stay in the loop'), findsOneWidget);
       await tester.tap(find.text('Skip'));
       await tester.pumpAndSettle();
