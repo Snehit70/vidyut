@@ -83,7 +83,11 @@ void main() {
       ),
     );
 
-    expect(find.text('No shared items yet.'), findsOneWidget);
+    expect(find.text('No activity yet'), findsOneWidget);
+    expect(
+      find.text('Send a file from Home, or copy something to the clipboard.'),
+      findsOneWidget,
+    );
     expect(find.text('Try again'), findsNothing);
   });
 
