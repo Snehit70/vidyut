@@ -3,35 +3,42 @@
 [![CI](https://github.com/Snehit70/vidyut/actions/workflows/ci.yml/badge.svg)](https://github.com/Snehit70/vidyut/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Vidyut is a LAN-only, end-to-end-encrypted clipboard pool for a Linux/Wayland laptop
-and an Android phone: copy a screenshot or text on one device, paste it on the other a
-second later. Same WiFi only; nothing ever touches the internet.
+Copy a screenshot or some text on your Linux laptop, paste it on your Android phone a second later. Or the other way around. Same WiFi. Nothing leaves the LAN.
 
-Two components: a **Bun relay** on the laptop (encrypted WebSocket protocol,
-latest-write-wins pool, Wayland clipboard adapter/sync, mDNS advertisement, QR/manual
-pairing, structured logs, compiled binary) and a **Flutter Android app** in `app/`
-(share-sheet push, screenshot auto-push, zero-tap receive, foreground-service connection,
-buttonless status dashboard). Two-direction sync is verified on-device; the live status
-map is `docs/IMPLEMENTATION_STATUS.md` and the wayfinder map is GitHub issue #9.
+<p align="center">
+  <img src="docs/screenshots/home.jpg" width="250" alt="Paired home, Ready, with live laptop telemetry">
+  <img src="docs/screenshots/files.jpg" width="250" alt="Files history">
+  <img src="docs/screenshots/transfer.jpg" width="250" alt="File sending in progress">
+</p>
+
+Vidyut keeps one clipboard pool between those two devices. The newest copy wins. There is no history.
+
+The idea is the same as Universal Clipboard. Android forbids background clipboard reads, so the phone publishes on purpose through the share sheet, screenshot auto-push, or a notification action. Incoming payloads can land with zero taps once clipboard permission is granted.
+
+Files are a separate path. You send them on purpose. Interrupted transfers resume from receiver-confirmed progress, and complete files are checked with SHA-256 before they become visible.
+
+The laptop runs a compiled Bun relay. It watches the Wayland clipboard, holds the current encrypted payload, advertises `_vidyut._tcp` over mDNS, and talks to the phone over a LAN WebSocket. Pairing is a QR code or a one-line host, port, and secret. The phone is the Flutter app in `app/`. It stays connected through a foreground service so Android does not kill it the moment you switch apps.
+
+Every clipboard payload and file chunk is end-to-end encrypted with the pairing secret. Other devices on the WiFi cannot read it. The relay never sees plaintext.
 
 ## Guides
 
-- **[docs/SETUP.md](docs/SETUP.md)** — new-user setup, laptop + phone, end to end.
-- **[docs/USAGE.md](docs/USAGE.md)** — how to use it day to day.
-- **[docs/INSTALL.md](docs/INSTALL.md)** — laptop relay install/service detail.
-- **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** — field-verified fixes.
-- **[CONTEXT.md](CONTEXT.md)** — glossary/terminology used across the codebase and docs.
+- [docs/SETUP.md](docs/SETUP.md). First pairing, laptop and phone, about five minutes.
+- [docs/USAGE.md](docs/USAGE.md). Daily copy, paste, screenshots, and file sending.
+- [docs/INSTALL.md](docs/INSTALL.md). systemd user service, tray, and file-manager actions.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Field-verified fixes.
+- [CONTEXT.md](CONTEXT.md). Words used in the code and the docs.
 
-The rest of this file is the developer-facing quickstart.
+The live gap map against the PRD is [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). The rest of this file is the relay developer quickstart.
 
-## Relay Prerequisites
+## Relay prerequisites
 
-- Linux Wayland session
-- `wl-clipboard` 2.3+ installed (`wl-copy` and `wl-paste`; 2.3 adds KDE/KWin
-  `ext-data-control-v1` support)
-- Bun 1.3.3 for development
+- A Linux Wayland session. X11 and headless are not supported.
+- `wl-clipboard` 2.3 or newer, so `wl-copy` and `wl-paste` exist. 2.3 added `ext-data-control-v1`, which KDE/KWin needs.
+- ImageMagick is recommended. Phone screenshots often arrive as JPEG, and most Linux apps only paste PNG. The relay re-encodes when `magick` is present.
+- Bun 1.3.3 to build and test. The installed binary does not need Bun at runtime.
 
-## Run The Relay
+## Run the relay
 
 ```bash
 bun install
@@ -45,19 +52,34 @@ On first run the relay creates `~/.config/vidyut/relay.json` with a persistent p
 host=<lan-ip> port=17321 secret=<pairing-secret>
 ```
 
-The relay checks whether the configured port is already in use before starting. It also advertises `_vidyut._tcp` over mDNS for phone discovery.
+The secret does not rotate across restarts. Pair once.
 
-## Install As A Service
+The relay refuses to start if the configured port is already in use. It also advertises `_vidyut._tcp` over mDNS so the phone can find it without typing a host.
 
-To run the relay persistently as a `systemd --user` service:
+## Install as a service
 
 ```bash
 bun run install:relay
 ```
 
-See `docs/INSTALL.md` for prerequisites, pairing under systemd, and troubleshooting.
+That compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, enables the `systemd --user` unit, and starts it with your graphical session. The installer also adds a tray, a file picker, and Send with Vidyut actions for Dolphin and Nautilus.
 
-## Development Checks
+See `docs/INSTALL.md` for pairing under systemd, firewall notes, and service commands.
+
+## Android app
+
+The Flutter app lives in `app/`. From there:
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+```
+
+CI pins Flutter 3.44.4 on the stable channel. Details are in `app/README.md`.
+
+## Development checks
 
 ```bash
 bun run typecheck
@@ -65,20 +87,20 @@ bun test
 bun run build:relay
 ```
 
-## Current Manual Relay Smoke Test
+## Relay smoke test
 
-This verifies the laptop relay surface only. Full phone E2E requires the Android app.
+This only exercises the laptop relay. Full phone E2E needs the Android app.
 
 ```bash
 ./dist/vidyut-relay --no-clipboard --port 17321 --log-level debug
 ```
 
-In another terminal, run the Bun tests against the in-process relay implementation:
+In another terminal, run the protocol tests against the in-process relay:
 
 ```bash
 bun test tests/relay-protocol.test.ts
 ```
 
-## Full V1 E2E
+## Full v1 E2E
 
-The two-direction acceptance script — laptop text/image to phone via notification tap, phone share-sheet to laptop `wl-paste`, plus reconnect and observability checks — lives in `docs/E2E.md`. V1 is done when that script passes green in both directions on the real phone and laptop.
+The two-direction acceptance script is `docs/E2E.md`. It covers laptop text and images to the phone via a notification tap, phone share-sheet to laptop `wl-paste`, reconnect, and observability. V1 is done when that script is green on the real phone and laptop.
