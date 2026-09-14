@@ -29,7 +29,7 @@ Every clipboard payload and file chunk is end-to-end encrypted with the pairing 
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Field-verified fixes.
 - [CONTEXT.md](CONTEXT.md). Words used in the code and the docs.
 
-The live gap map against the PRD is [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). The rest of this file is the relay developer quickstart.
+The rest of this file is how to build the relay from source.
 
 ## Relay prerequisites
 
@@ -86,21 +86,3 @@ bun run typecheck
 bun test
 bun run build:relay
 ```
-
-## Relay smoke test
-
-This only exercises the laptop relay. Full phone E2E needs the Android app.
-
-```bash
-./dist/vidyut-relay --no-clipboard --port 17321 --log-level debug
-```
-
-In another terminal, run the protocol tests against the in-process relay:
-
-```bash
-bun test tests/relay-protocol.test.ts
-```
-
-## Full v1 E2E
-
-The two-direction acceptance script is `docs/E2E.md`. It covers laptop text and images to the phone via a notification tap, phone share-sheet to laptop `wl-paste`, reconnect, and observability. V1 is done when that script is green on the real phone and laptop.
