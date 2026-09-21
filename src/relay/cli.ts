@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { createWaylandClipboardAdapter } from "./clipboard";
 import { startClipboardSync, type ClipboardHealth } from "./clipboard-sync";
-import { loadOrCreateRelayConfig, type LogLevel } from "./config";
+import { loadOrCreateRelayConfig, writeRelayConfig, type LogLevel } from "./config";
 import { createLogger } from "./logger";
 import { startMdnsAdvertisement } from "./mdns";
 import { getLanIPv4Addresses, getPairingHost } from "./network";
@@ -44,6 +44,7 @@ const logLevel = options.logLevel ?? config.logLevel;
 const logger = createLogger(logLevel);
 const pairingHost = getPairingHost(host);
 const relayName = hostname().trim() || "Vidyut Relay";
+const pairingSecret = { value: config.pairingSecret };
 
 if (options.showTransfers) {
   await printTransfers(options.configPath);
@@ -81,7 +82,7 @@ const transferCoordinator = new TransferCoordinator({
   progressSessions: receiverProgressSessions,
 });
 const transferDataPlane = new LaptopTransferDataPlane(
-  config.pairingSecret,
+  pairingSecret,
   transferQueue,
   preferredTransferChunkBytes,
   (message) => relay.publishTransferControl(message),
@@ -95,11 +96,18 @@ const transferDataPlane = new LaptopTransferDataPlane(
 relay = await createRelay({
   hostname: host,
   port,
-  pairingSecret: config.pairingSecret,
+  pairingSecret,
+  pairingHost,
   maxPayloadBytes,
   logger,
   relayName,
   clipboardHealth: () => clipboardHealth,
+  persistPairingSecret: async (secret) => {
+    config.pairingSecret = secret;
+    await writeRelayConfig(options.configPath, config);
+  },
+  transferSnapshot: () => transferQueue.snapshot(),
+  enqueueLaptopFiles: (paths) => transferCoordinator.enqueueLaptopFiles(paths),
   transferControl: (message, sourceDeviceId) =>
     transferCoordinator.handleControl(message, sourceDeviceId),
   deviceDisconnected: (deviceId) =>
@@ -114,7 +122,7 @@ const stopClipboard = options.clipboard
   ? startClipboardSync({
       clipboard: createWaylandClipboardAdapter(),
       pool: relay.pool,
-      pairingSecret: config.pairingSecret,
+      pairingSecret,
       origin: config.deviceId,
       now: Date.now,
       logger,
@@ -134,7 +142,7 @@ const stopMdns = startMdnsAdvertisement({
 const pairingCode = createPairingCode({
   host: pairingHost,
   port,
-  pairingSecret: config.pairingSecret,
+  pairingSecret: pairingSecret.value,
   relayName,
 });
 

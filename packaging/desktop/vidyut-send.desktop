@@ -6,7 +6,7 @@
 Type=Application
 Name=Send with Vidyut
 Comment=Send selected files to your paired phone
-Icon=folder-send-symbolic
+Icon=vidyut
 Exec=@VIDYUT_BIN_DIR@/vidyut-send %F
 Terminal=false
 NoDisplay=true

@@ -30,9 +30,10 @@ This file is a live gap map against `docs/PRD.md`. It is not a replacement for t
   hidden partial files, final SHA-256 verification, collision-safe atomic
   finalization, and preserved modified times.
 - `vidyut-relay --send` queues selected laptop files through the running relay;
-  `--transfers` prints durable queue/history state. The installer adds a
-  picker, Yad tray, transfer-history panel, Dolphin service menu, and Nautilus
-  script.
+  `--transfers` prints durable queue/history state. The installer adds Dolphin
+  and Nautilus send actions. The Tauri desktop shell is a tray and window
+  around the loopback Relay page; it is installed when `vidyut-shell` has been
+  built.
 - Android accepts generic single/multiple share intents and system-picker
   selections, provides searchable/filterable Files history with retry/remove/
   clear actions, and receives in the foreground-service engine.

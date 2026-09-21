@@ -18,6 +18,7 @@ as they are diagnosed; only record what was actually reproduced and fixed.
 - [Laptop: did the payload even arrive? The relay logs nothing](#laptop-did-the-payload-even-arrive-the-relay-logs-nothing)
 - [Dashboard/relay "bytes" is larger than the text you copied (+17 for text)](#dashboardrelay-bytes-is-larger-than-the-text-you-copied-17-for-text)
 - [Phone: stuck on "Searching" after a laptop reboot — service isolate wedged](#phone-stuck-on-searching-after-a-laptop-reboot--service-isolate-wedged)
+- [Laptop: duplex clipboard sync dies until `vidyut-relay` is restarted](#laptop-duplex-clipboard-sync-dies-until-vidyut-relay-is-restarted)
 
 ## Phone: tapping "Send clipboard" on the notification does nothing
 
@@ -277,3 +278,29 @@ Durable fix ideas (not yet implemented): timeout-guard `_teardown()`/`close()`,
 add a service-isolate watchdog that forces a fresh `_sync` when disconnected
 too long, and make the screen-on trigger verify the socket instead of trusting
 `_lastStatus`.
+
+## Laptop: duplex clipboard sync dies until `vidyut-relay` is restarted
+
+**Symptom:** Phone stays "connected", but copies stop moving in one or both
+directions. Restarting `systemctl --user restart vidyut-relay` (not the phone
+app) brings sync back.
+
+**Cause:** `wl-paste` / `wl-copy` / `magick` can block forever on a stuck
+Wayland selection owner. Three code bugs turned that into a dead relay:
+
+1. The clipboard watch loop `await`ed every change with no `try/catch`, so one
+   thrown `wl-paste` killed laptop→phone watching until process restart.
+2. Those tools were spawned with no timeout, so a hung `wl-paste --list-types`
+   held the watch loop (and, on Hyprland, the data-control device).
+3. Phone publish acked only after the laptop clipboard write finished, so a
+   hung `wl-copy`/`magick` wedged that WebSocket's message handler.
+
+**Fix:** 5s kill-timeout on clipboard processes, watch loop survives a thrown
+change, read/write are serialized, and the phone's ack no longer waits on the
+Wayland write. Rebuild, install, and restart the relay:
+
+```
+bun run build:relay
+install -m 755 dist/vidyut-relay ~/.local/bin/vidyut-relay
+systemctl --user restart vidyut-relay
+```

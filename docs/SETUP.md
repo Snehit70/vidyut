@@ -19,62 +19,62 @@ the first time; pairing is once per phone, then it just runs.
 
 ---
 
-## Part A — Laptop: install the relay
+## Part A — Laptop: install the Relay
 
-The **relay** is a single compiled binary that watches your laptop clipboard and serves
-your paired phone. It runs as a `systemd --user` service that starts with your desktop.
+The **Relay** watches your laptop clipboard and serves your paired phone. It
+runs as a `systemd --user` service that starts with your desktop. The desktop
+shell is the window for pairing, Ready / Sync needs attention, Files, laptop
+setup status, and rotate pairing secret.
 
-### 1. Install the dependencies
+### 1. Install the package
 
-```bash
-sudo dnf install wl-clipboard ImageMagick      # Fedora
-sudo apt install wl-clipboard imagemagick      # Debian/Ubuntu
-```
-
-- **wl-clipboard 2.3+** (`wl-copy`/`wl-paste`) is required — the relay reads and
-  writes the clipboard through it. Version 2.3 added the standardized
-  `ext-data-control-v1` protocol used by KDE/KWin. Some distributions still
-  package 2.2.1; check with `wl-paste --version` and install 2.3+ manually from
-  the [upstream release](https://github.com/bugaevc/wl-clipboard/releases/tag/v2.3.0)
-  when needed. Vidyut does not replace the distribution package automatically.
-- **ImageMagick** (`magick`) is recommended — phone screenshots often arrive as JPEG,
-  and most Linux apps only paste `image/png`. The relay re-encodes to PNG when
-  ImageMagick is present. Without it, screenshots may land on the clipboard but refuse
-  to paste (see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)).
-- **[Bun](https://bun.sh)** is needed only to *build* the binary, not to run it.
-
-### 2. Build, install, and start
-
-From the repo root:
+Get the `.rpm` or `.deb` from the latest
+[GitHub Release](https://github.com/Snehit70/vidyut/releases/latest):
 
 ```bash
-bun run install:relay
+sudo dnf install ./vidyut-*.rpm      # Fedora
+sudo apt install ./vidyut_*.deb      # Debian/Ubuntu
 ```
 
-This compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, installs the
-systemd user unit, and starts the service. It is tied to `graphical-session.target`, so
-it comes up with your desktop and stops when you log out.
+The package depends on **wl-clipboard** and **ImageMagick**. It does not need
+Bun. After install, open the Vidyut desktop shell. If you are already logged
+in, you may need:
 
-### 3. Get your pairing details
+```bash
+systemctl --user daemon-reload
+systemctl --user start vidyut-relay
+```
 
-On first start the relay creates `~/.config/vidyut/relay.json` (mode 600) with a
-persistent pairing secret, then prints a QR code and a manual fallback line to the
-journal:
+A later version is another GitHub `.rpm` or `.deb` installed with `dnf` or
+`apt`. There is no in-app updater.
+
+From source instead, install `wl-clipboard` 2.3+ and ImageMagick, then from
+the repo root run `bun run install:relay`. Bun is only for that build.
+`wl-paste --version` must report 2.3+ on KDE/KWin. Some distributions still
+ship 2.2.1; install 2.3+ from the
+[upstream release](https://github.com/bugaevc/wl-clipboard/releases/tag/v2.3.0)
+when needed. Details are in [`INSTALL.md`](INSTALL.md).
+
+### 2. Pair from the desktop shell
+
+Open **Vidyut**. The pairing QR, host, port, and secret are on that page.
+Point the phone at the QR. One secret is shared by every device.
+
+On first start the Relay writes `~/.config/vidyut/relay.json` (mode 600). It
+also prints the QR and a manual line to the journal, which is the fallback:
 
 ```bash
 journalctl --user -u vidyut-relay -b --no-pager | tail -40
 ```
 
-You'll see a QR code and a line like:
-
 ```text
 host=192.168.29.98 port=17321 secret=<pairing-secret>
 ```
 
-Keep this terminal handy for Part B. The secret never changes between restarts — you
-pair once.
+You pair once. Rotate pairing secret in the desktop shell if you need to
+revoke every phone.
 
-> More laptop detail (managing the service, mDNS/firewall notes, port conflicts) lives
+> More laptop detail (service commands, mDNS/firewall, port conflicts) lives
 > in [`INSTALL.md`](INSTALL.md).
 
 ---
@@ -142,7 +142,7 @@ On the pairing screen, pick whichever is easiest:
 - **Auto-discover (recommended):** the app browses for `_vidyut._tcp` on the LAN and
   lists nearby relays. Tap yours — host and port fill in automatically, so you only type
   the secret.
-- **Scan the QR** shown in the laptop journal.
+- **Scan the QR** in the Vidyut desktop shell (journalctl is the fallback).
 - **Manual entry:** type the `host=… port=… secret=…` values yourself.
 
 Once paired, the home screen shows **Connected** and the pairing is saved — you won't

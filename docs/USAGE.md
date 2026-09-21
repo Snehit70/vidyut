@@ -122,7 +122,7 @@ more files to Vidyut from another app. Received files appear in
 `Downloads/Vidyut` by default; change the folder under **Settings → Files**.
 
 On Linux, select files in Dolphin or Nautilus and choose **Send with Vidyut**,
-or click the Vidyut tray icon. From a terminal:
+or use **Send files** in the desktop shell or tray. From a terminal:
 
 ```bash
 vidyut-relay --send "/path/to/file"
@@ -132,3 +132,9 @@ vidyut-relay --transfers
 Files are transferred only over the paired LAN connection. Interrupted
 transfers retain receiver-confirmed progress and complete files are verified
 with SHA-256 before they become visible.
+
+## Linux updates
+
+There is no auto-update. A newer GitHub release is an `.rpm` or `.deb`
+installed with `dnf` or `apt`. The desktop shell may show **Open releases**,
+which is a GitHub link. It does not download or overwrite binaries.

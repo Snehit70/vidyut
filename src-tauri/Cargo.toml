@@ -1,0 +1,25 @@
+[package]
+name = "vidyut-shell"
+version = "1.11.2"
+description = "Vidyut desktop shell"
+authors = ["Snehit"]
+edition = "2021"
+license = "MIT"
+rust-version = "1.77"
+
+[lib]
+name = "vidyut_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "vidyut-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"

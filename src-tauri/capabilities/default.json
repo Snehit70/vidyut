@@ -1,0 +1,17 @@
+{
+  "identifier": "default",
+  "description": "Desktop shell commands for the loopback Relay page.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*"]
+  },
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "allow-start-relay",
+    "allow-stop-relay",
+    "allow-pick-and-send-files",
+    "allow-open-releases",
+    "allow-relay-ui"
+  ]
+}

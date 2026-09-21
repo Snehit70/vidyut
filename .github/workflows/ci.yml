@@ -38,6 +38,124 @@ jobs:
           path: dist/vidyut-relay
           if-no-files-found: error
 
+  shell:
+    name: Desktop shell
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install WebKitGTK
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config
+
+      - name: Build desktop shell
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --release
+
+      - name: Upload desktop shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: vidyut-shell-linux-x64
+          path: src-tauri/target/release/vidyut-shell
+          if-no-files-found: error
+
+  packages:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    needs: [relay, shell]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download relay binary
+        uses: actions/download-artifact@v4
+        with:
+          name: vidyut-relay-linux-x64
+          path: dist
+
+      - name: Download desktop shell
+        uses: actions/download-artifact@v4
+        with:
+          name: vidyut-shell-linux-x64
+          path: src-tauri/target/release
+
+      - name: Install nFPM
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/nfpm.tgz \
+            https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz
+          tar -C /tmp -xzf /tmp/nfpm.tgz nfpm
+          sudo install -m 755 /tmp/nfpm /usr/local/bin/nfpm
+          nfpm --version
+
+      - name: Build rpm and deb
+        run: |
+          set -euo pipefail
+          chmod +x dist/vidyut-relay src-tauri/target/release/vidyut-shell
+          bash scripts/build-linux-packages.sh
+
+      - name: Check package contents
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rpm file
+          deb="$(ls dist/packages/*.deb)"
+          rpm_pkg="$(ls dist/packages/*.rpm)"
+
+          dpkg-deb -I "$deb"
+          depends="$(dpkg-deb -f "$deb" Depends)"
+          echo "$depends" | grep -F wl-clipboard
+          echo "$depends" | grep -F imagemagick
+          if echo "$depends" | grep -qi bun; then
+            echo "deb Depends must not include Bun" >&2
+            exit 1
+          fi
+
+          listing="$(dpkg-deb -c "$deb")"
+          echo "$listing" | grep -F "./usr/bin/vidyut-relay"
+          echo "$listing" | grep -F "./usr/bin/vidyut-shell"
+          extract="$(mktemp -d)"
+          dpkg-deb -x "$deb" "$extract"
+          file "$extract/usr/bin/vidyut-shell" | grep -F ELF
+          if grep -Fq "vidyut-shell stub" "$extract/usr/bin/vidyut-shell"; then
+            echo "packaged vidyut-shell must not be the stub" >&2
+            exit 1
+          fi
+          echo "$listing" | grep -F "./usr/lib/systemd/user/vidyut-relay.service"
+          echo "$listing" | grep -F "./usr/share/applications/vidyut.desktop"
+          echo "$listing" | grep -F "./usr/share/kio/servicemenus/vidyut-send.desktop"
+          echo "$listing" | grep -F "./usr/share/nautilus/scripts/Send with Vidyut"
+          echo "$listing" | grep -F "./usr/share/nautilus-python/extensions/vidyut-send.py"
+
+          rpm -qp --requires "$rpm_pkg"
+          rpm -qlp "$rpm_pkg" | grep -F "/usr/bin/vidyut-relay"
+          rpm -qp --requires "$rpm_pkg" | grep -F wl-clipboard
+          rpm -qp --requires "$rpm_pkg" | grep -F ImageMagick
+          if rpm -qp --requires "$rpm_pkg" | grep -qi bun; then
+            echo "rpm requires must not include Bun" >&2
+            exit 1
+          fi
+
   app:
     name: Flutter app
     runs-on: ubuntu-latest

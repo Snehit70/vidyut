@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+name: vidyut
+arch: amd64
+platform: linux
+version: ${VIDYUT_VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Snehit
+vendor: Vidyut
+homepage: https://github.com/Snehit70/vidyut
+license: MIT
+description: |-
+  LAN clipboard Pool and file Transfers for a Linux laptop and Android phone.
+  Installs the Relay, desktop shell, systemd user unit, and Send with Vidyut
+  for Dolphin and Nautilus. Bun is not needed at runtime.
+
+contents:
+  - src: dist/linux-pkg/vidyut-relay
+    dst: /usr/bin/vidyut-relay
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/vidyut-shell
+    dst: /usr/bin/vidyut-shell
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/vidyut-send
+    dst: /usr/bin/vidyut-send
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/vidyut-transfer-history
+    dst: /usr/bin/vidyut-transfer-history
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/vidyut.desktop
+    dst: /usr/share/applications/vidyut.desktop
+    file_info:
+      mode: 0644
+  - src: dist/linux-pkg/vidyut-send.desktop
+    dst: /usr/share/applications/vidyut-send.desktop
+    file_info:
+      mode: 0644
+  - src: dist/linux-pkg/kde-vidyut-send.desktop
+    dst: /usr/share/kio/servicemenus/vidyut-send.desktop
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/kde-vidyut-send.desktop
+    dst: /usr/share/kservices5/ServiceMenus/vidyut-send.desktop
+    file_info:
+      mode: 0755
+  - src: dist/linux-pkg/Send with Vidyut
+    dst: /usr/share/nautilus/scripts/Send with Vidyut
+    file_info:
+      mode: 0755
+  - src: packaging/linux/nautilus-python/vidyut-send.py
+    dst: /usr/share/nautilus-python/extensions/vidyut-send.py
+    file_info:
+      mode: 0644
+  - src: packaging/linux/vidyut-relay.service
+    dst: /usr/lib/systemd/user/vidyut-relay.service
+    file_info:
+      mode: 0644
+  - src: /usr/lib/systemd/user/vidyut-relay.service
+    dst: /usr/lib/systemd/user/graphical-session.target.wants/vidyut-relay.service
+    type: symlink
+  - src: packaging/linux/90-vidyut.preset
+    dst: /usr/lib/systemd/user-preset/90-vidyut.preset
+    file_info:
+      mode: 0644
+  - src: src-tauri/icons/32x32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/vidyut.png
+    file_info:
+      mode: 0644
+  - src: src-tauri/icons/128x128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/vidyut.png
+    file_info:
+      mode: 0644
+  - src: src-tauri/icons/128x128@2x.png
+    dst: /usr/share/icons/hicolor/256x256/apps/vidyut.png
+    file_info:
+      mode: 0644
+  - src: src-tauri/icons/icon.png
+    dst: /usr/share/icons/hicolor/512x512/apps/vidyut.png
+    file_info:
+      mode: 0644
+  - src: src-tauri/icons/128x128.png
+    dst: /usr/share/pixmaps/vidyut.png
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/doc/vidyut/copyright
+    file_info:
+      mode: 0644
+
+overrides:
+  deb:
+    depends:
+      - wl-clipboard
+      - imagemagick
+      - libwebkit2gtk-4.1-0
+      - libgtk-3-0
+      - libayatana-appindicator3-1
+      - librsvg2-2
+      - libnotify-bin
+      - python3
+    recommends:
+      - python3-nautilus
+  rpm:
+    depends:
+      - wl-clipboard
+      - ImageMagick
+      - webkit2gtk4.1
+      - gtk3
+      - libayatana-appindicator-gtk3
+      - librsvg2
+      - libnotify
+      - python3
+    recommends:
+      - nautilus-python

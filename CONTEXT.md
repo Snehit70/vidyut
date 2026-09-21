@@ -20,8 +20,16 @@ _Avoid_: item, entry, message, clip
 **Relay**:
 The small server that holds the current pool payload and broadcasts new payloads
 to every connected device. It runs on the laptop and is reachable only over the
-local WiFi network; nothing leaves the LAN.
-_Avoid_: server, hub, broker
+local WiFi network; nothing leaves the LAN. It keeps running when the desktop
+shell is closed.
+_Avoid_: server, hub, broker, desktop shell, the app
+
+**Desktop shell**:
+The laptop window and tray for pairing, Ready / Sync needs attention, file
+sending, laptop setup status, and rotate pairing secret. It operates the
+Relay; it is not the Relay and not a Device. Closing the window does not stop
+the Pool. Activity stays a phone surface.
+_Avoid_: desktop app, Electron app, laptop client, GUI, the app
 
 **Telemetry**:
 A live snapshot of the paired laptop's operating state — battery, memory usage,
@@ -50,8 +58,15 @@ _Avoid_: upload, send
 The user-facing action that deletes the saved pairing, so the phone no longer
 knows any relay and must re-pair (QR or manual) to sync again. Named for its
 consequence, like Bluetooth "Forget device". Lives only in Settings, behind a
-confirmation (ADR 0005).
-_Avoid_: reset pairing, unpair, disconnect
+confirmation (ADR 0005). Laptop-side revocation is rotate pairing secret, not
+this action.
+_Avoid_: reset pairing, unpair, disconnect, rotate pairing secret
+
+**Rotate pairing secret**:
+The laptop-side action that replaces the Relay's single pairing secret and
+invalidates every existing pairing. Every phone must scan the new QR. Lives
+in the desktop shell behind a confirmation. There is no per-phone roster.
+_Avoid_: Forget this phone, Forget this laptop, reset pairing, unpair
 
 **Sync with laptop**:
 The master on/off switch in Settings. On keeps the relay link alive for
@@ -60,11 +75,20 @@ is the app's power switch, not a notification preference (ADR 0006).
 _Avoid_: background sync, persistent notification toggle
 
 **Setup status**:
-The persistent checklist of everything that can degrade after pairing
+The persistent phone checklist of everything that can degrade after pairing
 (notifications, photos access, battery exemption, pairing, Xiaomi switches),
 each row showing live health and a one-tap fix. The designed recovery surface
-for anything skipped in the onboarding wizard.
-_Avoid_: permissions screen, diagnostics
+for anything skipped in the onboarding wizard. Laptop recovery is laptop setup
+status, not this list.
+_Avoid_: permissions screen, diagnostics, laptop setup status
+
+**Laptop setup status**:
+The persistent laptop checklist of conditions that can degrade the Relay:
+Relay running, Wayland (X11 fails with an explanation, not an adapter),
+wl-clipboard 2.3+, ImageMagick, autostart, and firewall. Each row shows live
+health and a fix when one exists. Distinct from Setup status, which is the
+phone checklist.
+_Avoid_: Setup status, permissions screen, diagnostics
 
 **Transfer**:
 A durable, explicitly initiated movement of one regular file between the paired

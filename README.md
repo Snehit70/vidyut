@@ -17,7 +17,7 @@ The idea is the same as Universal Clipboard. Android forbids background clipboar
 
 Files are a separate path. You send them on purpose. Interrupted transfers resume from receiver-confirmed progress, and complete files are checked with SHA-256 before they become visible.
 
-The laptop runs a compiled Bun relay. It watches the Wayland clipboard, holds the current encrypted payload, advertises `_vidyut._tcp` over mDNS, and talks to the phone over a LAN WebSocket. Pairing is a QR code or a one-line host, port, and secret. The phone is the Flutter app in `app/`. It stays connected through a foreground service so Android does not kill it the moment you switch apps.
+The laptop runs a compiled Bun Relay. It watches the Wayland clipboard, holds the current encrypted payload, advertises `_vidyut._tcp` over mDNS, and talks to the phone over a LAN WebSocket. Pairing is a QR in the desktop shell, or a one-line host, port, and secret. The phone is the Flutter app in `app/`. It stays connected through a foreground service so Android does not kill it the moment you switch apps.
 
 Every clipboard payload and file chunk is end-to-end encrypted with the pairing secret. Other devices on the WiFi cannot read it. The relay never sees plaintext.
 
@@ -25,11 +25,26 @@ Every clipboard payload and file chunk is end-to-end encrypted with the pairing 
 
 - [docs/SETUP.md](docs/SETUP.md). First pairing, laptop and phone, about five minutes.
 - [docs/USAGE.md](docs/USAGE.md). Daily copy, paste, screenshots, and file sending.
-- [docs/INSTALL.md](docs/INSTALL.md). systemd user service, tray, and file-manager actions.
+- [docs/INSTALL.md](docs/INSTALL.md). `.rpm`/`.deb`, systemd user service, desktop shell, and file-manager actions.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Field-verified fixes.
 - [CONTEXT.md](CONTEXT.md). Words used in the code and the docs.
 
-The rest of this file is how to build the relay from source.
+The rest of this file is how to build the Relay from source. Most laptops should use the package instead.
+
+## Linux packages
+
+Install the `.rpm` or `.deb` from [GitHub Releases](https://github.com/Snehit70/vidyut/releases). The package depends on `wl-clipboard` and ImageMagick. It installs the Relay, the desktop shell, the systemd user unit, and Send with Vidyut for Dolphin and Nautilus. It does not need Bun at runtime.
+
+```bash
+sudo dnf install ./vidyut-*.rpm      # Fedora
+sudo apt install ./vidyut_*.deb      # Debian/Ubuntu
+```
+
+Open the Vidyut desktop shell and scan the pairing QR there. `journalctl --user -u vidyut-relay` is the fallback.
+
+A newer GitHub release is installed with `dnf` or `apt`. There is no auto-update. Open releases in the desktop shell is a GitHub link. It does not download binaries.
+
+Build packages from this tree with `bun run build:relay`, `bun run build:shell`, then `bash scripts/build-linux-packages.sh` (`nfpm.yaml`).
 
 ## Relay prerequisites
 
@@ -46,7 +61,7 @@ bun run build:relay
 ./dist/vidyut-relay --log-level info
 ```
 
-On first run the relay creates `~/.config/vidyut/relay.json` with a persistent pairing secret, prints a QR code, and prints the manual fallback:
+On first run the Relay creates `~/.config/vidyut/relay.json` with a persistent pairing secret. Open the desktop shell for the pairing QR. The process also prints a QR and the manual fallback:
 
 ```text
 host=<lan-ip> port=17321 secret=<pairing-secret>
@@ -62,9 +77,9 @@ The relay refuses to start if the configured port is already in use. It also adv
 bun run install:relay
 ```
 
-That compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, enables the `systemd --user` unit, and starts it with your graphical session. The installer also adds a tray, a file picker, and Send with Vidyut actions for Dolphin and Nautilus.
+That compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, enables the `systemd --user` unit, and starts it with your graphical session. It also installs Send with Vidyut for Dolphin and Nautilus. If you have already run `bun run build:shell`, it installs the Tauri desktop shell and autostart entry. The shell is a window and tray around `http://127.0.0.1:17321/`. It is not the Relay.
 
-See `docs/INSTALL.md` for pairing under systemd, firewall notes, and service commands.
+See `docs/INSTALL.md` for the `.rpm`/`.deb` path, pairing in the desktop shell, firewall notes, and service commands.
 
 ## Android app
 
@@ -85,4 +100,5 @@ CI pins Flutter 3.44.4 on the stable channel. Details are in `app/README.md`.
 bun run typecheck
 bun test
 bun run build:relay
+bun run build:shell
 ```

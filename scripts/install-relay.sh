@@ -17,18 +17,12 @@ for tool in wl-copy wl-paste; do
   fi
 done
 
-for tool in zenity notify-send python3; do
+for tool in notify-send python3; do
   if ! command -v "$tool" >/dev/null; then
     echo "error: $tool is required by the Linux file-sharing integrations." >&2
     exit 1
   fi
 done
-
-install_tray=true
-if ! command -v yad >/dev/null; then
-  install_tray=false
-  echo "warning: yad not found; skipping the optional tray integration." >&2
-fi
 
 if ! command -v bun >/dev/null; then
   echo "error: bun not found. Install Bun to build the relay: https://bun.sh" >&2
@@ -55,13 +49,43 @@ sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
   >"$kde_services_dir/vidyut-send.desktop"
 chmod 755 "$kde_services_dir/vidyut-send.desktop"
 install -m 755 "$repo_root/packaging/nautilus/Send with Vidyut" "$nautilus_scripts_dir/Send with Vidyut"
-if [[ "$install_tray" == true ]]; then
-  install -m 755 "$repo_root/scripts/vidyut-tray" "$bin_dir/vidyut-tray"
+
+icon_hicolor="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+install -D -m 644 "$repo_root/src-tauri/icons/32x32.png" "$icon_hicolor/32x32/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/128x128.png" "$icon_hicolor/128x128/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/128x128@2x.png" "$icon_hicolor/256x256/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/icon.png" "$icon_hicolor/512x512/apps/vidyut.png"
+if command -v gtk-update-icon-cache >/dev/null; then
+  gtk-update-icon-cache -f "$icon_hicolor" >/dev/null 2>&1 || true
+fi
+
+rm -f "$bin_dir/vidyut-tray" "$autostart_dir/vidyut-tray.desktop"
+
+shell_bin=""
+for candidate in \
+  "$repo_root/src-tauri/target/release/vidyut-shell" \
+  "$repo_root/src-tauri/target/debug/vidyut-shell"
+do
+  if [[ -x "$candidate" ]]; then
+    shell_bin="$candidate"
+    break
+  fi
+done
+
+if [[ -n "$shell_bin" ]]; then
+  install -m 755 "$shell_bin" "$bin_dir/vidyut-shell"
   sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
-    "$repo_root/packaging/desktop/vidyut-tray.desktop" \
-    >"$autostart_dir/vidyut-tray.desktop"
+    "$repo_root/packaging/desktop/vidyut.desktop" \
+    >"$applications_dir/vidyut.desktop"
+  sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
+    "$repo_root/packaging/desktop/vidyut.desktop" \
+    >"$autostart_dir/vidyut.desktop"
+  if command -v update-desktop-database >/dev/null; then
+    update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+  fi
 else
-  rm -f "$autostart_dir/vidyut-tray.desktop"
+  rm -f "$autostart_dir/vidyut.desktop"
+  echo "warning: vidyut-shell is not built. Run bun run build:shell, then re-run this installer for the desktop shell." >&2
 fi
 
 systemctl --user daemon-reload
@@ -69,5 +93,6 @@ systemctl --user enable --now vidyut-relay.service
 
 echo
 echo "Installed and started vidyut-relay.service."
-echo "Pairing code: journalctl --user -u vidyut-relay -b --no-pager | tail -40"
+echo "Pairing QR: open the Vidyut desktop shell."
+echo "Fallback:   journalctl --user -u vidyut-relay -b --no-pager | tail -40"
 echo "Follow logs:  journalctl --user -u vidyut-relay -f"

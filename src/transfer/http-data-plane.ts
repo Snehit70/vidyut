@@ -1,7 +1,11 @@
+import {
+  pairingSecretValue,
+  type PairingSecretRef,
+} from "../relay/config";
 import { verifyTransferHttpAuth } from "../shared/transfer-http-auth";
 
 export abstract class TransferHttpDataPlane {
-  constructor(private readonly pairingSecret: string) {}
+  constructor(private readonly pairingSecretSource: string | PairingSecretRef) {}
 
   async handle(
     request: Request,
@@ -10,7 +14,7 @@ export abstract class TransferHttpDataPlane {
     if (
       !(await verifyTransferHttpAuth({
         request,
-        pairingSecret: this.pairingSecret,
+        pairingSecret: pairingSecretValue(this.pairingSecretSource),
       }))
     ) {
       return Response.json(

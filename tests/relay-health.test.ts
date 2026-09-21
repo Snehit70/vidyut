@@ -82,7 +82,7 @@ describe("relay /health", () => {
 
   test("other paths still answer with the banner", async () => {
     await withRelay(async (relay) => {
-      const response = await fetch(relay.url.replace("ws://", "http://"));
+      const response = await fetch(`${relay.url.replace("ws://", "http://")}/not-a-relay-route`);
       expect(await response.text()).toBe("Vidyut relay");
     });
   });
@@ -110,7 +110,7 @@ describe("relay /health", () => {
         watcher: "wl-paste --watch",
         error: "wl-paste --watch failed: unsupported protocol",
       });
-      expect(await (await fetch(relay.url.replace("ws://", "http://"))).text()).toBe("Vidyut relay");
+      expect(await (await fetch(`${relay.url.replace("ws://", "http://")}/not-a-relay-route`)).text()).toBe("Vidyut relay");
     } finally {
       await relay.stop();
     }

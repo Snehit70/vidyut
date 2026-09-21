@@ -21,7 +21,16 @@ export interface RunOptions {
    * change.
    */
   detachOutput?: boolean;
+  /**
+   * Kill the child and reject if it has not finished. Wayland clipboard
+   * tools can block forever on a stuck selection owner; without a bound the
+   * relay stops syncing until it is restarted.
+   */
+  timeoutMs?: number;
 }
+
+/** Default bound for wl-paste / wl-copy / magick. A stuck owner must not hang the relay. */
+export const defaultClipboardProcessTimeoutMs = 5_000;
 
 export interface ProcessRunner {
   run(command: string, args: string[], input?: Uint8Array, options?: RunOptions): Promise<ProcessResult>;
@@ -52,41 +61,21 @@ const supportedMimeTypes: Array<{ mime: string; type: PayloadType }> = [
 ];
 
 export function createWaylandClipboardAdapter(runner: ProcessRunner = new BunProcessRunner()): ClipboardAdapter {
+  // One Wayland clipboard tool at a time. Concurrent wl-paste + wl-copy can
+  // deadlock on the data-control device, which freezes both sync directions.
+  let tail: Promise<unknown> = Promise.resolve();
+  const exclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+    const next = tail.then(operation, operation);
+    tail = next.then(() => undefined, () => undefined);
+    return next;
+  };
+
   return {
     async read() {
-      const typeList = await runner.run("wl-paste", ["--list-types"]);
-      // wl-paste reports an empty selection as a non-zero exit. An empty
-      // clipboard is normal while the relay is running and must not take the
-      // relay down with an unhandled read rejection.
-      if (typeList.exitCode !== 0) {
-        if (isEmptyClipboardError(typeList.stderr)) return undefined;
-        ensureProcessOk(typeList, "wl-paste --list-types");
-      }
-      const availableTypes = new Set(new TextDecoder().decode(typeList.stdout).split(/\r?\n/).filter(Boolean));
-      const selected = supportedMimeTypes.find((candidate) => availableTypes.has(candidate.mime));
-      if (!selected) return undefined;
-
-      // -n: emit the exact clipboard bytes. Without it wl-paste appends a
-      // trailing newline to text, which then rides to the phone (a copied
-      // "token" arrives as "token\n"). For non-text types -n is a no-op —
-      // wl-paste auto-enables it for binary content.
-      const read = await runner.run("wl-paste", ["--type", selected.mime, "-n"]);
-      ensureProcessOk(read, `wl-paste --type ${selected.mime}`);
-      return {
-        type: selected.type,
-        mime: selected.mime,
-        data: read.stdout,
-      };
+      return exclusive(() => readClipboard(runner));
     },
     async write(payload) {
-      const { mime, data } = await normalizeImageToPng(runner, payload);
-      // Without detachOutput this blocks until the NEXT clipboard change —
-      // and everything downstream of the write (the ack to the sender, the
-      // e2eMs measurement) stalls with it.
-      const result = await runner.run("wl-copy", ["--type", mime], data, {
-        detachOutput: true,
-      });
-      ensureProcessOk(result, `wl-copy --type ${mime}`);
+      return exclusive(() => writeClipboard(runner, payload));
     },
     watch(onChange, onReady, onFailure) {
       // wl-paste --watch fires once immediately for the selection that already
@@ -114,6 +103,43 @@ export function createWaylandClipboardAdapter(runner: ProcessRunner = new BunPro
       );
     },
   };
+}
+
+async function readClipboard(runner: ProcessRunner): Promise<ClipboardPayload | undefined> {
+  const typeList = await runner.run("wl-paste", ["--list-types"]);
+  // wl-paste reports an empty selection as a non-zero exit. An empty
+  // clipboard is normal while the relay is running and must not take the
+  // relay down with an unhandled read rejection.
+  if (typeList.exitCode !== 0) {
+    if (isEmptyClipboardError(typeList.stderr)) return undefined;
+    ensureProcessOk(typeList, "wl-paste --list-types");
+  }
+  const availableTypes = new Set(new TextDecoder().decode(typeList.stdout).split(/\r?\n/).filter(Boolean));
+  const selected = supportedMimeTypes.find((candidate) => availableTypes.has(candidate.mime));
+  if (!selected) return undefined;
+
+  // -n: emit the exact clipboard bytes. Without it wl-paste appends a
+  // trailing newline to text, which then rides to the phone (a copied
+  // "token" arrives as "token\n"). For non-text types -n is a no-op —
+  // wl-paste auto-enables it for binary content.
+  const read = await runner.run("wl-paste", ["--type", selected.mime, "-n"]);
+  ensureProcessOk(read, `wl-paste --type ${selected.mime}`);
+  return {
+    type: selected.type,
+    mime: selected.mime,
+    data: read.stdout,
+  };
+}
+
+async function writeClipboard(runner: ProcessRunner, payload: ClipboardPayload): Promise<void> {
+  const { mime, data } = await normalizeImageToPng(runner, payload);
+  // Without detachOutput this blocks until the NEXT clipboard change —
+  // and everything downstream of the write (the ack to the sender, the
+  // e2eMs measurement) stalls with it.
+  const result = await runner.run("wl-copy", ["--type", mime], data, {
+    detachOutput: true,
+  });
+  ensureProcessOk(result, `wl-copy --type ${mime}`);
 }
 
 /**
@@ -148,41 +174,74 @@ export class BunProcessRunner implements ProcessRunner {
     input?: Uint8Array,
     options?: RunOptions,
   ): Promise<ProcessResult> {
+    const timeoutMs = options?.timeoutMs ?? defaultClipboardProcessTimeoutMs;
     const child = spawn([command, ...args], {
       stdin: input ? "pipe" : "ignore",
       stdout: options?.detachOutput ? "ignore" : "pipe",
       stderr: "pipe",
     });
 
-    if (input && child.stdin) {
-      child.stdin.write(input);
-      child.stdin.end();
-    }
-
-    if (options?.detachOutput) {
-      const exitCode = await child.exited;
-      if (exitCode === 0) {
-        // Success means the daemon may hold stderr open — drop it unread.
-        void child.stderr.cancel();
-        return { exitCode, stdout: new Uint8Array(), stderr: "" };
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already gone
       }
-      // A failing wl-copy exits before forking, so its pipes are closed and
-      // stderr is safe to drain for the error message.
-      const stderr = await new Response(child.stderr).text();
-      return { exitCode, stdout: new Uint8Array(), stderr };
+    }, timeoutMs);
+
+    try {
+      if (input && child.stdin && typeof child.stdin !== "number") {
+        const written = child.stdin.write(input);
+        if (typeof written !== "number") await written;
+        const ended = child.stdin.end();
+        if (ended && typeof ended === "object" && "then" in ended) {
+          await ended;
+        }
+      }
+
+      let result: ProcessResult;
+      if (options?.detachOutput) {
+        const exitCode = await child.exited;
+        if (exitCode === 0) {
+          // Success means the daemon may hold stderr open — drop it unread.
+          if (child.stderr && typeof child.stderr !== "number") {
+            void child.stderr.cancel();
+          }
+          result = { exitCode, stdout: new Uint8Array(), stderr: "" };
+        } else {
+          // A failing wl-copy exits before forking, so its pipes are closed and
+          // stderr is safe to drain for the error message.
+          const stderr =
+            child.stderr && typeof child.stderr !== "number"
+              ? await new Response(child.stderr).text()
+              : "";
+          result = { exitCode, stdout: new Uint8Array(), stderr };
+        }
+      } else {
+        const stdoutStream = child.stdout && typeof child.stdout !== "number" ? child.stdout : undefined;
+        const stderrStream = child.stderr && typeof child.stderr !== "number" ? child.stderr : undefined;
+        const [stdout, stderr, exitCode] = await Promise.all([
+          stdoutStream ? new Response(stdoutStream).arrayBuffer() : Promise.resolve(new ArrayBuffer(0)),
+          stderrStream ? new Response(stderrStream).text() : Promise.resolve(""),
+          child.exited,
+        ]);
+        result = {
+          exitCode,
+          stdout: new Uint8Array(stdout),
+          stderr,
+        };
+      }
+
+      if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
+      return result;
+    } catch (error) {
+      if (timedOut) throw new Error(`${command} timed out after ${timeoutMs}ms`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).arrayBuffer(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-
-    return {
-      exitCode,
-      stdout: new Uint8Array(stdout),
-      stderr,
-    };
   }
 
   watch(
@@ -204,7 +263,12 @@ export class BunProcessRunner implements ProcessRunner {
       while (!stopped) {
         const chunk = await reader.read();
         if (chunk.done) return;
-        await onChange();
+        try {
+          await onChange();
+        } catch {
+          // A failed clipboard read must not kill the watch loop. Otherwise
+          // laptop→phone sync stays dead until the relay restarts.
+        }
       }
     })();
     void (async () => {
