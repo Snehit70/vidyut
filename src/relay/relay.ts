@@ -1,6 +1,13 @@
 import { verifyPairingProof } from "../shared/auth";
+import {
+  pairingSecretRef,
+  type PairingSecretRef,
+} from "./config";
+import { handleControlRequest, isControlPath } from "./control-plane";
 import { noopLogger, type Logger } from "./logger";
+import { getPairingHost } from "./network";
 import { PayloadPool } from "./payload-pool";
+import type { LaptopSetupStatus } from "./setup-status";
 import {
   encodedPayloadBytes,
   isPayloadFrame,
@@ -17,7 +24,7 @@ import { sampleLaptopTelemetry } from "./telemetry";
 interface RelayOptions {
   hostname: string;
   port: number;
-  pairingSecret: string;
+  pairingSecret: string | PairingSecretRef;
   maxPayloadBytes: number;
   pool?: PayloadPool;
   heartbeatIntervalMs?: number;
@@ -25,6 +32,11 @@ interface RelayOptions {
   logger?: Logger;
   clipboardHealth?: () => ClipboardHealth;
   relayName?: string;
+  pairingHost?: string;
+  persistPairingSecret?: (secret: string) => Promise<void>;
+  transferSnapshot?: () => unknown;
+  enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
+  setupStatus?: () => Promise<LaptopSetupStatus>;
   transferControl?: (
     message: TransferControlMessage,
     sourceDeviceId: string,
@@ -67,6 +79,7 @@ export interface RelayHandle {
 export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
   const pool = options.pool ?? new PayloadPool();
   const logger = options.logger ?? noopLogger;
+  const pairingSecret = pairingSecretRef(options.pairingSecret);
   const devices = new Set<RelaySocket>();
   const startedAt = Date.now();
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
@@ -137,9 +150,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       ) {
         return undefined;
       }
-      if (new URL(request.url).pathname.startsWith("/transfer/v1/")) {
+      const pathname = new URL(request.url).pathname;
+      const isLoopback = isLoopbackAddress(address?.address);
+      if (pathname.startsWith("/transfer/v1/")) {
         const response = await options.transferHttp?.(request, {
-          isLoopback: isLoopbackAddress(address?.address),
+          isLoopback,
         });
         return (
           response ??
@@ -149,8 +164,44 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           )
         );
       }
-      if (new URL(request.url).pathname === "/health") {
+      if (pathname === "/health") {
         return Response.json(healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.()));
+      }
+      if (isControlPath(pathname)) {
+        if (!isLoopback) {
+          return new Response("Not found", { status: 404 });
+        }
+        const port = bunServer.port;
+        if (port === undefined) {
+          return new Response("Relay has no listen port.", { status: 500 });
+        }
+        return handleControlRequest(request, {
+          pairingSecret,
+          pairingHost: options.pairingHost ?? getPairingHost(options.hostname),
+          port,
+          relayName: options.relayName ?? "Vidyut Relay",
+          authenticatedDeviceCount: () =>
+            [...devices].filter((socket) => socket.data.authenticated).length,
+          currentPayload: () => pool.current,
+          kickDevices() {
+            for (const socket of devices) {
+              socket.close(1008, "pairing_secret_rotated");
+            }
+          },
+          ...(options.clipboardHealth && {
+            clipboardHealth: options.clipboardHealth,
+          }),
+          ...(options.persistPairingSecret && {
+            persistPairingSecret: options.persistPairingSecret,
+          }),
+          ...(options.transferSnapshot && {
+            transferSnapshot: options.transferSnapshot,
+          }),
+          ...(options.enqueueLaptopFiles && {
+            enqueueLaptopFiles: options.enqueueLaptopFiles,
+          }),
+          ...(options.setupStatus && { setupStatus: options.setupStatus }),
+        });
       }
       return new Response("Vidyut relay", { status: 200 });
     },
@@ -178,7 +229,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             logger,
             socket,
             message,
-            options.pairingSecret,
+            pairingSecret.value,
             pool.current,
             relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
           );

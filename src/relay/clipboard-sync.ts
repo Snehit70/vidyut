@@ -1,4 +1,5 @@
 import type { ClipboardAdapter } from "./clipboard";
+import { pairingSecretValue, type PairingSecretRef } from "./config";
 import { noopLogger, type Logger } from "./logger";
 import type { PayloadPool } from "./payload-pool";
 import { decryptPayload, encryptPayload } from "../shared/crypto";
@@ -22,7 +23,7 @@ export interface ClipboardHealth {
 interface ClipboardSyncOptions {
   clipboard: WatchableClipboardAdapter;
   pool: PayloadPool;
-  pairingSecret: string;
+  pairingSecret: string | PairingSecretRef;
   origin: string;
   now(): number;
   logger?: Logger;
@@ -52,7 +53,7 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
             ts: options.now(),
           },
           payload.data,
-          options.pairingSecret,
+          pairingSecretValue(options.pairingSecret),
         );
         logger.info("clipboard_published", {
           type: frame.type,
@@ -112,7 +113,7 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
     // rejections — every failure must be caught and logged here.
     let data: Uint8Array;
     try {
-      data = await decryptPayload(frame, options.pairingSecret);
+      data = await decryptPayload(frame, pairingSecretValue(options.pairingSecret));
     } catch (error) {
       logger.error("clipboard_write_failed", {
         nonce: frame.nonce,

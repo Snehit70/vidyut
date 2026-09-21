@@ -1,8 +1,24 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface PairingSecretRef {
+  value: string;
+}
+
+export function pairingSecretValue(secret: string | PairingSecretRef): string {
+  return typeof secret === "string" ? secret : secret.value;
+}
+
+export function pairingSecretRef(secret: string | PairingSecretRef): PairingSecretRef {
+  return typeof secret === "string" ? { value: secret } : secret;
+}
+
+export function createPairingSecret(): string {
+  return randomSecret();
+}
 
 export interface RelayConfig {
   pairingSecret: string;
@@ -26,7 +42,7 @@ export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig
       parsed.transferDestination !== config.transferDestination ||
       parsed.maxTransferFileBytes !== config.maxTransferFileBytes
     ) {
-      await writeConfig(path, config);
+      await writeRelayConfig(path, config);
     }
     return config;
   } catch (error) {
@@ -34,7 +50,7 @@ export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig
   }
 
   const config: RelayConfig = {
-    pairingSecret: randomSecret(),
+    pairingSecret: createPairingSecret(),
     port: defaultRelayPort,
     maxPayloadBytes: defaultMaxPayloadBytes,
     deviceId: "laptop",
@@ -42,7 +58,7 @@ export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig
     transferDestination: join(homedir(), "Downloads", "Vidyut"),
     maxTransferFileBytes: defaultMaxTransferFileBytes,
   };
-  await writeConfig(path, config);
+  await writeRelayConfig(path, config);
   return config;
 }
 
@@ -76,9 +92,10 @@ function normalizeConfig(config: Partial<RelayConfig>): RelayConfig {
   };
 }
 
-async function writeConfig(path: string, config: RelayConfig): Promise<void> {
+export async function writeRelayConfig(path: string, config: RelayConfig): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 function isLogLevel(value: unknown): value is LogLevel {

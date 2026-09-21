@@ -14,6 +14,10 @@ import {
   type EncryptedTransferChunk,
   type TransferChunkMetadata,
 } from "../shared/transfer-crypto";
+import {
+  pairingSecretValue,
+  type PairingSecretRef,
+} from "../relay/config";
 import type { TransferControlMessage } from "../shared/wire";
 import type { TransferFileRecord } from "./transfer-queue";
 import { TransferQueue, transferTimingStage } from "./transfer-queue";
@@ -178,7 +182,7 @@ export class ReceiverProgressSession {
 
 export class LaptopTransferDataPlane extends TransferHttpDataPlane {
   constructor(
-    private readonly chunkPairingSecret: string,
+    private readonly chunkPairingSecret: string | PairingSecretRef,
     private readonly queue: TransferQueue,
     private readonly chunkBytes = preferredTransferChunkBytes,
     private readonly publishControl: (
@@ -293,7 +297,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       const chunk = await encryptTransferChunk(
         metadata,
         plaintext,
-        this.chunkPairingSecret,
+        pairingSecretValue(this.chunkPairingSecret),
       );
       return new Response(toArrayBuffer(chunk.ciphertext), {
         status: 200,
@@ -457,7 +461,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       };
       plaintext = await decryptTransferChunk(
         chunk,
-        this.chunkPairingSecret,
+        pairingSecretValue(this.chunkPairingSecret),
       );
     } catch {
       return Response.json(
