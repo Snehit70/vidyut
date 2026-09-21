@@ -232,4 +232,37 @@ describe("BunProcessRunner", () => {
     expect(result.exitCode).toBe(7);
     expect(result.stderr.trim()).toBe("unsupported");
   });
+
+  test("run kills a hung clipboard process instead of waiting forever", async () => {
+    const runner = new BunProcessRunner();
+    const start = performance.now();
+
+    await expect(runner.run("sleep", ["30"], undefined, { timeoutMs: 200 })).rejects.toThrow(/timed out after 200ms/);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+
+  test("watch keeps firing after onChange throws", async () => {
+    const runner = new BunProcessRunner();
+    let calls = 0;
+
+    const stop = runner.watch(
+      process.execPath,
+      [
+        "-e",
+        "await Bun.stdout.write('one'); await Bun.sleep(50); await Bun.stdout.write('two'); await Bun.sleep(200);",
+      ],
+      () => {
+        calls += 1;
+        if (calls === 1) throw new Error("clipboard read failed");
+      },
+    );
+
+    const deadline = Date.now() + 1000;
+    while (calls < 2 && Date.now() < deadline) {
+      await Bun.sleep(20);
+    }
+    stop();
+
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
 });

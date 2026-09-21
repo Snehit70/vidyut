@@ -2,7 +2,7 @@ import type { ClipboardAdapter } from "./clipboard";
 import { noopLogger, type Logger } from "./logger";
 import type { PayloadPool } from "./payload-pool";
 import { decryptPayload, encryptPayload } from "../shared/crypto";
-import { encodedPayloadBytes } from "../shared/wire";
+import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
 
 export interface WatchableClipboardAdapter extends ClipboardAdapter {
   watch(
@@ -40,37 +40,41 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
         return;
       }
 
-      const payload = await options.clipboard.read();
-      if (!payload) return;
+      try {
+        const payload = await options.clipboard.read();
+        if (!payload) return;
 
-      const frame = await encryptPayload(
-        {
-          type: payload.type,
-          mime: payload.mime,
-          origin: options.origin,
-          ts: options.now(),
-        },
-        payload.data,
-        options.pairingSecret,
-      );
-      logger.info("clipboard_published", {
-        type: frame.type,
-        mime: frame.mime,
-        bytes: encodedPayloadBytes(frame),
-        nonce: frame.nonce,
-        frameTs: frame.ts,
-      });
-      const accepted = await options.pool.publish(frame, options.origin);
-      if (!accepted) {
-        logger.warn("payload_stale_dropped", {
-          origin: "local",
+        const frame = await encryptPayload(
+          {
+            type: payload.type,
+            mime: payload.mime,
+            origin: options.origin,
+            ts: options.now(),
+          },
+          payload.data,
+          options.pairingSecret,
+        );
+        logger.info("clipboard_published", {
           type: frame.type,
           mime: frame.mime,
           bytes: encodedPayloadBytes(frame),
           nonce: frame.nonce,
           frameTs: frame.ts,
-          currentTs: options.pool.current?.ts,
         });
+        const accepted = await options.pool.publish(frame, options.origin);
+        if (!accepted) {
+          logger.warn("payload_stale_dropped", {
+            origin: "local",
+            type: frame.type,
+            mime: frame.mime,
+            bytes: encodedPayloadBytes(frame),
+            nonce: frame.nonce,
+            frameTs: frame.ts,
+            currentTs: options.pool.current?.ts,
+          });
+        }
+      } catch (error) {
+        logger.error("clipboard_read_failed", { error: describeError(error) });
       }
     },
     () => {
@@ -95,9 +99,15 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
     },
   );
 
-  const unsubscribe = options.pool.subscribe(async (frame, source) => {
+  const unsubscribe = options.pool.subscribe((frame, source) => {
     if (source === options.origin || frame.origin === options.origin) return;
+    // Do not await the Wayland write on the pool publish path. A stuck
+    // wl-copy/magick would otherwise hold the phone's ack and freeze the
+    // relay socket until the service is restarted.
+    void writeIncoming(frame);
+  });
 
+  async function writeIncoming(frame: PayloadFrame) {
     // The pool fans out through Promise.allSettled, which swallows listener
     // rejections — every failure must be caught and logged here.
     let data: Uint8Array;
@@ -138,7 +148,7 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
       frameTs: frame.ts,
       e2eMs: options.now() - frame.ts,
     });
-  });
+  }
 
   return () => {
     stopWatching();

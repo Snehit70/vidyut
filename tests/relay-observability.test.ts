@@ -307,6 +307,7 @@ describe("clipboard sync observability", () => {
     const frame = await encryptTestFrame("phone", 1_800_000_020_000, "from phone");
 
     await pool.publish(frame);
+    await capture.waitFor("clipboard_write");
 
     expect(capture.named("clipboard_write")).toEqual([
       expect.objectContaining({
@@ -337,6 +338,7 @@ describe("clipboard sync observability", () => {
     const frame = await encryptTestFrame("phone", 1_800_000_021_000, "wrong key", "a-different-secret");
 
     await pool.publish(frame);
+    await capture.waitFor("clipboard_write_failed");
 
     expect(capture.named("clipboard_write_failed")).toEqual([
       expect.objectContaining({
@@ -368,6 +370,7 @@ describe("clipboard sync observability", () => {
     const frame = await encryptTestFrame("phone", 1_800_000_022_000, "will not land");
 
     await pool.publish(frame);
+    await capture.waitFor("clipboard_write_failed");
 
     expect(capture.named("clipboard_write_failed")).toEqual([
       expect.objectContaining({
