@@ -136,6 +136,10 @@ describe("relay loopback control plane", () => {
       expect(html).toContain("Rotate pairing secret");
       expect(html).toContain("Every phone must scan");
       expect(html).toContain("Closing this window does not stop the Relay");
+      expect(html).toContain("Open releases");
+      expect(html).toContain("https://github.com/Snehit70/vidyut/releases");
+      expect(html).toContain("dnf or apt");
+      expect(html).toContain("open_releases");
       expect(html).toContain("Start relay");
       expect(html).toContain("Stop relay");
       expect(html).toContain('id="start-relay"');

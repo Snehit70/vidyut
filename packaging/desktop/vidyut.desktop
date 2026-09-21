@@ -2,7 +2,7 @@
 Type=Application
 Name=Vidyut
 Comment=Pairing, files, and laptop setup status for this Relay
-Icon=folder-send-symbolic
+Icon=vidyut
 Exec=@VIDYUT_BIN_DIR@/vidyut-shell
 Terminal=false
 Categories=Utility;

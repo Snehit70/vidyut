@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-relay="${VIDYUT_RELAY_BIN:-$HOME/.local/bin/vidyut-relay}"
+bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+relay="${VIDYUT_RELAY_BIN:-$bin_dir/vidyut-relay}"
+if [[ ! -x "$relay" ]]; then
+  relay="$(command -v vidyut-relay || true)"
+fi
+if [[ -z "$relay" || ! -x "$relay" ]]; then
+  echo "The Vidyut Relay is not installed." >&2
+  exit 1
+fi
 status=0
 output="$("$relay" --transfers 2>&1)" || status=$?
 if command -v kdialog >/dev/null; then

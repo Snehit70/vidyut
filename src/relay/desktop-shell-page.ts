@@ -98,6 +98,7 @@ export function desktopShellHtml(state: DesktopShellState): string {
     </section>
 
     <p class="footnote enter" style="animation-delay:800ms">Closing this window does not stop the Relay.</p>
+    <p class="footnote enter" style="animation-delay:850ms"><a id="open-releases" href="https://github.com/Snehit70/vidyut/releases">Open releases</a>. Install a newer .rpm or .deb with dnf or apt. This window does not update Vidyut.</p>
   </main>
   <div id="snack" class="snack" hidden></div>
   <script type="application/json" id="boot">${embedJson(state)}</script>
@@ -197,6 +198,7 @@ h2 {
   color: var(--muted);
 }
 .footnote { padding: 4px 4px 0; }
+a { color: var(--raspberry); font-weight: 600; }
 .hero, .card {
   border-radius: var(--radius-card);
   padding: 20px;
@@ -636,6 +638,13 @@ const SHELL_SCRIPT = `
     } catch (err) {
       snack("The pairing secret was not rotated.");
     }
+  });
+
+  $("open-releases").addEventListener("click", function (event) {
+    var core = tauriCore();
+    if (!core || typeof core.invoke !== "function") return;
+    event.preventDefault();
+    core.invoke("open_releases").catch(function () {});
   });
 
   lastSecret = (bootState().pairingSecret || $("secret").textContent || "");

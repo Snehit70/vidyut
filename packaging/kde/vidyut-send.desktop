@@ -7,5 +7,5 @@ X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 
 [Desktop Action sendWithVidyut]
 Name=Send with Vidyut
-Icon=folder-send-symbolic
+Icon=vidyut
 Exec=@VIDYUT_BIN_DIR@/vidyut-send %F

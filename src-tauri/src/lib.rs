@@ -29,13 +29,23 @@ fn pick_and_send_files(app: AppHandle) -> Result<usize, String> {
     send_files_from_dialog(&app)
 }
 
+#[tauri::command]
+fn open_releases() -> Result<(), String> {
+    Command::new("xdg-open")
+        .arg("https://github.com/Snehit70/vidyut/releases")
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             start_relay,
             stop_relay,
-            pick_and_send_files
+            pick_and_send_files,
+            open_releases
         ])
         .setup(|app| {
             setup_tray(app.handle())?;

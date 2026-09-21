@@ -50,6 +50,15 @@ sed "s|@VIDYUT_BIN_DIR@|$bin_dir|g" \
 chmod 755 "$kde_services_dir/vidyut-send.desktop"
 install -m 755 "$repo_root/packaging/nautilus/Send with Vidyut" "$nautilus_scripts_dir/Send with Vidyut"
 
+icon_hicolor="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+install -D -m 644 "$repo_root/src-tauri/icons/32x32.png" "$icon_hicolor/32x32/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/128x128.png" "$icon_hicolor/128x128/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/128x128@2x.png" "$icon_hicolor/256x256/apps/vidyut.png"
+install -D -m 644 "$repo_root/src-tauri/icons/icon.png" "$icon_hicolor/512x512/apps/vidyut.png"
+if command -v gtk-update-icon-cache >/dev/null; then
+  gtk-update-icon-cache -f "$icon_hicolor" >/dev/null 2>&1 || true
+fi
+
 rm -f "$bin_dir/vidyut-tray" "$autostart_dir/vidyut-tray.desktop"
 
 shell_bin=""
@@ -84,5 +93,6 @@ systemctl --user enable --now vidyut-relay.service
 
 echo
 echo "Installed and started vidyut-relay.service."
-echo "Pairing code: journalctl --user -u vidyut-relay -b --no-pager | tail -40"
+echo "Pairing QR: open the Vidyut desktop shell."
+echo "Fallback:   journalctl --user -u vidyut-relay -b --no-pager | tail -40"
 echo "Follow logs:  journalctl --user -u vidyut-relay -f"

@@ -9,6 +9,7 @@
     "benchmark:capture": "bun scripts/capture-transfer-benchmark.ts",
     "build:relay": "bun build ./src/relay/cli.ts --compile --outfile dist/vidyut-relay",
     "build:shell": "cargo build --manifest-path src-tauri/Cargo.toml --release",
+    "build:packages": "bash scripts/build-linux-packages.sh",
     "install:relay": "bash scripts/install-relay.sh"
   },
   "devDependencies": {
