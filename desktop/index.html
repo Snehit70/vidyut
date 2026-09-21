@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Vidyut</title>
+  <style>
+    :root {
+      --ground: #FFFFFF;
+      --mist: #FDF0F4;
+      --raspberry: #C83861;
+      --ink: #33202B;
+      --muted: #856774;
+      --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+    }
+    html, body { background: var(--mist); color: var(--ink); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      font-weight: 500;
+    }
+    main { max-width: 22rem; padding: 2rem; text-align: center; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.6rem; font-weight: 800; }
+    p { margin: 0; color: var(--muted); line-height: 1.4; }
+    button {
+      margin-top: 1.25rem;
+      height: 54px;
+      padding: 0 24px;
+      border: 1.5px solid #F8D3DE;
+      border-radius: 999px;
+      background: var(--ground);
+      color: var(--raspberry);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Vidyut</h1>
+    <p id="status">Starting the Relay. Closing this window does not stop it.</p>
+    <button type="button" id="start-relay">Start relay</button>
+  </main>
+  <script>
+    const UI = "http://127.0.0.1:17321/";
+    const status = document.getElementById("status");
+    const start = document.getElementById("start-relay");
+
+    function invoke(cmd) {
+      const core = window.__TAURI__ && window.__TAURI__.core;
+      if (!core || typeof core.invoke !== "function") {
+        return Promise.reject(new Error("desktop shell"));
+      }
+      return core.invoke(cmd);
+    }
+
+    async function relayUp() {
+      try {
+        const response = await fetch("http://127.0.0.1:17321/health", { cache: "no-store" });
+        return response.ok;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    async function openUi() {
+      if (await relayUp()) {
+        location.replace(UI);
+        return true;
+      }
+      return false;
+    }
+
+    start.addEventListener("click", async function () {
+      status.textContent = "Starting the Relay.";
+      try {
+        await invoke("start_relay");
+      } catch (err) {
+        status.textContent = "The Relay did not start. Install the systemd user unit, then try again.";
+        return;
+      }
+      if (!(await openUi())) {
+        status.textContent = "The Relay did not answer on 127.0.0.1:17321.";
+      }
+    });
+
+    (async function boot() {
+      if (await openUi()) return;
+      try { await invoke("start_relay"); } catch (err) { /* keep polling */ }
+      for (let i = 0; i < 40; i++) {
+        if (await openUi()) return;
+        await new Promise(function (ok) { setTimeout(ok, 250); });
+      }
+      status.textContent = "The Relay is not answering. Start relay uses the systemd user unit.";
+    })();
+  </script>
+</body>
+</html>

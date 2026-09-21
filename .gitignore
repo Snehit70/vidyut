@@ -19,6 +19,10 @@ build/
 relay/vidyut-relay
 relay/*.bin
 
+# Desktop shell
+src-tauri/target/
+src-tauri/gen/
+
 # --- Flutter / Dart (app) ---
 app/.dart_tool/
 app/.flutter-plugins

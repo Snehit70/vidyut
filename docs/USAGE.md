@@ -122,7 +122,7 @@ more files to Vidyut from another app. Received files appear in
 `Downloads/Vidyut` by default; change the folder under **Settings → Files**.
 
 On Linux, select files in Dolphin or Nautilus and choose **Send with Vidyut**,
-or click the Vidyut tray icon. From a terminal:
+or use **Send files** on the Vidyut tray. From a terminal:
 
 ```bash
 vidyut-relay --send "/path/to/file"

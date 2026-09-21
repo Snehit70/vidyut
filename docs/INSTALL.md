@@ -20,6 +20,14 @@ The relay is a single compiled binary that runs on the Linux/Wayland laptop, wat
   Vidyut does not download, build, or replace this system dependency.
 
 - **Bun** (build only) — the binary is compiled from source with [Bun](https://bun.sh). Once installed, the service does not need Bun.
+- **Desktop shell (optional)** — the Tauri window and tray load the Relay's loopback page. They do not embed the Relay. Fedora packages for a local `bun run build:shell`:
+
+  ```bash
+  sudo dnf install gtk3-devel webkit2gtk4.1-devel openssl-devel \
+    libappindicator-gtk3-devel librsvg2-devel gcc
+  ```
+
+  WebKitGTK 4.1 is a runtime dependency of the built `vidyut-shell` binary. `yad` is not required.
 
 ## Quick Install
 
@@ -31,10 +39,15 @@ bun run install:relay
 
 This builds `dist/vidyut-relay`, installs it to `~/.local/bin/vidyut-relay`, installs the unit from `packaging/systemd/vidyut-relay.service` to `~/.config/systemd/user/`, and enables + starts the service.
 
-It also installs the Vidyut file picker/tray, a Dolphin **Send with Vidyut**
-service menu, and a Nautilus **Send with Vidyut** script. The tray uses `yad`
-and the picker uses `zenity`; file-manager actions work independently of the
-tray.
+It also installs Dolphin **Send with Vidyut** and a Nautilus **Send with Vidyut**
+script. If `src-tauri/target/release/vidyut-shell` (or debug) exists, the
+installer copies that desktop shell to `~/.local/bin/vidyut-shell` and adds
+an autostart `.desktop` for it. Closing the window or tray Quit leaves the
+Relay running. File-manager actions work without the shell.
+
+Build the shell first with `bun run build:shell` when you want the window and
+tray. `vidyut-send` with no files opens the shell if it is installed; otherwise
+it uses `zenity` when that is present.
 
 The unit is tied to `graphical-session.target`, so the relay starts with your desktop session and stops when you log out.
 

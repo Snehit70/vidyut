@@ -90,10 +90,10 @@ export function desktopShellHtml(state: DesktopShellState): string {
 
     <section class="card enter" style="animation-delay:700ms">
       <h2>Relay</h2>
-      <p class="body">Start and stop live in the desktop shell, which talks to the systemd user unit. This browser page cannot change it.</p>
+      <p class="body">Start and stop live in the desktop shell, which talks to the systemd user unit. A browser tab cannot change it.</p>
       <div class="btn-row">
-        <button type="button" class="btn outlined" disabled title="Use the desktop shell">Start relay</button>
-        <button type="button" class="btn outlined" disabled title="Use the desktop shell">Stop relay</button>
+        <button type="button" class="btn outlined" id="start-relay" disabled title="Use the desktop shell">Start relay</button>
+        <button type="button" class="btn outlined" id="stop-relay" disabled title="Use the desktop shell">Stop relay</button>
       </div>
     </section>
 
@@ -540,8 +540,54 @@ const SHELL_SCRIPT = `
     if (paths.length) $("path-input").value = paths.join("\\n");
   });
 
+  function tauriCore() {
+    return window.__TAURI__ && window.__TAURI__.core;
+  }
+
+  function wireRelayButtons() {
+    var core = tauriCore();
+    var start = $("start-relay");
+    var stop = $("stop-relay");
+    if (!core || start.dataset.wired === "1") return;
+    start.dataset.wired = "1";
+    start.disabled = false;
+    stop.disabled = false;
+    start.removeAttribute("title");
+    stop.removeAttribute("title");
+    start.addEventListener("click", async function () {
+      try {
+        await core.invoke("start_relay");
+        snack("Starting the Relay.");
+        setTimeout(refresh, 800);
+      } catch (err) {
+        snack("The Relay did not start.");
+      }
+    });
+    stop.addEventListener("click", async function () {
+      try {
+        await core.invoke("stop_relay");
+        snack("Stop relay does not quit the desktop shell.");
+        setTimeout(refresh, 400);
+      } catch (err) {
+        snack("The Relay did not stop.");
+      }
+    });
+  }
+
   $("send-files").addEventListener("click", async function () {
     var paths = collectPaths();
+    var core = tauriCore();
+    if (!paths.length && core) {
+      try {
+        var queued = await core.invoke("pick_and_send_files");
+        if (!queued) return;
+        snack("Queued.");
+        await refresh();
+      } catch (err) {
+        snack("The Relay did not accept that batch.");
+      }
+      return;
+    }
     if (!paths.length) {
       snack("Type each filesystem path on its own line.");
       return;
@@ -593,6 +639,14 @@ const SHELL_SCRIPT = `
   });
 
   lastSecret = (bootState().pairingSecret || $("secret").textContent || "");
+  wireRelayButtons();
+  (function waitTauri(tries) {
+    if (tauriCore() || tries <= 0) {
+      wireRelayButtons();
+      return;
+    }
+    setTimeout(function () { waitTauri(tries - 1); }, 200);
+  })(10);
   refresh();
   setInterval(refresh, POLL_MS);
 })();

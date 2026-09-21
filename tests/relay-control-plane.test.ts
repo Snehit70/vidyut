@@ -138,6 +138,11 @@ describe("relay loopback control plane", () => {
       expect(html).toContain("Closing this window does not stop the Relay");
       expect(html).toContain("Start relay");
       expect(html).toContain("Stop relay");
+      expect(html).toContain('id="start-relay"');
+      expect(html).toContain('id="stop-relay"');
+      expect(html).toContain('invoke("start_relay")');
+      expect(html).toContain('invoke("stop_relay")');
+      expect(html).toContain("pick_and_send_files");
       expect(html).not.toContain("Manrope");
       expect(html).not.toMatch(/Recent activity|Activity timeline/);
     }

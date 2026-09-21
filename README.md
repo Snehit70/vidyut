@@ -25,7 +25,7 @@ Every clipboard payload and file chunk is end-to-end encrypted with the pairing 
 
 - [docs/SETUP.md](docs/SETUP.md). First pairing, laptop and phone, about five minutes.
 - [docs/USAGE.md](docs/USAGE.md). Daily copy, paste, screenshots, and file sending.
-- [docs/INSTALL.md](docs/INSTALL.md). systemd user service, tray, and file-manager actions.
+- [docs/INSTALL.md](docs/INSTALL.md). systemd user service, desktop shell, and file-manager actions.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Field-verified fixes.
 - [CONTEXT.md](CONTEXT.md). Words used in the code and the docs.
 
@@ -62,9 +62,9 @@ The relay refuses to start if the configured port is already in use. It also adv
 bun run install:relay
 ```
 
-That compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, enables the `systemd --user` unit, and starts it with your graphical session. The installer also adds a tray, a file picker, and Send with Vidyut actions for Dolphin and Nautilus.
+That compiles `dist/vidyut-relay`, installs it to `~/.local/bin/`, enables the `systemd --user` unit, and starts it with your graphical session. It also installs Send with Vidyut for Dolphin and Nautilus. If you have already run `bun run build:shell`, it installs the Tauri desktop shell and autostart entry. The shell is a window and tray around `http://127.0.0.1:17321/`. It is not the Relay.
 
-See `docs/INSTALL.md` for pairing under systemd, firewall notes, and service commands.
+See `docs/INSTALL.md` for pairing under systemd, firewall notes, Tauri/WebKit packages, and service commands.
 
 ## Android app
 
@@ -85,4 +85,5 @@ CI pins Flutter 3.44.4 on the stable channel. Details are in `app/README.md`.
 bun run typecheck
 bun test
 bun run build:relay
+bun run build:shell
 ```

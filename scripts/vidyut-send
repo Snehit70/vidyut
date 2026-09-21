@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-relay="${VIDYUT_RELAY_BIN:-$HOME/.local/bin/vidyut-relay}"
+bin_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
+relay="${VIDYUT_RELAY_BIN:-$bin_dir/vidyut-relay}"
 if [[ ! -x "$relay" ]]; then
   relay="$(command -v vidyut-relay || true)"
 fi
@@ -12,10 +13,22 @@ fi
 
 files=("$@")
 if [[ ${#files[@]} -eq 0 ]]; then
-  selection="$(zenity --file-selection --multiple --separator=$'\n' \
-    --title='Send files with Vidyut' 2>/dev/null || true)"
-  [[ -n "$selection" ]] || exit 0
-  mapfile -t files <<<"$selection"
+  shell="${VIDYUT_SHELL_BIN:-$bin_dir/vidyut-shell}"
+  if [[ ! -x "$shell" ]]; then
+    shell="$(command -v vidyut-shell || true)"
+  fi
+  if [[ -n "$shell" && -x "$shell" ]]; then
+    exec "$shell"
+  fi
+  if command -v zenity >/dev/null; then
+    selection="$(zenity --file-selection --multiple --separator=$'\n' \
+      --title='Send files with Vidyut' 2>/dev/null || true)"
+    [[ -n "$selection" ]] || exit 0
+    mapfile -t files <<<"$selection"
+  else
+    notify-send "Vidyut" "Open the Vidyut desktop shell to send files." || true
+    exit 1
+  fi
 fi
 
 args=()
