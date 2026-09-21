@@ -17,11 +17,25 @@ export interface LaptopSetupStatus {
   rows: SetupRow[];
 }
 
-export async function collectLaptopSetupStatus(): Promise<LaptopSetupStatus> {
-  const [clipboard, imagemagick, autostart] = await Promise.all([
-    probeWlClipboard(),
-    probeImageMagick(),
-    probeAutostart(),
+export interface SetupStatusDeps {
+  env?: NodeJS.ProcessEnv;
+  which?: (bin: string) => string | null;
+  run?: (argv: string[]) => Promise<{ code: number; text: string }>;
+}
+
+const RELAY_PORT = 17321;
+
+export async function collectLaptopSetupStatus(
+  deps: SetupStatusDeps = {},
+): Promise<LaptopSetupStatus> {
+  const env = deps.env ?? process.env;
+  const which = deps.which ?? ((bin: string) => Bun.which(bin));
+  const run = deps.run ?? runCapture;
+  const [clipboard, imagemagick, autostart, firewall] = await Promise.all([
+    probeWlClipboard(which, run),
+    probeImageMagick(which, run),
+    probeAutostart(which, run),
+    probeFirewall(which, run),
   ]);
   return {
     rows: [
@@ -30,21 +44,17 @@ export async function collectLaptopSetupStatus(): Promise<LaptopSetupStatus> {
         ok: true,
         detail: "Relay is answering.",
       },
-      waylandRow(),
+      waylandRow(env),
       clipboard,
       imagemagick,
       autostart,
-      {
-        id: "firewall",
-        ok: true,
-        detail: "unknown",
-      },
+      firewall,
     ],
   };
 }
 
-function waylandRow(): SetupRow {
-  const display = process.env.WAYLAND_DISPLAY;
+function waylandRow(env: NodeJS.ProcessEnv): SetupRow {
+  const display = env.WAYLAND_DISPLAY;
   if (display && display.length > 0) {
     return {
       id: "wayland",
@@ -55,15 +65,18 @@ function waylandRow(): SetupRow {
   return {
     id: "wayland",
     ok: false,
-    detail: process.env.DISPLAY
+    detail: env.DISPLAY
       ? "X11 is not supported. Vidyut needs a Wayland session."
       : "WAYLAND_DISPLAY is unset.",
     fix: "Log into a Wayland session. X11 has no adapter.",
   };
 }
 
-async function probeWlClipboard(): Promise<SetupRow> {
-  const bin = Bun.which("wl-paste");
+async function probeWlClipboard(
+  which: NonNullable<SetupStatusDeps["which"]>,
+  run: NonNullable<SetupStatusDeps["run"]>,
+): Promise<SetupRow> {
+  const bin = which("wl-paste");
   if (!bin) {
     return {
       id: "wl_clipboard",
@@ -72,7 +85,7 @@ async function probeWlClipboard(): Promise<SetupRow> {
       fix: "Install wl-clipboard 2.3 or newer.",
     };
   }
-  const output = await runCapture([bin, "--version"]);
+  const output = await run([bin, "--version"]);
   const version = parseVersion(output.text);
   if (!version) {
     return {
@@ -93,8 +106,11 @@ async function probeWlClipboard(): Promise<SetupRow> {
   };
 }
 
-async function probeImageMagick(): Promise<SetupRow> {
-  const bin = Bun.which("magick");
+async function probeImageMagick(
+  which: NonNullable<SetupStatusDeps["which"]>,
+  run: NonNullable<SetupStatusDeps["run"]>,
+): Promise<SetupRow> {
+  const bin = which("magick");
   if (!bin) {
     return {
       id: "imagemagick",
@@ -103,7 +119,7 @@ async function probeImageMagick(): Promise<SetupRow> {
       fix: "Install ImageMagick.",
     };
   }
-  const output = await runCapture([bin, "-version"]);
+  const output = await run([bin, "-version"]);
   const first = output.text.split("\n")[0] ?? "magick";
   return {
     id: "imagemagick",
@@ -113,8 +129,11 @@ async function probeImageMagick(): Promise<SetupRow> {
   };
 }
 
-async function probeAutostart(): Promise<SetupRow> {
-  const bin = Bun.which("systemctl");
+async function probeAutostart(
+  which: NonNullable<SetupStatusDeps["which"]>,
+  run: NonNullable<SetupStatusDeps["run"]>,
+): Promise<SetupRow> {
+  const bin = which("systemctl");
   if (!bin) {
     return {
       id: "autostart",
@@ -122,7 +141,7 @@ async function probeAutostart(): Promise<SetupRow> {
       detail: "systemctl was not found.",
     };
   }
-  const output = await runCapture([
+  const output = await run([
     bin,
     "--user",
     "is-enabled",
@@ -137,6 +156,91 @@ async function probeAutostart(): Promise<SetupRow> {
       fix: "systemctl --user enable --now vidyut-relay.service",
     }),
   };
+}
+
+async function probeFirewall(
+  which: NonNullable<SetupStatusDeps["which"]>,
+  run: NonNullable<SetupStatusDeps["run"]>,
+): Promise<SetupRow> {
+  const firewallCmd = which("firewall-cmd");
+  if (firewallCmd) {
+    const state = await run([firewallCmd, "--state"]);
+    if (state.code === 0 && /running/i.test(state.text)) {
+      const query = await run([
+        firewallCmd,
+        `--query-port=${RELAY_PORT}/tcp`,
+      ]);
+      if (query.code === 0) {
+        return {
+          id: "firewall",
+          ok: true,
+          detail: `firewalld allows ${RELAY_PORT}/tcp`,
+        };
+      }
+      return {
+        id: "firewall",
+        ok: false,
+        detail: `firewalld is running and ${RELAY_PORT}/tcp is not allowed.`,
+        fix: `sudo firewall-cmd --permanent --add-port=${RELAY_PORT}/tcp && sudo firewall-cmd --reload`,
+      };
+    }
+  }
+
+  const ufw = which("ufw");
+  if (ufw) {
+    const status = await run([ufw, "status"]);
+    if (status.code !== 0) {
+      return {
+        id: "firewall",
+        ok: false,
+        detail: status.text.trim() || "Could not query ufw.",
+        fix: `Allow TCP ${RELAY_PORT} on the LAN zone.`,
+      };
+    }
+    if (/Status:\s*inactive/i.test(status.text)) {
+      return {
+        id: "firewall",
+        ok: true,
+        detail: "ufw is inactive.",
+      };
+    }
+    if (/Status:\s*active/i.test(status.text)) {
+      if (ufwAllowsRelayPort(status.text)) {
+        return {
+          id: "firewall",
+          ok: true,
+          detail: `ufw allows ${RELAY_PORT}/tcp`,
+        };
+      }
+      return {
+        id: "firewall",
+        ok: false,
+        detail: `ufw is active and ${RELAY_PORT}/tcp is not allowed.`,
+        fix: `sudo ufw allow ${RELAY_PORT}/tcp && sudo ufw allow 5353/udp`,
+      };
+    }
+    return {
+      id: "firewall",
+      ok: false,
+      detail: status.text.trim() || "Could not parse ufw status.",
+      fix: `Allow TCP ${RELAY_PORT} on the LAN zone.`,
+    };
+  }
+
+  return {
+    id: "firewall",
+    ok: true,
+    detail: "No active firewalld or ufw.",
+  };
+}
+
+function ufwAllowsRelayPort(status: string): boolean {
+  return status
+    .split("\n")
+    .some(
+      (line) =>
+        line.includes(`${RELAY_PORT}/tcp`) && /ALLOW/i.test(line),
+    );
 }
 
 function parseVersion(

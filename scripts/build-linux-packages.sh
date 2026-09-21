@@ -13,7 +13,7 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: $0 [--stub-shell]"
       echo "Requires dist/vidyut-relay and src-tauri/target/release/vidyut-shell,"
-      echo "plus nfpm on PATH. --stub-shell is for CI layout checks only."
+      echo "plus nfpm on PATH. --stub-shell is a local layout check, not CI."
       exit 0
       ;;
     *)

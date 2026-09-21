@@ -20,15 +20,8 @@ if [[ ${#files[@]} -eq 0 ]]; then
   if [[ -n "$shell" && -x "$shell" ]]; then
     exec "$shell"
   fi
-  if command -v zenity >/dev/null; then
-    selection="$(zenity --file-selection --multiple --separator=$'\n' \
-      --title='Send files with Vidyut' 2>/dev/null || true)"
-    [[ -n "$selection" ]] || exit 0
-    mapfile -t files <<<"$selection"
-  else
-    notify-send "Vidyut" "Open the Vidyut desktop shell to send files." || true
-    exit 1
-  fi
+  notify-send "Vidyut" "Open the Vidyut desktop shell to send files." || true
+  exit 1
 fi
 
 args=()

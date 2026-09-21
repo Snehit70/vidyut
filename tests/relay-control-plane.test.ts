@@ -14,7 +14,16 @@ import { encryptPayload } from "../src/shared/crypto";
 
 const secret = "pairing-secret-CONTROL-PLANE-xyz";
 const pairingHost = "10.0.0.4";
-const lanHost = getLanIPv4Addresses()[0];
+
+function lanClientHost(): string {
+  const host = getLanIPv4Addresses()[0];
+  if (!host) {
+    throw new Error(
+      "need a non-loopback IPv4 to prove LAN 404 and secret-free /health",
+    );
+  }
+  return host;
+}
 
 let relay: RelayHandle | undefined;
 
@@ -107,8 +116,7 @@ describe("relay loopback control plane", () => {
     expect(loopback.status).toBe(200);
     expect(JSON.stringify(await loopback.json())).toContain(secret);
 
-    if (!lanHost) return;
-    const remote = await fetchPath(handle, lanHost, "/control/v1/state");
+    const remote = await fetchPath(handle, lanClientHost(), "/control/v1/state");
     expect(remote.status).toBe(404);
     const body = await remote.text();
     expect(body).not.toContain(secret);
@@ -154,9 +162,8 @@ describe("relay loopback control plane", () => {
     const stillUp = await fetchPath(handle, "127.0.0.1", "/health");
     expect(stillUp.status).toBe(200);
 
-    if (!lanHost) return;
     for (const path of ["/", "/ui/", "/control/v1/qr.svg"]) {
-      const remote = await fetchPath(handle, lanHost, path);
+      const remote = await fetchPath(handle, lanClientHost(), path);
       expect(remote.status).toBe(404);
       expect(await remote.text()).not.toContain(secret);
     }
@@ -172,13 +179,15 @@ describe("relay loopback control plane", () => {
     expect(svg).not.toMatch(/[\u2580\u2584\u2588]/);
   });
 
-  test("loopback /health stays 200 and never includes the pairing secret", async () => {
+  test("loopback and LAN /health stay 200 and never include the pairing secret", async () => {
     const handle = await startRelay();
-    const response = await fetchPath(handle, "127.0.0.1", "/health");
-    expect(response.status).toBe(200);
-    const health = await response.json();
-    expect(JSON.stringify(health)).not.toContain(secret);
-    expect(health).not.toHaveProperty("pairingSecret");
+    for (const host of ["127.0.0.1", lanClientHost()]) {
+      const response = await fetchPath(handle, host, "/health");
+      expect(response.status).toBe(200);
+      const health = await response.json();
+      expect(JSON.stringify(health)).not.toContain(secret);
+      expect(health).not.toHaveProperty("pairingSecret");
+    }
   });
 
   test("POST /control/v1/rotate-secret persists a new secret and rejects the old one", async () => {
@@ -267,8 +276,7 @@ describe("relay loopback control plane", () => {
     expect(local.status).toBe(200);
     await expect(local.json()).resolves.toEqual(snapshot);
 
-    if (!lanHost) return;
-    const remote = await fetchPath(handle, lanHost, "/control/v1/transfers");
+    const remote = await fetchPath(handle, lanClientHost(), "/control/v1/transfers");
     expect(remote.status).toBe(404);
     expect(await remote.text()).not.toContain(secret);
   });
@@ -294,10 +302,9 @@ describe("relay loopback control plane", () => {
     expect(local.status).toBe(202);
     expect(seen).toEqual([["/tmp/report.pdf"]]);
 
-    if (!lanHost) return;
     const remote = await fetchPath(
       handle,
-      lanHost,
+      lanClientHost(),
       "/control/v1/transfers/enqueue",
       {
         method: "POST",
@@ -329,10 +336,30 @@ describe("relay loopback control plane", () => {
     expect(body.rows[0]).toMatchObject({ id: "relay_running", ok: true });
     expect(JSON.stringify(body)).not.toContain(secret);
 
-    if (!lanHost) return;
-    const remote = await fetchPath(handle, lanHost, "/control/v1/setup");
+    const remote = await fetchPath(handle, lanClientHost(), "/control/v1/setup");
     expect(remote.status).toBe(404);
     expect(await remote.text()).not.toContain(secret);
+  });
+
+  test("LAN POST /control/v1/rotate-secret is 404 and does not rotate", async () => {
+    const pairingSecret = { value: secret };
+    let persisted: string | undefined;
+    const handle = await startRelay({
+      pairingSecret,
+      persistPairingSecret: async (next) => {
+        persisted = next;
+      },
+    });
+    const remote = await fetchPath(
+      handle,
+      lanClientHost(),
+      "/control/v1/rotate-secret",
+      { method: "POST" },
+    );
+    expect(remote.status).toBe(404);
+    expect(await remote.text()).not.toContain(secret);
+    expect(pairingSecret.value).toBe(secret);
+    expect(persisted).toBeUndefined();
   });
 });
 
