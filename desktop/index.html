@@ -47,9 +47,9 @@
     <button type="button" id="start-relay">Start relay</button>
   </main>
   <script>
-    const UI = "http://127.0.0.1:17321/";
     const status = document.getElementById("status");
     const start = document.getElementById("start-relay");
+    let ui = "http://127.0.0.1:17321/";
 
     function invoke(cmd) {
       const core = window.__TAURI__ && window.__TAURI__.core;
@@ -59,9 +59,20 @@
       return core.invoke(cmd);
     }
 
+    async function loadUi() {
+      try {
+        const next = await invoke("relay_ui");
+        if (typeof next === "string" && next.indexOf("http://127.0.0.1:") === 0) {
+          ui = next;
+        }
+      } catch (err) {
+        /* keep the default port */
+      }
+    }
+
     async function relayUp() {
       try {
-        const response = await fetch("http://127.0.0.1:17321/health", { cache: "no-store" });
+        const response = await fetch(new URL("health", ui).href, { cache: "no-store" });
         return response.ok;
       } catch (err) {
         return false;
@@ -70,7 +81,7 @@
 
     async function openUi() {
       if (await relayUp()) {
-        location.replace(UI);
+        location.replace(ui);
         return true;
       }
       return false;
@@ -78,6 +89,7 @@
 
     start.addEventListener("click", async function () {
       status.textContent = "Starting the Relay.";
+      await loadUi();
       try {
         await invoke("start_relay");
       } catch (err) {
@@ -85,11 +97,12 @@
         return;
       }
       if (!(await openUi())) {
-        status.textContent = "The Relay did not answer on 127.0.0.1:17321.";
+        status.textContent = "The Relay did not answer on " + ui.replace(/^http:\/\//, "").replace(/\/$/, "") + ".";
       }
     });
 
     (async function boot() {
+      await loadUi();
       if (await openUi()) return;
       try { await invoke("start_relay"); } catch (err) { /* keep polling */ }
       for (let i = 0; i < 40; i++) {

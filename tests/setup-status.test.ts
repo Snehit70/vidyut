@@ -119,6 +119,27 @@ describe("laptop setup status", () => {
     });
   });
 
+  test("firewalld uses the configured relay port", async () => {
+    const status = await collectLaptopSetupStatus({
+      ...deps({
+        bins: { "firewall-cmd": "/usr/bin/firewall-cmd" },
+        outputs: {
+          "/usr/bin/firewall-cmd --state": { code: 0, text: "running" },
+          "/usr/bin/firewall-cmd --query-port=18000/tcp": {
+            code: 0,
+            text: "yes",
+          },
+        },
+      }),
+      port: 18000,
+    });
+    expect(row(status, "firewall")).toEqual({
+      id: "firewall",
+      ok: true,
+      detail: "firewalld allows 18000/tcp",
+    });
+  });
+
   test("firewalld blocking 17321 is not ok", async () => {
     const status = await collectLaptopSetupStatus(
       deps({

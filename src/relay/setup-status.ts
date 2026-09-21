@@ -21,9 +21,10 @@ export interface SetupStatusDeps {
   env?: NodeJS.ProcessEnv;
   which?: (bin: string) => string | null;
   run?: (argv: string[]) => Promise<{ code: number; text: string }>;
+  port?: number;
 }
 
-const RELAY_PORT = 17321;
+const defaultRelayPort = 17321;
 
 export async function collectLaptopSetupStatus(
   deps: SetupStatusDeps = {},
@@ -31,11 +32,18 @@ export async function collectLaptopSetupStatus(
   const env = deps.env ?? process.env;
   const which = deps.which ?? ((bin: string) => Bun.which(bin));
   const run = deps.run ?? runCapture;
+  const port =
+    typeof deps.port === "number" &&
+    Number.isInteger(deps.port) &&
+    deps.port > 0 &&
+    deps.port <= 65535
+      ? deps.port
+      : defaultRelayPort;
   const [clipboard, imagemagick, autostart, firewall] = await Promise.all([
     probeWlClipboard(which, run),
     probeImageMagick(which, run),
     probeAutostart(which, run),
-    probeFirewall(which, run),
+    probeFirewall(which, run, port),
   ]);
   return {
     rows: [
@@ -161,6 +169,7 @@ async function probeAutostart(
 async function probeFirewall(
   which: NonNullable<SetupStatusDeps["which"]>,
   run: NonNullable<SetupStatusDeps["run"]>,
+  port: number,
 ): Promise<SetupRow> {
   const firewallCmd = which("firewall-cmd");
   if (firewallCmd) {
@@ -168,20 +177,20 @@ async function probeFirewall(
     if (state.code === 0 && /running/i.test(state.text)) {
       const query = await run([
         firewallCmd,
-        `--query-port=${RELAY_PORT}/tcp`,
+        `--query-port=${port}/tcp`,
       ]);
       if (query.code === 0) {
         return {
           id: "firewall",
           ok: true,
-          detail: `firewalld allows ${RELAY_PORT}/tcp`,
+          detail: `firewalld allows ${port}/tcp`,
         };
       }
       return {
         id: "firewall",
         ok: false,
-        detail: `firewalld is running and ${RELAY_PORT}/tcp is not allowed.`,
-        fix: `sudo firewall-cmd --permanent --add-port=${RELAY_PORT}/tcp && sudo firewall-cmd --reload`,
+        detail: `firewalld is running and ${port}/tcp is not allowed.`,
+        fix: `sudo firewall-cmd --permanent --add-port=${port}/tcp && sudo firewall-cmd --reload`,
       };
     }
   }
@@ -194,7 +203,7 @@ async function probeFirewall(
         id: "firewall",
         ok: false,
         detail: status.text.trim() || "Could not query ufw.",
-        fix: `Allow TCP ${RELAY_PORT} on the LAN zone.`,
+        fix: `Allow TCP ${port} on the LAN zone.`,
       };
     }
     if (/Status:\s*inactive/i.test(status.text)) {
@@ -205,25 +214,25 @@ async function probeFirewall(
       };
     }
     if (/Status:\s*active/i.test(status.text)) {
-      if (ufwAllowsRelayPort(status.text)) {
+      if (ufwAllowsRelayPort(status.text, port)) {
         return {
           id: "firewall",
           ok: true,
-          detail: `ufw allows ${RELAY_PORT}/tcp`,
+          detail: `ufw allows ${port}/tcp`,
         };
       }
       return {
         id: "firewall",
         ok: false,
-        detail: `ufw is active and ${RELAY_PORT}/tcp is not allowed.`,
-        fix: `sudo ufw allow ${RELAY_PORT}/tcp && sudo ufw allow 5353/udp`,
+        detail: `ufw is active and ${port}/tcp is not allowed.`,
+        fix: `sudo ufw allow ${port}/tcp && sudo ufw allow 5353/udp`,
       };
     }
     return {
       id: "firewall",
       ok: false,
       detail: status.text.trim() || "Could not parse ufw status.",
-      fix: `Allow TCP ${RELAY_PORT} on the LAN zone.`,
+      fix: `Allow TCP ${port} on the LAN zone.`,
     };
   }
 
@@ -234,12 +243,12 @@ async function probeFirewall(
   };
 }
 
-function ufwAllowsRelayPort(status: string): boolean {
+function ufwAllowsRelayPort(status: string, port: number): boolean {
   return status
     .split("\n")
     .some(
       (line) =>
-        line.includes(`${RELAY_PORT}/tcp`) && /ALLOW/i.test(line),
+        line.includes(`${port}/tcp`) && /ALLOW/i.test(line),
     );
 }
 

@@ -1,5 +1,8 @@
+use std::env;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
@@ -7,8 +10,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 
-const RELAY_ADDR: &str = "127.0.0.1:17321";
-const RELAY_UI: &str = "http://127.0.0.1:17321/";
+const DEFAULT_RELAY_PORT: u16 = 17321;
 const RELAY_UNIT: &str = "vidyut-relay.service";
 
 #[tauri::command]
@@ -38,6 +40,11 @@ fn open_releases() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn relay_ui() -> String {
+    relay_ui_url()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -45,7 +52,8 @@ pub fn run() {
             start_relay,
             stop_relay,
             pick_and_send_files,
-            open_releases
+            open_releases,
+            relay_ui
         ])
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -113,7 +121,7 @@ fn show_window(app: &AppHandle) {
 
 fn navigate_to_ui(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        if let Ok(url) = RELAY_UI.parse() {
+        if let Ok(url) = relay_ui_url().parse() {
             let _ = window.navigate(url);
         }
     }
@@ -152,7 +160,10 @@ fn ensure_relay() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    Err("The Relay did not answer on 127.0.0.1:17321.".into())
+    Err(format!(
+        "The Relay did not answer on {}.",
+        relay_addr()
+    ))
 }
 
 fn systemctl(action: &str) -> Result<(), String> {
@@ -203,8 +214,9 @@ fn http_exchange(method: &str, path: &str, body: Option<&[u8]>) -> Result<String
         .map_err(|error| error.to_string())?;
 
     let length = body.map(|bytes| bytes.len()).unwrap_or(0);
+    let host = relay_addr();
     let header = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {RELAY_ADDR}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
     );
     stream
         .write_all(header.as_bytes())
@@ -223,9 +235,77 @@ fn http_exchange(method: &str, path: &str, body: Option<&[u8]>) -> Result<String
 }
 
 fn resolve_relay_addr() -> Result<SocketAddr, String> {
-    RELAY_ADDR
-        .to_socket_addrs()
+    let host = relay_addr();
+    host.to_socket_addrs()
         .map_err(|error| error.to_string())?
         .next()
-        .ok_or_else(|| "127.0.0.1:17321 did not resolve".into())
+        .ok_or_else(|| format!("{host} did not resolve"))
+}
+
+fn relay_ui_url() -> String {
+    format!("http://{}/", relay_addr())
+}
+
+fn relay_addr() -> String {
+    format!("127.0.0.1:{}", configured_relay_port())
+}
+
+fn configured_relay_port() -> u16 {
+    fs::read_to_string(relay_config_path())
+        .map(|text| parse_relay_port(&text))
+        .unwrap_or(DEFAULT_RELAY_PORT)
+}
+
+fn relay_config_path() -> PathBuf {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("vidyut").join("relay.json");
+        }
+    }
+    let home = env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home)
+        .join(".config")
+        .join("vidyut")
+        .join("relay.json")
+}
+
+pub(crate) fn parse_relay_port(json: &str) -> u16 {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return DEFAULT_RELAY_PORT;
+    };
+    match value.get("port") {
+        Some(serde_json::Value::Number(number)) => number
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port > 0)
+            .unwrap_or(DEFAULT_RELAY_PORT),
+        _ => DEFAULT_RELAY_PORT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_relay_port, DEFAULT_RELAY_PORT};
+
+    #[test]
+    fn default_port_when_json_is_junk() {
+        assert_eq!(parse_relay_port("nope"), DEFAULT_RELAY_PORT);
+    }
+
+    #[test]
+    fn reads_configured_port() {
+        assert_eq!(
+            parse_relay_port(r#"{"pairingSecret":"x","port":18000}"#),
+            18000
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_port() {
+        assert_eq!(
+            parse_relay_port(r#"{"port":70000}"#),
+            DEFAULT_RELAY_PORT
+        );
+        assert_eq!(parse_relay_port(r#"{"port":0}"#), DEFAULT_RELAY_PORT);
+    }
 }

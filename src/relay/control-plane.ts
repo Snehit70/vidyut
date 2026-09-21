@@ -95,7 +95,8 @@ export async function handleControlRequest(
     return enqueueTransfers(request, context);
   }
   if (request.method === "GET" && path === "/control/v1/setup") {
-    const status = await (context.setupStatus ?? collectLaptopSetupStatus)();
+    const status = await (context.setupStatus ?? (() =>
+      collectLaptopSetupStatus({ port: context.port })))();
     return Response.json(status);
   }
   return new Response("Not found", { status: 404 });

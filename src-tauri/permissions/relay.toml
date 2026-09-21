@@ -1,0 +1,24 @@
+[[permission]]
+identifier = "allow-start-relay"
+description = "Start the Relay systemd user unit and open the loopback page."
+commands.allow = ["start_relay"]
+
+[[permission]]
+identifier = "allow-stop-relay"
+description = "Stop the Relay systemd user unit. Closing the window must not do this."
+commands.allow = ["stop_relay"]
+
+[[permission]]
+identifier = "allow-pick-and-send-files"
+description = "Pick files with the native dialog and enqueue them on the Relay."
+commands.allow = ["pick_and_send_files"]
+
+[[permission]]
+identifier = "allow-open-releases"
+description = "Open the GitHub Releases page for a newer package."
+commands.allow = ["open_releases"]
+
+[[permission]]
+identifier = "allow-relay-ui"
+description = "Read the loopback Relay UI URL, including a non-default port from relay.json."
+commands.allow = ["relay_ui"]
