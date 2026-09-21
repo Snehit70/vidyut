@@ -124,7 +124,26 @@ describe("relay loopback control plane", () => {
       expect(html).toContain("Vidyut");
       expect(html).toContain(secret);
       expect(html).toContain("/control/v1/qr.svg");
+      expect(html).toContain("Plus Jakarta Sans");
+      expect(html).toContain("#C83861");
+      expect(html).toContain("#FDF0F4");
+      expect(html).toContain("Ready");
+      expect(html).toContain("Sync needs attention");
+      expect(html).toContain("Relay down");
+      expect(html).toContain("Send files");
+      expect(html).toContain("Transfer history");
+      expect(html).toContain("Laptop setup status");
+      expect(html).toContain("Rotate pairing secret");
+      expect(html).toContain("Every phone must scan");
+      expect(html).toContain("Closing this window does not stop the Relay");
+      expect(html).toContain("Start relay");
+      expect(html).toContain("Stop relay");
+      expect(html).not.toContain("Manrope");
+      expect(html).not.toMatch(/Recent activity|Activity timeline/);
     }
+
+    const stillUp = await fetchPath(handle, "127.0.0.1", "/health");
+    expect(stillUp.status).toBe(200);
 
     if (!lanHost) return;
     for (const path of ["/", "/ui/", "/control/v1/qr.svg"]) {

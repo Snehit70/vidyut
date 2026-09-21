@@ -3,6 +3,7 @@ import {
   pairingSecretValue,
   type PairingSecretRef,
 } from "./config";
+import { desktopShellHtml } from "./desktop-shell-page";
 import {
   createPairingQrSvg,
   pairingManualLine,
@@ -71,7 +72,7 @@ export async function handleControlRequest(
     request.method === "GET" &&
     (path === "/" || path === "/ui" || path === "/ui/")
   ) {
-    return htmlShell(controlState(context));
+    return htmlShellResponse(controlState(context));
   }
   if (request.method === "GET" && path === "/control/v1/state") {
     return Response.json(controlState(context));
@@ -197,83 +198,11 @@ async function enqueueTransfers(
   }
 }
 
-function htmlShell(state: ControlState): Response {
-  const statusLabel =
-    state.syncState === "sync_needs_attention"
-      ? "Sync needs attention"
-      : "Ready";
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Vidyut</title>
-  <style>
-    :root {
-      --ground: #ffffff;
-      --mist: #fdf0f4;
-      --raspberry: #c83861;
-      --ink: #33202b;
-      --muted: #856774;
-      --hairline: #9d878f;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Manrope, "Segoe UI", sans-serif;
-      background: var(--mist);
-      color: var(--ink);
-    }
-    main {
-      max-width: 42rem;
-      margin: 0 auto;
-      padding: 2.5rem 1.5rem 4rem;
-    }
-    h1 { font-size: 1.75rem; margin: 0 0 0.25rem; }
-    .status { color: var(--raspberry); font-weight: 600; margin-bottom: 1.5rem; }
-    .card {
-      background: var(--ground);
-      border: 1px solid var(--hairline);
-      border-radius: 1rem;
-      padding: 1.25rem 1.5rem;
-      margin-bottom: 1rem;
-    }
-    .qr { width: 14rem; height: 14rem; background: #fff; }
-    dl { display: grid; grid-template-columns: 7rem 1fr; gap: 0.4rem 1rem; margin: 1rem 0 0; }
-    dt { color: var(--muted); }
-    dd { margin: 0; word-break: break-all; }
-    .manual { font-family: ui-monospace, monospace; font-size: 0.9rem; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Vidyut</h1>
-    <p class="status">${escapeHtml(statusLabel)}</p>
-    <section class="card">
-      <p>Point the phone at this pairing QR. One secret is shared by every device.</p>
-      <img class="qr" alt="Pairing QR" src="/control/v1/qr.svg"/>
-      <dl>
-        <dt>Laptop</dt><dd>${escapeHtml(state.relayName)}</dd>
-        <dt>Host</dt><dd>${escapeHtml(state.host)}</dd>
-        <dt>Port</dt><dd>${escapeHtml(String(state.port))}</dd>
-        <dt>Secret</dt><dd>${escapeHtml(state.pairingSecret)}</dd>
-        <dt>Manual</dt><dd class="manual">${escapeHtml(state.manual)}</dd>
-        <dt>Devices</dt><dd>${escapeHtml(String(state.authenticatedDeviceCount))}</dd>
-      </dl>
-    </section>
-  </main>
-</body>
-</html>
-`;
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
+function htmlShellResponse(state: ControlState): Response {
+  return new Response(desktopShellHtml(state), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
