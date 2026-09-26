@@ -1,23 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Status bar notification icon for Vidyut. Android renders small icons as an
-  alpha mask, so this must be a flat single-colour silhouette with no
-  gradient and no background plate. Carries the brand motif in a form that
-  survives at 24dp: a clipboard holding the signature wave.
+  alpha mask, so this must be a flat single-colour silhouette: no gradient
+  and no background plate.
+
+  Carries the launcher composition rather than a generic clipboard: the
+  tilted photo card tucked behind the clipboard, which is the part of the
+  brand mark that still reads at 24dp. The connecting wave is left out at
+  this size; it closes up into a smudge.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- Clipboard body, with the clip tab crossing its top edge -->
     <path
-        android:pathData="M3.4,7.4a2.4,2.4 0 0 1 2.4,-2.4h2.8V3.2h6.8v1.8h2.8a2.4,2.4 0 0 1 2.4,2.4v14.6a2.4,2.4 0 0 1 -2.4,2.4H5.8a2.4,2.4 0 0 1 -2.4,-2.4z"
+        android:pathData="M10.1,4.2h7.8a2.1,2.1 0 0 1 2.1,2.1v15.4a2.1,2.1 0 0 1 -2.1,2.1h-7.8a2.1,2.1 0 0 1 -2.1,-2.1v-15.4a2.1,2.1 0 0 1 2.1,-2.1z"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.9"
+        android:strokeWidth="1.7"
         android:strokeLineJoin="round" />
     <path
-        android:pathData="M7.2,14.6c2.1,0 2.1,-2.7 4.2,-2.7s2.1,2.7 4.2,2.7"
+        android:pathData="M11.2,4.2V2.5h5.6V4.2"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="1.9"
+        android:strokeWidth="1.7"
         android:strokeLineCap="round" />
+    <!-- Photo card, drawn upright then tilted about its own centre so the
+         path data stays readable -->
+    <group
+        android:pivotX="5.7"
+        android:pivotY="14.8"
+        android:rotation="-8">
+        <path
+            android:pathData="M2.3,8h6.8a1.8,1.8 0 0 1 1.8,1.8v10a1.8,1.8 0 0 1 -1.8,1.8h-6.8a1.8,1.8 0 0 1 -1.8,-1.8v-10a1.8,1.8 0 0 1 1.8,-1.8z"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineJoin="round" />
+    </group>
 </vector>
