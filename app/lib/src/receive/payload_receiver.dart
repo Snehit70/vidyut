@@ -205,7 +205,7 @@ class LocalPayloadNotifier implements PayloadNotifier {
     if (_initialized) return;
     await _plugin.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings('@drawable/ic_notification'),
       ),
     );
     final android = _plugin

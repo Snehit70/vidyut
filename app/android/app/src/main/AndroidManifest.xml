@@ -33,6 +33,11 @@
         android:label="vidyut"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Lets flutter_foreground_task resolve the status bar small icon;
+             it has no drawable-name API and reads the id from meta-data. -->
+        <meta-data
+            android:name="dev.snehit.vidyut.notificationIcon"
+            android:resource="@drawable/ic_notification" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
