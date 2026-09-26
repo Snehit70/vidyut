@@ -202,9 +202,9 @@ object ClipboardAutoSendWatcher {
                 manualIntent,
                 immutableUpdate,
             )
-            val appInfo = app.packageManager.getApplicationInfo(app.packageName, 0)
-            if (appInfo.icon == 0) {
-                emitLog("Notification action refresh skipped: app icon unavailable.")
+            val smallIcon = resolveSmallIcon(app)
+            if (smallIcon == 0) {
+                emitLog("Notification action refresh skipped: no usable small icon.")
                 return
             }
             val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -215,7 +215,7 @@ object ClipboardAutoSendWatcher {
             val notification = builder
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setSmallIcon(appInfo.icon)
+                .setSmallIcon(smallIcon)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(Notification.BigTextStyle().bigText(text))
@@ -239,6 +239,26 @@ object ClipboardAutoSendWatcher {
                     (error.message ?: error.javaClass.simpleName),
             )
         }
+    }
+
+    /**
+     * Resolves the status bar small icon.
+     *
+     * The status bar draws small icons as an alpha mask, so the full colour
+     * launcher icon renders as a solid blob. This is a library module and
+     * cannot see the app's R class, so the app drawable is looked up by name
+     * at runtime and we fall back to the launcher icon only if it is missing.
+     */
+    private fun resolveSmallIcon(app: Context): Int {
+        val byName = app.resources.getIdentifier(
+            "ic_notification",
+            "drawable",
+            app.packageName,
+        )
+        if (byName != 0) return byName
+        return runCatching {
+            app.packageManager.getApplicationInfo(app.packageName, 0).icon
+        }.getOrDefault(0)
     }
 
     @Synchronized

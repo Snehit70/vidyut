@@ -324,6 +324,9 @@ class VidyutForegroundServiceClient implements ForegroundServiceClient {
         notificationTitle: 'Vidyut connecting',
         notificationText: 'Looking for the laptop relay...',
         notificationButtons: const [],
+        notificationIcon: const NotificationIcon(
+          metaDataName: 'dev.snehit.vidyut.notificationIcon',
+        ),
         notificationInitialRoute: '/',
         callback: startForegroundCallback,
       ),
