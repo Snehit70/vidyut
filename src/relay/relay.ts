@@ -7,7 +7,11 @@ import { handleControlRequest, isControlPath } from "./control-plane";
 import { noopLogger, type Logger } from "./logger";
 import { getPairingHost } from "./network";
 import { PayloadPool } from "./payload-pool";
-import type { LaptopSetupStatus } from "./setup-status";
+import {
+  createSetupStatusReader,
+  type LaptopSetupStatus,
+  type SetupStatusReader,
+} from "./setup-status";
 import {
   encodedPayloadBytes,
   isPayloadFrame,
@@ -36,7 +40,7 @@ interface RelayOptions {
   persistPairingSecret?: (secret: string) => Promise<void>;
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
-  setupStatus?: () => Promise<LaptopSetupStatus>;
+  setupStatus?: SetupStatusReader;
   transferControl?: (
     message: TransferControlMessage,
     sourceDeviceId: string,
@@ -83,6 +87,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
   const devices = new Set<RelaySocket>();
   const startedAt = Date.now();
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? defaultHeartbeatIntervalMs;
+  // One cached probe per Relay. Probing forks several processes, and the
+  // control plane is read on a poll, so an uncached read storms the machine.
+  const setupStatusReader = createSetupStatusReader();
   const staleAfterMs = options.staleAfterMs ?? defaultStaleAfterMs;
   const unsubscribe = pool.subscribe((frame, source) => {
     logger.info("payload_published", {
@@ -200,7 +207,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           ...(options.enqueueLaptopFiles && {
             enqueueLaptopFiles: options.enqueueLaptopFiles,
           }),
-          ...(options.setupStatus && { setupStatus: options.setupStatus }),
+          setupStatus: options.setupStatus ?? setupStatusReader,
         });
       }
       return new Response("Vidyut relay", { status: 200 });

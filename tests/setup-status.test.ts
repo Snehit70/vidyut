@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   collectLaptopSetupStatus,
+  createSetupStatusReader,
+  type LaptopSetupStatus,
   type SetupRow,
   type SetupStatusDeps,
 } from "../src/relay/setup-status";
@@ -202,5 +204,146 @@ describe("laptop setup status", () => {
       ok: true,
       detail: "No active firewalld or ufw.",
     });
+  });
+});
+
+describe("setup status reader", () => {
+  function healthy(checkedAtMs: number): LaptopSetupStatus {
+    return {
+      checkedAtMs,
+      rows: [{ id: "relay_running", ok: true, detail: "Relay is answering." }],
+    };
+  }
+
+  function countingProbe() {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      collect: async () => {
+        calls += 1;
+        return healthy(0);
+      },
+    };
+  }
+
+  test("serves a warm answer without re-probing", async () => {
+    const probe = countingProbe();
+    const read = createSetupStatusReader({ ttlMs: 30_000, collect: probe.collect });
+
+    const first = await read();
+    const second = await read();
+    const third = await read();
+
+    expect(probe.calls()).toBe(1);
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+
+  test("re-probes once the answer is older than the ttl", async () => {
+    let clock = 1_000_000;
+    const probe = countingProbe();
+    const read = createSetupStatusReader({
+      ttlMs: 30_000,
+      now: () => clock,
+      collect: probe.collect,
+    });
+
+    await read();
+    clock += 29_000;
+    await read();
+    expect(probe.calls()).toBe(1);
+
+    clock += 2_000;
+    await read();
+    expect(probe.calls()).toBe(2);
+  });
+
+  test("a forced read bypasses a warm cache", async () => {
+    const probe = countingProbe();
+    const read = createSetupStatusReader({ ttlMs: 30_000, collect: probe.collect });
+
+    await read();
+    await read();
+    expect(probe.calls()).toBe(1);
+
+    await read(true);
+    expect(probe.calls()).toBe(2);
+  });
+
+  test("concurrent readers share one probe", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const read = createSetupStatusReader({
+      ttlMs: 30_000,
+      collect: async () => {
+        calls += 1;
+        await gate;
+        return healthy(0);
+      },
+    });
+
+    const all = Promise.all([read(), read(), read(), read(), read()]);
+    release?.();
+    const results = await all;
+
+    expect(calls).toBe(1);
+    for (const result of results) expect(result).toBe(results[0]);
+  });
+
+  test("a forced read joins an in-flight probe instead of starting another", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const read = createSetupStatusReader({
+      ttlMs: 30_000,
+      collect: async () => {
+        calls += 1;
+        await gate;
+        return healthy(0);
+      },
+    });
+
+    const all = Promise.all([read(), read(true), read(true)]);
+    release?.();
+    await all;
+    expect(calls).toBe(1);
+  });
+
+  test("a failed probe is not cached and does not wedge the reader", async () => {
+    let calls = 0;
+    const read = createSetupStatusReader({
+      ttlMs: 30_000,
+      collect: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("probe exploded");
+        return healthy(0);
+      },
+    });
+
+    await expect(read()).rejects.toThrow("probe exploded");
+    await read();
+    expect(calls).toBe(2);
+  });
+
+  test("freshness is stamped by the reader, not trusted from the probe", async () => {
+    let clock = 5_000_000;
+    const read = createSetupStatusReader({
+      ttlMs: 30_000,
+      now: () => clock,
+      // A probe reporting a nonsense timestamp must not poison the cache.
+      collect: async () => healthy(0),
+    });
+
+    const first = await read();
+    expect(first.checkedAtMs).toBe(5_000_000);
+
+    clock += 1_000;
+    const second = await read();
+    expect(second.checkedAtMs).toBe(5_000_000);
   });
 });
