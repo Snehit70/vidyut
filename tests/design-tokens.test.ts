@@ -486,6 +486,25 @@ describe("desktop shell behaviour guards", () => {
     expect(shellHtml).not.toMatch(/class="btn outlined danger" id="start-relay"/);
   });
 
+  test("the shell can be quit without touching the relay", () => {
+    // ADR 0018 keeps the Relay alive, so quitting the shell must not be
+    // reachable only through a control that stops the service.
+    expect(shellHtml).toContain('id="quit-shell"');
+    expect(shellHtml).toContain('invoke("quit_shell")');
+    expect(shellHtml).toMatch(/class="titlebar-end"/);
+    // A visible affordance, not just the shortcut.
+    expect(shellHtml).toMatch(/class="quit"[\s\S]{0,200}id="quit-shell"/);
+    // Guarded, because a browser tab has no shell to quit.
+    expect(shellHtml).toContain('$("quit-shell").hidden = !hasShell();');
+  });
+
+  test("quit is named so it cannot be read as stopping the relay", () => {
+    const quitButton =
+      shellHtml.match(/<button[^>]*id="quit-shell"[\s\S]*?<\/button>/)?.[0] ?? "";
+    expect(quitButton).toContain(">Quit</button>");
+    expect(shellHtml).toContain("The Relay keeps running");
+  });
+
   test("wide windows centre the content instead of hugging the left edge", () => {
     expect(shellCss).toContain("max-width: 880px; margin-inline: auto;");
   });

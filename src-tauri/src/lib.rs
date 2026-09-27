@@ -70,6 +70,13 @@ fn stop_relay() -> Result<(), String> {
     Ok(())
 }
 
+/// Quit the desktop shell. ADR 0018 keeps the Relay alive, so this exits only
+/// this process and deliberately does not touch the systemd unit.
+#[tauri::command]
+fn quit_shell(app: AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 fn pick_and_send_files(app: AppHandle) -> Result<usize, String> {
     send_files_from_dialog(&app)
@@ -97,7 +104,8 @@ pub fn run() {
             stop_relay,
             pick_and_send_files,
             open_releases,
-            relay_ui
+            relay_ui,
+            quit_shell
         ])
         .setup(|app| {
             setup_window(app.handle())?;

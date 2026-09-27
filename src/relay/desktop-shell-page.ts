@@ -73,10 +73,18 @@ export function desktopShellHtml(state: DesktopShellState): string {
         <span class="sep" aria-hidden="true">/</span>
         <span class="relay-name" id="relay-name">${escapeHtml(state.relayName)}</span>
       </div>
-      <p class="status" id="status-chip" role="status" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="status-label">${escapeHtml(status.label)}</span>
-      </p>
+      <div class="titlebar-end">
+        <p class="status" id="status-chip" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-label">${escapeHtml(status.label)}</span>
+        </p>
+        <button
+          type="button"
+          class="quit"
+          id="quit-shell"
+          title="Close the desktop shell. The Relay keeps running, so clipboard sync and transfers are unaffected."
+        >Quit</button>
+      </div>
     </header>
 
     <div class="banner" id="banner" role="status" aria-live="polite"${banner ? " hidden" : ""}>
@@ -385,6 +393,23 @@ body {
   border-bottom: 1px solid var(--hairline-soft);
 }
 .titlebar-id { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.titlebar-end { display: flex; align-items: center; gap: 12px; flex: none; }
+/* Named Quit, not Stop, and it sits in the title bar rather than beside the
+   relay controls: stopping the Relay and closing the shell are different
+   actions and must not read alike. */
+.quit {
+  font: inherit;
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.quit:hover { color: var(--text-body); border-color: var(--muted); }
+.quit:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
 h1 {
   margin: 0;
   font-size: var(--type-title-md-size);
@@ -1072,9 +1097,19 @@ function shellScript(): string {
     for (var id of ["start-relay", "stop-relay"]) {
       var button = $(id);
       if (!button.disabled) continue;
-      button.closest("[data-explains]")?.setAttribute("title", explanation);
-      button.setAttribute("aria-label", button.getAttribute("aria-label") + " " + explanation);
+      var wrapper = button.closest("[data-explains]");
+      if (wrapper && !wrapper.hasAttribute("title")) {
+        wrapper.setAttribute("title", explanation);
+        button.setAttribute(
+          "aria-label",
+          button.getAttribute("aria-label") + " " + explanation,
+        );
+      }
     }
+    // Quitting is a shell action, so a browser tab has nothing to quit. This
+    // runs again once Tauri finishes loading, because on the first pass the
+    // bridge is not there yet and the control would stay hidden for good.
+    $("quit-shell").hidden = !hasShell();
   }
 
   // The Relay caches the probe for 30s. "Check again" is how a user says they
@@ -1171,16 +1206,34 @@ function shellScript(): string {
       event.preventDefault();
       $("send-files").click();
     }
+    // The window's close button hides to the tray rather than quitting, so
+    // without this there is no way to stop the shell from the keyboard. The
+    // Relay keeps running either way; see ADR 0018.
+    if (event.key.toLowerCase() === "q" && hasShell()) {
+      event.preventDefault();
+      quitShell();
+    }
   });
+
+  function quitShell() {
+    if (!hasShell()) return;
+    tauriCore()
+      .invoke("quit_shell")
+      .catch(function () {
+        snack("The desktop shell did not quit.");
+      });
+  }
 
   state = bootState();
   lastSecret = state.pairingSecret || "";
   selectPane(defaultPane(), false);
   markShellOnly();
+  $("quit-shell").addEventListener("click", quitShell);
   wireRelayButtons();
   (function waitTauri(tries) {
     if (hasShell() || tries <= 0) {
       wireRelayButtons();
+      markShellOnly();
       return;
     }
     setTimeout(function () { waitTauri(tries - 1); }, 200);
