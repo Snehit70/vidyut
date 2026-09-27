@@ -381,7 +381,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
 
 class _TelemetryCard extends StatelessWidget {
   const _TelemetryCard({
-    this.key,
+    super.key,
     required this.icon,
     this.progress,
     required this.label,
@@ -389,11 +389,6 @@ class _TelemetryCard extends StatelessWidget {
     required this.detail,
     required this.color,
   });
-
-  /// Lets a test address a card directly. Card heights differ within a row
-  /// (a progress bar makes one taller), so grouping can only be asserted on
-  /// card geometry, never on where a label happens to land.
-  final Key? key;
 
   final String label;
   final IconData icon;
