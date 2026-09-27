@@ -1,6 +1,6 @@
 [package]
 name = "vidyut-shell"
-version = "1.11.3"
+version = "1.12.2"
 description = "Vidyut desktop shell"
 authors = ["Snehit"]
 edition = "2021"
