@@ -192,7 +192,7 @@ export function desktopShellHtml(state: DesktopShellState): string {
             <div><dt>Unit</dt><dd>vidyut-relay.service</dd></div>
             <div><dt>Paired</dt><dd><span id="devices-2">${escapeHtml(String(state.authenticatedDeviceCount))}</span> <span id="devices-label-2">${deviceWord(state.authenticatedDeviceCount)}</span></dd></div>
           </dl>
-          <div class="btn-row">
+          <div class="btn-row" data-explains="relay">
             <button type="button" class="btn outlined" id="start-relay" disabled>Start relay</button>
             <button type="button" class="btn outlined danger" id="stop-relay" disabled>Stop relay</button>
           </div>
@@ -759,9 +759,24 @@ function shellScript(): string {
     setText(id + "-2", value);
   }
 
+  // Ready claims a live phone-to-relay connection and a healthy clipboard
+  // watcher. An unrecognised state satisfies neither, so it must not fall
+  // through to Ready: a newer Relay adding a state the shell has not learned
+  // would otherwise be reported as the best case.
+  function statusCopyFor(syncState) {
+    return Object.prototype.hasOwnProperty.call(STATUS, syncState)
+      ? STATUS[syncState]
+      : {
+          label: "Sync needs attention",
+          detail: "The Relay reported a state this window does not recognise.",
+          icon: "syncProblem",
+          tone: "warn",
+        };
+  }
+
   function renderState(next, fresh) {
     state = next;
-    var copy = fresh === false ? STATUS.relay_down : (STATUS[next.syncState] || STATUS.ready);
+    var copy = fresh === false ? STATUS.relay_down : statusCopyFor(next.syncState);
     document.body.setAttribute("data-sync", copy === STATUS.relay_down ? "relay_down" : next.syncState);
     setText("status-label", copy.label);
     $("status-icon").setAttribute("href", "#i-" + copy.icon);
@@ -927,7 +942,7 @@ function shellScript(): string {
     var broken = rows.filter(function (row) { return !row.ok; });
     summary.hidden = false;
     summary.innerHTML = broken.length
-      ? '<div class="bad"><b>' + broken.length + '</b><span>Need attention</span></div>' +
+      ? '<div class="bad"><b>' + broken.length + '</b><span>Needs a fix</span></div>' +
         '<div><b>' + (rows.length - broken.length) + '</b><span>Healthy</span></div>'
       : '<div><b>' + rows.length + '</b><span>All clear</span></div>';
     list.innerHTML = rows.map(function (row) {
@@ -1048,12 +1063,17 @@ function shellScript(): string {
 
   // Without the Tauri shell behind it there is nothing to invoke, so say so
   // instead of leaving a control that looks live and does nothing.
+  //
+  // The explanation goes on the button's parent, not the button. A disabled
+  // button emits no pointer events, so a title set on it never produces a
+  // tooltip and the reason would be unreachable.
   function markShellOnly() {
+    var explanation = "Start and stop relay run in the Vidyut desktop shell.";
     for (var id of ["start-relay", "stop-relay"]) {
       var button = $(id);
-      if (button.disabled) {
-        button.title = "Start and stop relay run in the Vidyut desktop shell.";
-      }
+      if (!button.disabled) continue;
+      button.closest("[data-explains]")?.setAttribute("title", explanation);
+      button.setAttribute("aria-label", button.getAttribute("aria-label") + " " + explanation);
     }
   }
 
