@@ -463,32 +463,37 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    double topOf(String label) => tester.getTopLeft(find.text(label)).dy;
+    ui.Rect cardOf(String name) => tester.getRect(find.byKey(Key('telemetry-$name')));
 
-    // Cards in a Row are centre-aligned, so a card carrying a progress bar is
-    // taller and its label sits lower than its neighbour's. Row membership is
-    // therefore a band, not an exact line.
-    const rowTolerance = 40.0;
+    // Row membership is vertical overlap, not a shared top edge. Cards in a
+    // Row are centre-aligned, and a card with a progress bar is much taller
+    // than one without, so at 320dp their labels can be 100px apart while
+    // still being plainly on the same row.
     void expectSameRow(String a, String b) {
+      final first = cardOf(a);
+      final second = cardOf(b);
+      final overlap = first.overlaps(second)
+          ? (first.bottom < second.bottom ? first.bottom : second.bottom) -
+              (first.top > second.top ? first.top : second.top)
+          : 0.0;
+      final shorter = first.height < second.height ? first.height : second.height;
       expect(
-        (topOf(a) - topOf(b)).abs(),
-        lessThan(rowTolerance),
+        overlap,
+        greaterThan(shorter * 0.5),
         reason: '$a and $b should share a row',
       );
     }
 
     // Battery shares a row with CPU temperature rather than sitting alone.
-    expectSameRow('Battery', 'CPU temperature');
+    expectSameRow('battery', 'temp');
     // The remaining three share the second row.
-    expectSameRow('CPU usage', 'Memory');
-    expectSameRow('Memory', 'Storage');
-    // And the group is two rows, not three: the second row starts clearly
-    // below the first, by more than the same-row tolerance.
-    expect(
-      topOf('CPU usage') - topOf('CPU temperature'),
-      greaterThan(rowTolerance),
-    );
-    expect(topOf('Battery'), lessThan(topOf('CPU usage')));
+    expectSameRow('cpu', 'memory');
+    expectSameRow('memory', 'storage');
+
+    // And the group is two rows, not three: the second row starts below the
+    // first, and no card in it overlaps the first.
+    expect(cardOf('cpu').top, greaterThanOrEqualTo(cardOf('temp').bottom - 1));
+    expect(cardOf('battery').bottom, lessThanOrEqualTo(cardOf('cpu').top + 1));
 
     // Three across at 320dp is what the old compact branch existed to avoid,
     // so this is the assertion that would catch a regression.

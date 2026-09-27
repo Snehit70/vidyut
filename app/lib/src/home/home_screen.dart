@@ -183,6 +183,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     }
 
     final batteryCard = _TelemetryCard(
+      key: const Key('telemetry-battery'),
       icon: Icons.battery_full_outlined,
       label: 'Battery',
       value: resolveValue(
@@ -197,6 +198,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final tempCard = _TelemetryCard(
+      key: const Key('telemetry-temp'),
       icon: Icons.thermostat_outlined,
       label: 'CPU temperature',
       value: resolveValue(
@@ -214,6 +216,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final memoryCard = _TelemetryCard(
+      key: const Key('telemetry-memory'),
       icon: Icons.memory_outlined,
       progress: isStale
           ? null
@@ -234,6 +237,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final storageCard = _TelemetryCard(
+      key: const Key('telemetry-storage'),
       icon: Icons.storage_outlined,
       progress: isStale
           ? null
@@ -256,6 +260,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final cpuCard = _TelemetryCard(
+      key: const Key('telemetry-cpu'),
       icon: Icons.developer_board_outlined,
       label: 'CPU usage',
       value: resolveValue(
@@ -376,6 +381,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
 
 class _TelemetryCard extends StatelessWidget {
   const _TelemetryCard({
+    this.key,
     required this.icon,
     this.progress,
     required this.label,
@@ -383,6 +389,11 @@ class _TelemetryCard extends StatelessWidget {
     required this.detail,
     required this.color,
   });
+
+  /// Lets a test address a card directly. Card heights differ within a row
+  /// (a progress bar makes one taller), so grouping can only be asserted on
+  /// card geometry, never on where a label happens to land.
+  final Key? key;
 
   final String label;
   final IconData icon;
