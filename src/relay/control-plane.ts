@@ -232,7 +232,7 @@ async function enqueueTransfers(
  * reachable by any browser on loopback, so it gets a real policy rather than
  * none at all.
  */
-const SHELL_CSP = [
+export const SHELL_CSP = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
   "style-src 'unsafe-inline'",
@@ -243,6 +243,27 @@ const SHELL_CSP = [
   "form-action 'none'",
   "frame-ancestors 'none'",
 ].join("; ");
+
+/**
+ * The policy for the bundled boot page, which Tauri serves from
+ * tauri://localhost before the shell navigates to the Relay.
+ *
+ * It differs from the Relay-served policy in exactly one place, and the
+ * difference is required: the boot page polls the Relay's /health endpoint
+ * over loopback while it waits for the service to answer, so its connect-src
+ * has to name the relay origin. The Relay-served shell talks only to its own
+ * origin and keeps the tighter `connect-src 'self'`.
+ *
+ * tauri.conf.json cannot import this, so tests/design-tokens.test.ts asserts
+ * the bundled page matches. If the two policies are edited apart, that test
+ * fails rather than the difference quietly becoming a second accident.
+ */
+export function bundledPageCsp(loopbackOriginPattern: string): string {
+  return SHELL_CSP.replace(
+    "connect-src 'self'",
+    `connect-src 'self' ${loopbackOriginPattern}`,
+  );
+}
 
 function htmlShellResponse(state: ControlState): Response {
   return new Response(desktopShellHtml(state), {
