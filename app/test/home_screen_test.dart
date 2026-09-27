@@ -465,13 +465,30 @@ void main() {
 
     double topOf(String label) => tester.getTopLeft(find.text(label)).dy;
 
+    // Cards in a Row are centre-aligned, so a card carrying a progress bar is
+    // taller and its label sits lower than its neighbour's. Row membership is
+    // therefore a band, not an exact line.
+    const rowTolerance = 40.0;
+    void expectSameRow(String a, String b) {
+      expect(
+        (topOf(a) - topOf(b)).abs(),
+        lessThan(rowTolerance),
+        reason: '$a and $b should share a row',
+      );
+    }
+
     // Battery shares a row with CPU temperature rather than sitting alone.
-    expect(topOf('Battery'), topOf('CPU temperature'));
+    expectSameRow('Battery', 'CPU temperature');
     // The remaining three share the second row.
-    expect(topOf('CPU usage'), topOf('Memory'));
-    expect(topOf('Memory'), topOf('Storage'));
-    // And the group is two rows, not three.
-    expect(topOf('CPU usage'), greaterThan(topOf('CPU temperature')));
+    expectSameRow('CPU usage', 'Memory');
+    expectSameRow('Memory', 'Storage');
+    // And the group is two rows, not three: the second row starts clearly
+    // below the first, by more than the same-row tolerance.
+    expect(
+      topOf('CPU usage') - topOf('CPU temperature'),
+      greaterThan(rowTolerance),
+    );
+    expect(topOf('Battery'), lessThan(topOf('CPU usage')));
 
     // Three across at 320dp is what the old compact branch existed to avoid,
     // so this is the assertion that would catch a regression.
