@@ -20,9 +20,14 @@ are not treated as CPU temperature. Warning and critical thresholds mirror
 Waybar at 70°C and 82°C. If no CPU sensor is available, the temperature card is
 explicitly unavailable.
 
-Home presents five telemetry metrics beneath the single `Send files` action:
-battery and CPU temperature on the first row, memory and storage on the second
-row, and CPU usage as a full-width third-row card. CPU usage is color-coded as
+Home presents five telemetry metrics beneath the single `Send files` action, as
+one group: CPU temperature and battery on the first row, then CPU usage, memory
+and storage together on the second row. No metric is given a row of its own,
+because a lone full-width card reads as a separate concern rather than one of
+five. This supersedes the earlier arrangement in this ADR, which specified CPU
+usage as a full-width third-row card; that layout was never actually built, and
+commit b6d9ada then orphaned battery on its own row at compact widths, which is
+the problem this corrects. CPU usage is color-coded as
 Low below 50%, Moderate from 50% through 80%, and High above 80%.
 
 Telemetry is a latest-snapshot concern. Vidyut does not persist telemetry

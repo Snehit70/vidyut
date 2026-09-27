@@ -90,17 +90,17 @@ class HomeScreen extends StatelessWidget {
                   label: const Text('Send files'),
                 ),
                 const SizedBox(height: 12),
-                _LatestActivitySection(
-                  activity: lastActivity,
-                  onTap: onOpenRecentActivity,
-                ),
                 if (laptopTelemetry != null) ...[
-                  const SizedBox(height: 12),
                   _LaptopTelemetrySection(
                     telemetry: laptopTelemetry,
                     connected: connectionStatus == ConnectionStatus.connected,
                   ),
                 ],
+                const SizedBox(height: 12),
+                _LatestActivitySection(
+                  activity: lastActivity,
+                  onTap: onOpenRecentActivity,
+                ),
                 if (setupBannerLabel != null && onOpenSetup != null) ...[
                   const SizedBox(height: 10),
                   _HomeSetupBanner(
@@ -346,36 +346,24 @@ class _LaptopTelemetrySection extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 18),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 520;
-                    if (compact) {
-                      return Column(
-                        children: [
-                          pair(cpuCard, tempCard),
-                          const SizedBox(height: 8),
-                          pair(memoryCard, storageCard),
-                          const SizedBox(height: 8),
-                          batteryCard,
-                        ],
-                      );
-                    }
-                    return Column(
+                // Five metrics as one group. Battery leads with CPU
+                // temperature and the remaining three sit together, so no
+                // metric is left alone on its own row reading as a separate
+                // concern. ADR 0015.
+                Column(
+                  children: [
+                    pair(tempCard, batteryCard),
+                    const SizedBox(height: 8),
+                    Row(
                       children: [
-                        Row(
-                          children: [
-                            Expanded(child: cpuCard),
-                            const SizedBox(width: 8),
-                            Expanded(child: tempCard),
-                            const SizedBox(width: 8),
-                            Expanded(child: batteryCard),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        pair(memoryCard, storageCard),
+                        Expanded(child: cpuCard),
+                        const SizedBox(width: 8),
+                        Expanded(child: memoryCard),
+                        const SizedBox(width: 8),
+                        Expanded(child: storageCard),
                       ],
-                    );
-                  },
+                    ),
+                  ],
                 ),
               ],
             ),
