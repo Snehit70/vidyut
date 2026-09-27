@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { desktopShellHtml } from "../src/relay/desktop-shell-page";
+import { bundledPageCsp, SHELL_CSP } from "../src/relay/control-plane";
 
 const root = join(import.meta.dir, "..");
 const read = (relative: string) => readFileSync(join(root, relative), "utf8");
@@ -20,6 +21,69 @@ const shellHtml = desktopShellHtml({
   authenticatedDeviceCount: 1,
 });
 const shellCss = shellHtml.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+
+/**
+ * Canonical tokens the shell deliberately does not consume, each with the
+ * reason. The shell still may not contradict a value it does consume; this
+ * list exists so that *not* consuming one is a recorded decision rather than
+ * an accident.
+ *
+ * The desktop shell is a mouse-driven control panel, not the phone, so the
+ * cases fall into three groups: the phone's own text ramp, the phone's touch
+ * spacing scale, and motion the shell does not perform.
+ */
+const EXEMPT: Record<string, string> = {
+  // The phone's text ramp. The shell renders pane titles, row labels and
+  // body copy, and declares the subset it uses. Flutter's display/headline/
+  // appbar styles have no desktop counterpart.
+  "--type-display-size": "phone-only display style",
+  "--type-display-weight": "phone-only display style",
+  "--type-display-tracking": "phone-only display style",
+  "--type-headline-size": "phone-only headline style",
+  "--type-headline-weight": "phone-only headline style",
+  "--type-headline-tracking": "phone-only headline style",
+  "--type-body-lg-size": "phone-only body scale",
+  "--type-body-lg-weight": "phone-only body scale",
+  "--type-body-md-weight": "phone-only body scale",
+  "--type-body-sm-size": "phone-only body scale",
+  "--type-body-sm-weight": "phone-only body scale",
+  "--type-label-md-size": "phone-only label scale",
+  "--type-label-md-weight": "phone-only label scale",
+  "--type-appbar-size": "the shell has a title bar, not a phone app bar",
+  "--type-appbar-weight": "the shell has a title bar, not a phone app bar",
+  "--type-appbar-tracking": "the shell has a title bar, not a phone app bar",
+
+  // Touch metrics. The phone's 48px control and 4/8/12/16 spacing ramp are
+  // sized for a finger. A mouse-driven window declares its own densities in
+  // the shell stylesheet, deliberately outside the token set.
+  "--control-height": "48px is a touch target; the shell uses --control-height-compact",
+  "--space-4": "touch spacing ramp; the shell has its own density",
+  "--space-6": "touch spacing ramp; the shell has its own density",
+  "--space-8": "touch spacing ramp; the shell has its own density",
+  "--space-10": "touch spacing ramp; the shell has its own density",
+  "--space-12": "touch spacing ramp; the shell has its own density",
+  "--space-14": "touch spacing ramp; the shell has its own density",
+  "--space-16": "touch spacing ramp; the shell has its own density",
+  "--space-20": "touch spacing ramp; the shell has its own density",
+  "--space-24": "touch spacing ramp; the shell has its own density",
+  "--radius-pill": "the shell uses --radius-control for its controls",
+  "--hairline-width": "the shell declares its own hairline weight",
+
+  // Motion the shell does not perform. ADR 0013 makes motion feedback-only,
+  // so the entrance and stagger timings have no consumer here.
+  "--dur-entrance": "ADR 0013: no entrance choreography on a long surface",
+  "--dur-stagger": "ADR 0013: no entrance choreography on a long surface",
+  "--ease-spring": "no spring-eased motion in the shell",
+  "--dur-dot-pulse": "the shell's status dots do not pulse",
+  "--dur-state": "the shell transitions state without a dedicated duration",
+
+  // Interaction colours the phone uses for pressed and outlined controls
+  // that the shell does not have.
+  "--active": "no pressed-state fill in the shell",
+  "--active-mist": "no pressed-state fill in the shell",
+  "--text-label-small": "the shell labels at the label scale it declares",
+  "--border-strong": "the shell uses --hairline for borders",
+};
 
 type Blocks = { light: Record<string, string>; dark: Record<string, string> };
 
@@ -172,16 +236,84 @@ describe("design tokens", () => {
   });
 
   test("the shell uses the canonical token values", () => {
+    // A token the shell does not declare cannot contradict the canonical
+    // value, so the old shape of this test skipped those. That made omission
+    // invisible: `--control-height` is absent from the shell, which uses its
+    // own 34px control, and the suite stayed green. Every canonical token
+    // must now be either consumed or explicitly exempted below, so a new
+    // token cannot slip in unclassified.
     for (const [token, value] of Object.entries(canonical.light)) {
-      const declared = shell.light[token];
-      if (declared === undefined) continue;
-      expect(declared, `shell ${token}`).toBe(value);
+      if (!(token in shell.light)) continue;
+      expect(shell.light[token], `shell ${token}`).toBe(value);
     }
     for (const [token, value] of Object.entries(canonical.dark)) {
-      const declared = shell.dark[token];
-      if (declared === undefined) continue;
-      expect(declared, `shell dark ${token}`).toBe(value);
+      if (!(token in shell.dark)) continue;
+      expect(shell.dark[token], `shell dark ${token}`).toBe(value);
     }
+  });
+
+  test("every canonical token is consumed by the shell or exempt", () => {
+    const unclassified = [
+      ...Object.keys(canonical.light),
+      ...Object.keys(canonical.dark),
+    ].filter(
+      (token) =>
+        !(token in shell.light) && !(token in shell.dark) && !(token in EXEMPT),
+    );
+    expect(
+      unclassified.sort(),
+      "add these to SHELL_EXEMPT with a reason, or consume them",
+    ).toEqual([]);
+  });
+
+  test("the exemption list has no dead entries", () => {
+    // An exemption for a token the shell now consumes is a stale excuse that
+    // would hide the next real decision.
+    for (const [token, reason] of Object.entries(EXEMPT)) {
+      const consumed = token in shell.light || token in shell.dark;
+      expect(consumed, `${token} is exempt but the shell declares it`).toBe(false);
+      expect(
+        token in canonical.light || token in canonical.dark,
+        `${token} is exempt but not a canonical token`,
+      ).toBe(true);
+      expect(reason.trim().length, `${token} needs a reason`).toBeGreaterThan(0);
+    }
+  });
+
+  test("the bundled boot page CSP matches the shell CSP plus the relay poll", () => {
+    // The boot page and the Relay-served shell have two CSP strings in the
+    // project, and they are allowed to differ in exactly one directive. This
+    // is what stops that difference becoming a second, accidental one.
+    const tauriConf = JSON.parse(read("src-tauri/tauri.conf.json")) as {
+      app: { security: { csp: string } };
+    };
+    const bundled = tauriConf.app.security.csp;
+
+    expect(bundled).toBe(bundledPageCsp("http://127.0.0.1:*"));
+
+    const declarations = (csp: string) =>
+      new Map(
+        csp.split("; ").map((directive) => {
+          const [name, ...values] = directive.split(" ");
+          return [name!, values.join(" ")] as const;
+        }),
+      );
+    const shellDirectives = declarations(SHELL_CSP);
+    const bundledDirectives = declarations(bundled);
+
+    expect([...bundledDirectives.keys()].sort()).toEqual(
+      [...shellDirectives.keys()].sort(),
+    );
+
+    // Exactly one directive may differ, and it must be connect-src: the boot
+    // page polls the Relay over loopback before the shell takes over.
+    const differing = [...shellDirectives]
+      .filter(([name, value]) => bundledDirectives.get(name) !== value)
+      .map(([name]) => name);
+    expect(differing).toEqual(["connect-src"]);
+    expect(bundledDirectives.get("connect-src")).toBe(
+      "'self' http://127.0.0.1:*",
+    );
   });
 
   test("every custom property the shell uses is declared", () => {
@@ -356,5 +488,32 @@ describe("desktop shell behaviour guards", () => {
 
   test("wide windows centre the content instead of hugging the left edge", () => {
     expect(shellCss).toContain("max-width: 880px; margin-inline: auto;");
+  });
+
+  test("an unrecognised sync state is not reported as Ready", () => {
+    // Ready means a live connection and a healthy watcher, so a state this
+    // window does not know must not resolve to it. This evaluates the real
+    // injected function rather than asserting on its source text.
+    const statusLiteral = shellHtml.match(/var STATUS = (\{.*?\});/)?.[1];
+    const fnSource = shellHtml.match(
+      /function statusCopyFor\(syncState\) \{[\s\S]*?\n  \}/,
+    )?.[0];
+    expect(statusLiteral).toBeDefined();
+    expect(fnSource).toBeDefined();
+
+    const status = JSON.parse(statusLiteral!) as Record<string, { label: string }>;
+    const statusCopyFor = new Function(
+      "STATUS",
+      `${fnSource}\nreturn statusCopyFor;`,
+    )(status) as (state: string) => { label: string; tone: string };
+
+    expect(statusCopyFor("ready").label).toBe("Ready");
+    expect(statusCopyFor("sync_needs_attention").label).toBe("Sync needs attention");
+    expect(statusCopyFor("relay_down").label).toBe("Relay down");
+
+    for (const unknown of ["degraded", "paused", "", "toString", "__proto__", "READY"]) {
+      const copy = statusCopyFor(unknown);
+      expect(copy.label, `unknown state ${JSON.stringify(unknown)}`).not.toBe("Ready");
+    }
   });
 });
