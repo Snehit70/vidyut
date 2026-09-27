@@ -3,47 +3,93 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
   <title>Vidyut</title>
   <style>
+    /* Boot page only. It is on screen for a moment before the shell navigates
+     * to the Relay's loopback control plane, which serves the real UI with
+     * Manrope packaged in. This page cannot link that font, so it uses the
+     * system stack rather than naming a family it never loads.
+     * Tokens mirror design/tokens.css. */
     :root {
-      --ground: #FFFFFF;
-      --mist: #FDF0F4;
+      --surface-page: #FFFFFF;
+      --surface-card: #FDF0F4;
       --raspberry: #C83861;
       --ink: #33202B;
       --muted: #856774;
-      --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+      --hairline: #9D878F;
+      --radius-card: 16px;
+      --radius-control: 12px;
+      --control-height: 48px;
     }
-    html, body { background: var(--mist); color: var(--ink); }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-page: #171116;
+        --surface-card: #241A20;
+        --raspberry: #FFB1C3;
+        --ink: #F8EAF0;
+        --muted: #D4B8C4;
+        --hairline: #805F6C;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      min-height: 100vh;
+      background: var(--surface-page);
+      color: var(--ink);
+    }
     body {
       margin: 0;
-      min-height: 100vh;
       display: grid;
       place-items: center;
-      font-family: var(--font-sans);
-      font-size: 15px;
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
       font-weight: 500;
+      line-height: 1.35;
     }
-    main { max-width: 22rem; padding: 2rem; text-align: center; }
-    h1 { margin: 0 0 0.5rem; font-size: 1.6rem; font-weight: 800; }
-    p { margin: 0; color: var(--muted); line-height: 1.4; }
-    button {
-      margin-top: 1.25rem;
-      height: 54px;
-      padding: 0 24px;
-      border: 1.5px solid #F8D3DE;
+    main { max-width: 22rem; padding: 24px; text-align: center; }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+    p { margin: 0; color: var(--muted); }
+    .dot {
+      width: 10px;
+      height: 10px;
+      margin: 0 auto 16px;
       border-radius: 999px;
-      background: var(--ground);
+      background: var(--raspberry);
+      animation: pulse 1400ms ease-out infinite;
+    }
+    button {
+      margin-top: 20px;
+      min-height: var(--control-height);
+      padding: 0 24px;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-control);
+      background: var(--surface-card);
       color: var(--raspberry);
       font: inherit;
       font-weight: 600;
       cursor: pointer;
     }
+    button:focus-visible { outline: 1.5px solid var(--raspberry); outline-offset: 2px; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--raspberry) 30%, transparent); }
+      100% { box-shadow: 0 0 0 12px transparent; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dot { animation: none; }
+    }
   </style>
 </head>
 <body>
   <main>
+    <div class="dot" aria-hidden="true"></div>
     <h1>Vidyut</h1>
-    <p id="status">Starting the Relay. Closing this window does not stop it.</p>
+    <p id="status" role="status" aria-live="polite">Starting the Relay. Closing this window does not stop it.</p>
     <button type="button" id="start-relay">Start relay</button>
   </main>
   <script>

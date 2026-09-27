@@ -1,31 +1,12 @@
-/* Plus Jakarta Sans with weight-driven hierarchy; line-height 1.3 everywhere.
-   Source: app/lib/src/design/theme.dart */
+/* Typography now lives in design/tokens.css at the repo root, which mirrors
+ * app/lib/src/design/{palette,theme}.dart. Import it rather than restating
+ * values here; tests/design-tokens.test.ts guards against drift. */
+@import url("../../../../design/tokens.css");
+
 :root {
-  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
-
-  /* Display / titles — weight 800, tight tracking (-0.03em) */
-  --type-display-size: 26px;
-  --type-display-weight: 800;
-  --type-display-tracking: -0.78px;
-  --type-appbar-size: 20px;
-  --type-appbar-weight: 800;
-  --type-appbar-tracking: -0.6px;
-
-  --type-title-md-size: 16px;  /* weight 600 */
-  --type-title-sm-size: 14px;  /* weight 600 */
-
-  /* Body — weight 500 */
-  --type-body-lg-size: 16px;
-  --type-body-md-size: 14px;
-  --type-body-sm-size: 12px;
-
-  /* Labels — weight 600 */
-  --type-label-lg-size: 14px;
-  --type-label-md-size: 12px;
-  --type-label-sm-size: 12px;  /* muted color */
-
-  --type-button-size: 15px;    /* weight 600 */
-  --type-line-height: 1.3;
+  /* Legacy names kept so existing UI-kit components keep resolving. Map them
+   * onto the canonical tokens instead of inventing new numbers. */
+  --type-button-size: var(--type-label-lg-size);
 }
 
 body {
@@ -35,4 +16,4 @@ body {
 }
 
 a { color: var(--raspberry); }
-a:hover { color: #B3283E; }
+a:hover { color: var(--error); }

@@ -1,0 +1,153 @@
+/* Vidyut design tokens — single source of truth for every rendered surface.
+ *
+ * The Android app is the reference implementation. Its values live in
+ * app/lib/src/design/palette.dart and app/lib/src/design/theme.dart, and
+ * tests/design-tokens.test.ts fails if this file and those two disagree.
+ *
+ * Edit the Dart, then mirror it here. Never the other way round.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Palette. Light values are Palette.* in palette.dart. */
+  --ground: #FFFFFF;
+  --mist: #FDF0F4;
+  --petal: #F8D3DE;
+  --raspberry: #C83861;
+  --ink: #33202B;
+  --muted: #856774;
+  --hairline: #9D878F;
+  --error: #B3283E;
+  --active: #A85B00;
+  --active-mist: #FFF7ED;
+  --success: #2D8A4A;
+  --success-mist: #EDF8F0;
+  --warning: #A05A00;
+  --warning-mist: #FFF7E8;
+
+  /* Surfaces. Map to ColorScheme roles in theme.dart. */
+  --surface-page: var(--ground);
+  --surface-card: var(--mist);
+  --surface-emphasis: var(--petal);
+  --surface-secondary: var(--mist);
+  --surface-snack: var(--ink);
+
+  /* Text. */
+  --text-body: var(--ink);
+  --text-muted: var(--muted);
+  --text-error: var(--error);
+  --text-label-small: var(--muted);
+  --text-on-primary: #FFFFFF;
+  --text-on-emphasis: var(--ink);
+  --text-on-snack: #FFFFFF;
+
+  /* Borders. */
+  --border-hairline: var(--hairline);
+  --border-strong: var(--muted);
+  --border-focus: var(--raspberry);
+
+  /* Manrope is the one product typeface (ADR 0011). Locally packaged:
+   * the shell must render identically with no network. */
+  --font-sans: "Manrope", system-ui, sans-serif;
+
+  /* Type ramp. Sizes, weights, and tracking mirror textTheme. */
+  --type-display-size: 28px;
+  --type-display-weight: 700;
+  --type-display-tracking: -0.56px;
+  --type-headline-size: 24px;
+  --type-headline-weight: 700;
+  --type-headline-tracking: -0.48px;
+  --type-title-lg-size: 18px;
+  --type-title-lg-weight: 700;
+  --type-title-md-size: 16px;
+  --type-title-md-weight: 700;
+  --type-title-sm-size: 14px;
+  --type-title-sm-weight: 700;
+  --type-body-lg-size: 16px;
+  --type-body-lg-weight: 500;
+  --type-body-md-size: 14px;
+  --type-body-md-weight: 500;
+  --type-body-sm-size: 12px;
+  --type-body-sm-weight: 500;
+  --type-label-lg-size: 14px;
+  --type-label-lg-weight: 600;
+  --type-label-md-size: 12px;
+  --type-label-md-weight: 600;
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 600;
+  --type-appbar-size: 20px;
+  --type-appbar-weight: 700;
+  --type-appbar-tracking: -0.2px;
+  --type-line-height: 1.35;
+
+  /* Shape. Cards and buttons are 16 and 12 — not the 20 and pill the
+   * desktop shell used before it was retuned to match the app. */
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-tile: 8px;
+  --radius-pill: 999px;
+  --control-height: 48px;
+  --focus-border: 1.5px;
+  --hairline-width: 1px;
+
+  /* Spacing. */
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+
+  /* Motion. Mirrors app/lib/src/design/motion.dart. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --dur-entrance: 300ms;
+  --dur-stagger: 50ms;
+  --dur-state: 250ms;
+  --dur-press-down: 100ms;
+  --dur-press-up: 150ms;
+  --press-scale: 0.96;
+  --dur-dot-pulse: 1400ms;
+}
+
+/* Dark values are Palette.dark* in palette.dart. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #171116;
+    --mist: #241A20;
+    --petal: #8F2949;
+    --raspberry: #FFB1C3;
+    --ink: #F8EAF0;
+    --muted: #D4B8C4;
+    --hairline: #805F6C;
+    --error: #FFB3BD;
+    --active: #FFB870;
+    --active-mist: #241A20;
+    --success: #8DDB9F;
+    --success-mist: #241A20;
+    --warning: #FFB870;
+    --warning-mist: #241A20;
+
+    --surface-page: var(--ground);
+    --surface-card: var(--mist);
+    --surface-emphasis: var(--petal);
+    --surface-secondary: var(--mist);
+    --surface-snack: var(--mist);
+
+    --text-body: var(--ink);
+    --text-muted: var(--muted);
+    --text-error: var(--error);
+    --text-label-small: var(--muted);
+    --text-on-primary: var(--ground);
+    --text-on-emphasis: var(--ink);
+    --text-on-snack: var(--ink);
+
+    --border-hairline: var(--hairline);
+    --border-strong: var(--muted);
+    --border-focus: var(--raspberry);
+  }
+}

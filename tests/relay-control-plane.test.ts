@@ -132,7 +132,7 @@ describe("relay loopback control plane", () => {
       expect(html).toContain("Vidyut");
       expect(html).toContain(secret);
       expect(html).toContain("/control/v1/qr.svg");
-      expect(html).toContain("Plus Jakarta Sans");
+      expect(html).toContain('font-family: "Manrope"');
       expect(html).toContain("#C83861");
       expect(html).toContain("#FDF0F4");
       expect(html).toContain("Ready");
@@ -155,7 +155,8 @@ describe("relay loopback control plane", () => {
       expect(html).toContain('invoke("start_relay")');
       expect(html).toContain('invoke("stop_relay")');
       expect(html).toContain("pick_and_send_files");
-      expect(html).not.toContain("Manrope");
+      expect(html).not.toContain("Plus Jakarta Sans");
+      expect(html).not.toMatch(/fonts\.googleapis|fonts\.gstatic/);
       expect(html).not.toMatch(/Recent activity|Activity timeline/);
     }
 
@@ -382,4 +383,28 @@ test("writeRelayConfig keeps mode 600", async () => {
   expect((await stat(path)).mode & 0o777).toBe(0o600);
   expect(JSON.parse(await readFile(path, "utf8")).pairingSecret).toBe("rotated");
   await rm(dir, { recursive: true, force: true });
+});
+
+describe("desktop shell content security policy", () => {
+  test("the served shell is locked down and declares no remote origins", async () => {
+    const handle = await startRelay();
+    const local = await fetchPath(handle, "127.0.0.1", "/");
+    const csp = local.headers.get("content-security-policy") ?? "";
+
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // Inline style and script are the shell's only script/style sources.
+    expect(csp).toContain("script-src 'unsafe-inline'");
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    // Every asset is same-origin, so no wildcard or remote host is permitted.
+    expect(csp).not.toMatch(/https?:/);
+    expect(csp).not.toContain("*");
+    expect(csp).toContain("img-src 'self' data:");
+    expect(csp).toContain("font-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+
+    expect(local.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(local.headers.get("referrer-policy")).toBe("no-referrer");
+  });
 });

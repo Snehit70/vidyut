@@ -1,3 +1,5 @@
+import { SHELL_ICON_PATHS, type ShellIconName } from "./shell-assets";
+
 export interface DesktopShellState {
   relayName: string;
   host: string;
@@ -8,127 +10,225 @@ export interface DesktopShellState {
   authenticatedDeviceCount: number;
 }
 
+interface StatusCopy {
+  label: string;
+  detail: string;
+  icon: ShellIconName;
+  tone: "good" | "warn" | "bad";
+}
+
+const STATUS_COPY: Record<DesktopShellState["syncState"], StatusCopy> = {
+  ready: {
+    label: "Ready",
+    detail: "Automatic clipboard sync is ready between your devices.",
+    icon: "sync",
+    tone: "good",
+  },
+  sync_needs_attention: {
+    label: "Sync needs attention",
+    detail: "Connected, but automatic clipboard sync needs recovery.",
+    icon: "syncProblem",
+    tone: "warn",
+  },
+  relay_down: {
+    label: "Relay down",
+    detail:
+      "The Relay is not answering. Clipboard and transfers pause until it is running.",
+    icon: "cloudOff",
+    tone: "bad",
+  },
+};
+
+/** Sidebar order is also the Ctrl+1..4 order. */
+const PANES = [
+  { id: "pairing", label: "Pairing", icon: "qrCode" },
+  { id: "files", label: "Files", icon: "folderOpen" },
+  { id: "setup", label: "Setup", icon: "tune" },
+  { id: "relay", label: "Relay", icon: "dns" },
+] as const satisfies readonly {
+  id: string;
+  label: string;
+  icon: ShellIconName;
+}[];
+
 export function desktopShellHtml(state: DesktopShellState): string {
-  const status = statusCopy(state.syncState);
+  const status = STATUS_COPY[state.syncState];
+  const endpoint = `${state.host}:${state.port}`;
+  const banner = status.tone === "good";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <meta name="color-scheme" content="light only"/>
+  <meta name="color-scheme" content="light dark"/>
   <title>Vidyut</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;800&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet"/>
   <style>${SHELL_CSS}</style>
 </head>
-<body data-sync="${escapeHtml(state.syncState)}">
-  <main>
-    <header class="masthead enter" style="animation-delay:0ms">
-      <h1>Vidyut</h1>
-      <p class="lede">Pairing, files, and laptop setup status for this Relay.</p>
+<body data-sync="${escapeHtml(state.syncState)}" data-pane="pairing">
+  ${iconSprite()}
+  <div class="app">
+    <header class="titlebar">
+      <div class="titlebar-id">
+        <h1>Vidyut</h1>
+        <span class="sep" aria-hidden="true">/</span>
+        <span class="relay-name" id="relay-name">${escapeHtml(state.relayName)}</span>
+      </div>
+      <p class="status" id="status-chip" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-label">${escapeHtml(status.label)}</span>
+      </p>
     </header>
 
-    <section class="hero enter" id="status-card" style="animation-delay:100ms">
-      <span class="hero-dot" aria-hidden="true"></span>
-      <div>
-        <h2 id="status-label">${escapeHtml(status.label)}</h2>
-        <p id="status-detail">${escapeHtml(status.detail)}</p>
-      </div>
-    </section>
+    <div class="banner" id="banner" role="status" aria-live="polite"${banner ? " hidden" : ""}>
+      <svg class="icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><use href="#i-${status.icon}" id="status-icon"/></svg>
+      <p id="status-detail">${escapeHtml(status.detail)}</p>
+    </div>
 
-    <section class="card enter" style="animation-delay:200ms">
-      <h2>Pairing</h2>
-      <p class="body">Point the phone at this pairing QR. One secret is shared by every device.</p>
-      <img class="qr" id="qr" alt="Pairing QR" src="/control/v1/qr.svg" width="224" height="224"/>
-      <dl>
-        <dt>Laptop</dt><dd id="relay-name">${escapeHtml(state.relayName)}</dd>
-        <dt>Host</dt><dd id="host">${escapeHtml(state.host)}</dd>
-        <dt>Port</dt><dd id="port">${escapeHtml(String(state.port))}</dd>
-        <dt>Secret</dt><dd id="secret">${escapeHtml(state.pairingSecret)}</dd>
-        <dt>Manual</dt><dd id="manual">${escapeHtml(state.manual)}</dd>
-        <dt>Devices</dt><dd id="devices">${escapeHtml(String(state.authenticatedDeviceCount))}</dd>
-      </dl>
-      <button type="button" class="btn outlined" id="copy-manual">Copy manual line</button>
-    </section>
-
-    <section class="card enter" style="animation-delay:300ms">
-      <h2>Send files</h2>
-      <p class="body">Enqueue a batch from this laptop. The browser cannot see file paths, so type each path on its own line. A file picker can fill paths when the desktop shell provides them.</p>
-      <input id="file-input" type="file" multiple/>
-      <label class="field-label" for="path-input">Paths</label>
-      <textarea id="path-input" rows="4" placeholder="One filesystem path per line" spellcheck="false"></textarea>
-      <button type="button" class="btn filled" id="send-files">Send files</button>
-    </section>
-
-    <section class="card enter" style="animation-delay:400ms">
-      <h2>Transfer history</h2>
-      <ul class="list" id="transfers">
-        <li class="muted">No transfers yet.</li>
-      </ul>
-    </section>
-
-    <section class="card enter" style="animation-delay:500ms">
-      <h2>Laptop setup status</h2>
-      <p class="body">Live health for the conditions that can degrade this Relay.</p>
-      <ul class="list" id="setup"></ul>
-    </section>
-
-    <section class="card enter" style="animation-delay:600ms">
-      <h2>Rotate pairing secret</h2>
-      <p class="body">Replaces the Relay's single pairing secret. Every phone must scan again. There is no per-phone roster.</p>
-      <button type="button" class="btn outlined" id="rotate-open">Rotate pairing secret</button>
-      <div id="rotate-confirm" class="confirm" hidden>
-        <p>Every phone must scan the new QR. Clipboard and transfers pause until they pair again.</p>
-        <div class="btn-row">
-          <button type="button" class="btn outlined" id="rotate-cancel">Cancel</button>
-          <button type="button" class="btn filled" id="rotate-go">Rotate</button>
+    <div class="body">
+      <nav class="sidebar" aria-label="Sections">
+        <div class="nav" role="tablist" aria-orientation="vertical" id="nav">
+          ${PANES.map(
+            (pane, index) => `<button
+            type="button"
+            class="nav-item"
+            role="tab"
+            id="tab-${pane.id}"
+            data-pane="${pane.id}"
+            aria-controls="pane-${pane.id}"
+            aria-selected="${pane.id === "pairing"}"
+            tabindex="${pane.id === "pairing" ? 0 : -1}">
+            <svg class="icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><use href="#i-${pane.icon}"/></svg>
+            <span>${pane.label}</span>
+            <kbd aria-hidden="true">${index + 1}</kbd>
+          </button>`,
+          ).join("")}
         </div>
-      </div>
-    </section>
+        <div class="sidebar-foot">
+          <button type="button" class="btn filled" id="send-files">
+            <svg class="icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><use href="#i-folderOpen"/></svg>
+            Send files
+          </button>
+        </div>
+      </nav>
 
-    <section class="card enter" style="animation-delay:700ms">
-      <h2>Relay</h2>
-      <p class="body">Start and stop live in the desktop shell, which talks to the systemd user unit. A browser tab cannot change it.</p>
-      <div class="btn-row">
-        <button type="button" class="btn outlined" id="start-relay" disabled title="Use the desktop shell">Start relay</button>
-        <button type="button" class="btn outlined" id="stop-relay" disabled title="Use the desktop shell">Stop relay</button>
-      </div>
-    </section>
+      <main class="pane" id="pane-pairing" role="tabpanel" aria-labelledby="tab-pairing" tabindex="0">
+        <div class="pane-head">
+          <h2>Pairing</h2>
+          <p id="pairing-hint">Point the phone at this QR. The Relay is reachable only on this WiFi network.</p>
+        </div>
+        <div class="pairing-grid">
+          <div class="qr-frame">
+            <img class="qr" id="qr" alt="Pairing QR" src="/control/v1/qr.svg" width="168" height="168"/>
+          </div>
+          <dl class="facts">
+            <div><dt>Address</dt><dd id="endpoint">${escapeHtml(endpoint)}</dd></div>
+            <div><dt>Relay</dt><dd id="relay-name-2">${escapeHtml(state.relayName)}</dd></div>
+            <div><dt>Paired</dt><dd><span id="devices">${escapeHtml(String(state.authenticatedDeviceCount))}</span> <span id="devices-label">${deviceWord(state.authenticatedDeviceCount)}</span></dd></div>
+          </dl>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn outlined" id="copy-manual">Copy pairing line</button>
+        </div>
 
-    <p class="footnote enter" style="animation-delay:800ms">Closing this window does not stop the Relay.</p>
-    <p class="footnote enter" style="animation-delay:850ms"><a id="open-releases" href="https://github.com/Snehit70/vidyut/releases">Open releases</a>. Install a newer .rpm or .deb with dnf or apt. This window does not update Vidyut.</p>
-  </main>
-  <div id="snack" class="snack" hidden></div>
+        <section class="block">
+          <div class="block-head">
+            <h3>Rotate pairing secret</h3>
+            <button type="button" class="btn outlined" id="rotate-open" aria-expanded="false" aria-controls="rotate-confirm">Rotate</button>
+          </div>
+          <p>Replaces the one secret every device shares. There is no per-phone list.</p>
+          <div id="rotate-confirm" class="confirm" role="group" aria-labelledby="rotate-confirm-label" hidden>
+            <p id="rotate-confirm-label">Every phone must scan the new QR. Clipboard and transfers pause until they pair again.</p>
+            <div class="btn-row">
+              <button type="button" class="btn outlined" id="rotate-cancel">Cancel</button>
+              <button type="button" class="btn filled" id="rotate-go">Rotate pairing secret</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <main class="pane" id="pane-files" role="tabpanel" aria-labelledby="tab-files" tabindex="0" hidden>
+        <div class="pane-head">
+          <h2>Files</h2>
+          <p>Files move between your paired devices. History is metadata only; completed files stay where they landed.</p>
+        </div>
+        <div class="summary" id="file-summary" hidden></div>
+        <p class="stale" id="transfers-stale" hidden></p>
+        <section class="block">
+          <h3>Transfer history</h3>
+          <ul class="rows" id="transfers">
+            <li class="empty">No transfers yet.</li>
+          </ul>
+        </section>
+      </main>
+
+      <main class="pane" id="pane-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>
+        <div class="pane-head">
+          <h2>Setup</h2>
+          <p>Conditions on this laptop that can degrade the Relay.</p>
+        </div>
+        <div class="summary" id="setup-summary" hidden></div>
+        <p class="stale" id="setup-stale" hidden></p>
+        <section class="block">
+          <div class="block-head">
+            <h3>Laptop setup status</h3>
+            <button type="button" class="btn outlined" id="setup-recheck">Check again</button>
+          </div>
+          <p class="checked" id="setup-checked"></p>
+          <ul class="rows" id="setup">
+            <li class="empty">Checking laptop setup status.</li>
+          </ul>
+        </section>
+      </main>
+
+      <main class="pane" id="pane-relay" role="tabpanel" aria-labelledby="tab-relay" tabindex="0" hidden>
+        <div class="pane-head">
+          <h2>Relay</h2>
+          <p>The Relay is a background service. This window is only its control panel.</p>
+        </div>
+        <section class="block">
+          <h3>Service</h3>
+          <dl class="facts">
+            <div><dt>Address</dt><dd id="endpoint-2">${escapeHtml(endpoint)}</dd></div>
+            <div><dt>Unit</dt><dd>vidyut-relay.service</dd></div>
+            <div><dt>Paired</dt><dd><span id="devices-2">${escapeHtml(String(state.authenticatedDeviceCount))}</span> <span id="devices-label-2">${deviceWord(state.authenticatedDeviceCount)}</span></dd></div>
+          </dl>
+          <div class="btn-row">
+            <button type="button" class="btn outlined" id="start-relay" disabled>Start relay</button>
+            <button type="button" class="btn outlined danger" id="stop-relay" disabled>Stop relay</button>
+          </div>
+          <p class="note">Closing this window does not stop the Relay. Stop relay is the only thing that does.</p>
+        </section>
+        <section class="block">
+          <h3>Updates</h3>
+          <p>Vidyut updates through your package manager. This window never downloads or replaces binaries.</p>
+          <div class="row-actions">
+            <a class="btn outlined" id="open-releases" href="https://github.com/Snehit70/vidyut/releases">Open releases</a>
+          </div>
+          <p class="note">Install a newer .rpm or .deb with dnf or apt.</p>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="snack" class="snack" role="status" aria-live="polite" hidden></div>
   <script type="application/json" id="boot">${embedJson(state)}</script>
-  <script>${SHELL_SCRIPT}</script>
+  <script>${shellScript()}</script>
 </body>
 </html>
 `;
 }
 
-function statusCopy(syncState: DesktopShellState["syncState"]): {
-  label: string;
-  detail: string;
-} {
-  if (syncState === "sync_needs_attention") {
-    return {
-      label: "Sync needs attention",
-      detail: "Connected, but automatic clipboard sync needs recovery.",
-    };
-  }
-  if (syncState === "relay_down") {
-    return {
-      label: "Relay down",
-      detail:
-        "The Relay is not answering. Clipboard and transfers pause until it is running.",
-    };
-  }
-  return {
-    label: "Ready",
-    detail: "Automatic clipboard sync is ready between your devices.",
-  };
+function deviceWord(count: number): string {
+  return count === 1 ? "device" : "devices";
+}
+
+function iconSprite(): string {
+  const symbols = Object.entries(SHELL_ICON_PATHS)
+    .map(
+      ([name, path]) =>
+        `<symbol id="i-${name}" viewBox="0 0 24 24"><path d="${path}"/></symbol>`,
+    )
+    .join("");
+  return `<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">${symbols}</svg>`;
 }
 
 function escapeHtml(value: string): string {
@@ -136,7 +236,8 @@ function escapeHtml(value: string): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function embedJson(value: unknown): string {
@@ -146,7 +247,23 @@ function embedJson(value: unknown): string {
     .replaceAll("&", "\\u0026");
 }
 
+/**
+ * Colour, type, and shape tokens mirror design/tokens.css, which mirrors
+ * app/lib/src/design/{palette,theme}.dart. tests/design-tokens.test.ts fails if
+ * the three drift apart.
+ *
+ * The metrics below the token block are desktop-specific and deliberately not
+ * tokens: the phone's 48px control height is a touch target, and a mouse-driven
+ * window wants a denser row. Nothing here changes a shared value.
+ */
 const SHELL_CSS = `
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/ui/manrope.ttf") format("truetype");
+}
 :root {
   --ground: #FFFFFF;
   --mist: #FDF0F4;
@@ -156,212 +273,415 @@ const SHELL_CSS = `
   --muted: #856774;
   --hairline: #9D878F;
   --error: #B3283E;
-  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
-  --radius-card: 20px;
-  --radius-input: 16px;
-  --radius-pill: 999px;
-  --button-height: 54px;
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --success: #2D8A4A;
+  --success-mist: #EDF8F0;
+  --warning: #A05A00;
+  --warning-mist: #FFF7E8;
+
+  --surface-page: var(--ground);
+  --surface-card: var(--mist);
+  --surface-emphasis: var(--petal);
+  --surface-secondary: var(--mist);
+  --surface-snack: var(--ink);
+
+  --text-body: var(--ink);
+  --text-muted: var(--muted);
+  --text-error: var(--error);
+  --text-on-primary: #FFFFFF;
+  --text-on-emphasis: var(--ink);
+  --text-on-snack: #FFFFFF;
+
+  --border-hairline: var(--hairline);
+  --border-focus: var(--raspberry);
+  --hairline-soft: color-mix(in srgb, var(--hairline) 40%, transparent);
+
+  --font-sans: "Manrope", system-ui, sans-serif;
+
+  --type-title-lg-size: 18px;
+  --type-title-lg-weight: 700;
+  --type-title-md-size: 16px;
+  --type-title-md-weight: 700;
+  --type-title-sm-size: 14px;
+  --type-title-sm-weight: 700;
+  --type-body-md-size: 14px;
+  --type-label-lg-size: 14px;
+  --type-label-lg-weight: 600;
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 600;
+  --type-line-height: 1.35;
+
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-tile: 8px;
+  --focus-border: 1.5px;
   --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --dur-press-down: 100ms;
+  --dur-press-up: 150ms;
+  --press-scale: 0.96;
+
+  /* Desktop metrics. */
+  --bar-height: 44px;
+  --sidebar-width: 212px;
+  --control-height-compact: 34px;
+  --row-height: 40px;
+  --pane-pad: 20px;
+  --gap: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #171116;
+    --mist: #241A20;
+    --petal: #8F2949;
+    --raspberry: #FFB1C3;
+    --ink: #F8EAF0;
+    --muted: #D4B8C4;
+    --hairline: #805F6C;
+    --error: #FFB3BD;
+    --success: #8DDB9F;
+    --success-mist: #241A20;
+    --warning: #FFB870;
+    --warning-mist: #241A20;
+
+    --surface-snack: var(--mist);
+    --text-on-primary: var(--ground);
+    --text-on-snack: var(--ink);
+  }
 }
 * { box-sizing: border-box; }
-html, body { background: var(--ground); color: var(--ink); }
+/* An author display rule outranks the user agent [hidden] rule, so anything
+   toggled with the hidden attribute needs this to actually disappear. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
 body {
   margin: 0;
+  background: var(--surface-page);
+  color: var(--text-body);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--type-label-lg-size);
   font-weight: 500;
-  line-height: 1.3;
-  color-scheme: only light;
+  line-height: var(--type-line-height);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
-main {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 24px 20px 96px;
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon {
+  width: 1em;
+  height: 1em;
+  display: block;
+  fill: currentColor;
+  flex: none;
+}
+.app { height: 100vh; display: flex; flex-direction: column; }
+
+/* Title bar: identity left, live state right. Flat, hairline-ruled, no shadow. */
+.titlebar {
+  height: var(--bar-height);
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0 var(--pane-pad);
+  border-bottom: 1px solid var(--hairline-soft);
 }
+.titlebar-id { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 h1 {
   margin: 0;
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  letter-spacing: -0.2px;
 }
-h2 {
-  margin: 0 0 8px;
-  font-size: 16px;
-  font-weight: 600;
+.sep { color: var(--text-muted); }
+.relay-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.lede, .body, .footnote {
+.status {
   margin: 0;
-  color: var(--muted);
-}
-.footnote { padding: 4px 4px 0; }
-a { color: var(--raspberry); font-weight: 600; }
-.hero, .card {
-  border-radius: var(--radius-card);
-  padding: 20px;
-  box-shadow: none;
-}
-.hero {
   display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  background: var(--petal);
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-weight: var(--type-label-lg-weight);
 }
-body[data-sync="sync_needs_attention"] .hero,
-body[data-sync="relay_down"] .hero {
-  background: var(--mist);
-}
-body[data-sync="relay_down"] #status-label { color: var(--error); }
-.hero h2 { margin: 0 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -0.03em; }
-.hero p { margin: 0; color: var(--muted); }
-.hero-dot {
-  width: 12px;
-  height: 12px;
-  margin-top: 6px;
+.status-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
-  background: var(--raspberry);
-  box-shadow: 0 0 0 8px color-mix(in srgb, var(--raspberry) 18%, transparent);
-  animation: pulse 1.4s ease-out infinite;
+  background: var(--muted);
+  flex: none;
 }
-body[data-sync="relay_down"] .hero-dot { background: var(--error); box-shadow: none; animation: none; }
-.card { background: var(--mist); }
-.qr {
-  display: block;
-  width: 224px;
-  height: 224px;
-  margin: 16px 0;
-  background: var(--ground);
-  border-radius: var(--radius-input);
+body[data-sync="ready"] .status-dot { background: var(--success); }
+body[data-sync="sync_needs_attention"] .status-dot { background: var(--warning); }
+body[data-sync="relay_down"] .status-dot { background: var(--error); }
+body[data-sync="relay_down"] .status { color: var(--text-error); }
+
+/* Only when the state is not healthy. Ready stays quiet in the title bar. */
+.banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--pane-pad);
+  background: var(--warning-mist);
+  color: var(--text-body);
+  border-bottom: 1px solid var(--hairline-soft);
+  font-size: var(--type-label-lg-size);
 }
-dl {
+.banner .icon { color: var(--warning); font-size: 20px; }
+.banner p { margin: 0; }
+body[data-sync="relay_down"] .banner { background: var(--surface-card); }
+body[data-sync="relay_down"] .banner .icon { color: var(--error); }
+
+.body { flex: 1; display: flex; min-height: 0; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--gap) 10px;
+  border-right: 1px solid var(--hairline-soft);
+}
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row-height);
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-tile);
+  background: none;
+  color: var(--text-body);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-press-up) var(--ease-out-cubic);
+}
+.nav-item .icon { font-size: 18px; color: var(--muted); }
+.nav-item span { flex: 1; }
+.nav-item:hover { background: var(--surface-card); }
+.nav-item[aria-selected="true"] {
+  background: var(--surface-emphasis);
+  color: var(--raspberry);
+  font-weight: var(--type-label-lg-weight);
+}
+.nav-item[aria-selected="true"] .icon { color: var(--raspberry); }
+kbd {
+  font-family: inherit;
+  font-size: var(--type-label-sm-size);
+  color: var(--text-muted);
+  background: none;
+}
+.sidebar-foot { padding-top: var(--gap); border-top: 1px solid var(--hairline-soft); }
+
+/* Content pane: one section at a time, scrolls internally. */
+.pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--pane-pad);
+}
+/* Cap the measure so a wide window does not stretch rows to the far edge, and
+   centre it so the leftover space is balanced rather than all on one side. */
+.pane > * { max-width: 880px; margin-inline: auto; }
+.pane:focus-visible { outline: var(--focus-border) solid var(--border-focus); outline-offset: -2px; }
+.pane-head { margin-bottom: var(--pane-pad); }
+h2 {
+  margin: 0 0 4px;
+  font-size: var(--type-title-lg-size);
+  font-weight: var(--type-title-lg-weight);
+  letter-spacing: -0.3px;
+}
+h3 {
+  margin: 0 0 var(--gap);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+}
+p { margin: 0; }
+.pane-head p, .block > p, .note { color: var(--text-muted); }
+.note { font-size: var(--type-label-sm-size); margin-top: 8px; }
+
+.pairing-grid {
   display: grid;
-  grid-template-columns: 7rem 1fr;
-  gap: 8px 12px;
-  margin: 0 0 16px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pane-pad);
+  align-items: start;
 }
-dt { color: var(--muted); font-size: 12px; font-weight: 600; }
+.qr-frame {
+  padding: 10px;
+  background: var(--ground);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-control);
+}
+.qr { display: block; width: 168px; height: 168px; }
+
+.facts { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.facts > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: var(--gap); align-items: baseline; }
+dt { color: var(--text-muted); font-size: var(--type-label-sm-size); font-weight: var(--type-label-lg-weight); text-transform: uppercase; letter-spacing: 0.4px; }
 dd { margin: 0; overflow-wrap: anywhere; user-select: all; }
+
+.row-actions { display: flex; gap: 10px; margin-top: var(--pane-pad); }
+.block { margin-top: 24px; padding-top: var(--pane-pad); border-top: 1px solid var(--hairline-soft); }
+.block:first-of-type { margin-top: 0; }
+.block-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); margin-bottom: 6px; }
+.block-head h3 { margin: 0; }
+
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: var(--button-height);
-  padding: 0 24px;
-  border: none;
-  border-radius: var(--radius-pill);
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.3;
-  cursor: pointer;
-  transition: transform 120ms var(--ease-out-cubic);
-}
-.btn:active:not(:disabled) { transform: scale(0.93); }
-.btn.filled { background: var(--raspberry); color: #FFFFFF; }
-.btn.outlined {
-  background: var(--ground);
-  color: var(--raspberry);
-  border: 1.5px solid var(--petal);
-}
-.btn:disabled { opacity: 0.5; cursor: default; }
-.btn-row { display: flex; gap: 10px; }
-.btn-row .btn { flex: 1; }
-#file-input, textarea {
-  display: block;
-  width: 100%;
-  margin: 12px 0 0;
-  padding: 14px 16px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-input);
-  background: var(--ground);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.3;
-}
-#file-input { padding: 12px; }
-textarea:focus, #file-input:focus {
-  outline: none;
-  border: 1.6px solid var(--raspberry);
-}
-.field-label {
-  display: block;
-  margin: 16px 0 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--raspberry);
-}
-#send-files { margin-top: 16px; }
-.list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.list li {
-  background: var(--ground);
-  border-radius: var(--radius-input);
-  padding: 14px 16px;
-}
-.row-title { font-size: 14px; font-weight: 600; }
-.row-detail, .muted { color: var(--muted); font-size: 12px; }
-.row-fix { margin: 4px 0 0; color: var(--error); font-size: 12px; }
-.setup-row { display: flex; gap: 12px; align-items: flex-start; }
-.material-icons-outlined {
-  font-family: "Material Icons Outlined";
-  font-weight: normal;
-  font-style: normal;
-  font-size: 22px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
+  gap: 8px;
+  min-height: var(--control-height-compact);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: var(--type-label-lg-weight);
+  line-height: 1.2;
+  text-decoration: none;
   white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
+  cursor: pointer;
+  transition: transform var(--dur-press-down) var(--ease-out-cubic);
+}
+.btn:active:not(:disabled) { transform: scale(var(--press-scale)); }
+.btn.filled { width: 100%; background: var(--raspberry); color: var(--text-on-primary); }
+.btn.outlined {
+  background: var(--surface-page);
   color: var(--raspberry);
-  font-feature-settings: "liga";
-  -webkit-font-smoothing: antialiased;
+  border-color: var(--hairline);
 }
-.material-icons-outlined.warn { color: var(--error); }
+.btn.danger {
+  color: var(--text-error);
+  border-color: var(--error);
+}
+.btn.danger:hover { background: color-mix(in srgb, var(--error) 8%, var(--surface-page)); }
+.sidebar-foot .btn { width: 100%; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible, a:focus-visible, .nav-item:focus-visible {
+  outline: var(--focus-border) solid var(--border-focus);
+  outline-offset: 2px;
+}
+.btn-row { display: flex; gap: 10px; margin-top: var(--pane-pad); }
+.btn-row .btn { flex: 1; }
+
 .confirm {
-  margin-top: 16px;
-  padding: 16px;
-  background: var(--petal);
-  border-radius: var(--radius-input);
+  margin-top: var(--gap);
+  padding: var(--gap);
+  background: var(--surface-emphasis);
+  border-radius: var(--radius-control);
+  color: var(--text-on-emphasis);
 }
-.confirm p { margin: 0 0 12px; }
+.confirm p { margin-bottom: 10px; }
+.confirm .btn-row { margin-top: 0; }
+
+.summary {
+  display: flex;
+  gap: var(--pane-pad);
+  padding: 10px 14px;
+  margin-bottom: var(--pane-pad);
+  background: var(--surface-card);
+  border-radius: var(--radius-control);
+}
+.summary div { display: flex; flex-direction: column; }
+.summary b { font-size: var(--type-title-md-size); font-weight: var(--type-title-md-weight); }
+.summary span { color: var(--text-muted); font-size: var(--type-label-sm-size); font-weight: var(--type-label-lg-weight); }
+.summary .bad b { color: var(--text-error); }
+
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.rows li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--row-height);
+  padding: 8px 10px;
+  border-radius: var(--radius-tile);
+}
+.rows li:not(.empty):hover { background: var(--surface-card); }
+.rows .icon { width: 18px; height: 18px; margin-top: 2px; color: var(--muted); }
+.rows .icon.good { color: var(--success); }
+.rows .icon.warn { color: var(--warning); }
+.rows .icon.bad { color: var(--error); }
+.rows .grow { flex: 1; min-width: 0; }
+.row-title { font-size: var(--type-label-lg-size); font-weight: var(--type-label-lg-weight); }
+.row-detail { color: var(--text-muted); font-size: var(--type-label-sm-size); }
+.row-fix { color: var(--text-error); font-size: var(--type-label-sm-size); margin-top: 2px; }
+.rows .trailing { color: var(--text-muted); font-size: var(--type-label-sm-size); white-space: nowrap; margin-top: 2px; }
+.empty { color: var(--text-muted); }
+.stale {
+  margin: 0 0 var(--gap);
+  padding: 8px 12px;
+  background: var(--surface-card);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--radius-tile);
+  color: var(--text-muted);
+  font-size: var(--type-label-sm-size);
+}
+body[data-stale="true"] .rows { opacity: 0.55; }
+.checked { margin: -6px 0 var(--gap); color: var(--text-muted); font-size: var(--type-label-sm-size); }
+.group-label {
+  margin: 16px 0 6px;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-lg-weight);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
 .snack {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  bottom: 20px;
   transform: translateX(-50%);
   max-width: calc(100% - 40px);
-  padding: 12px 20px;
-  background: var(--ink);
-  color: #FFFFFF;
-  border-radius: var(--radius-pill);
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: none;
+  padding: 10px 16px;
+  background: var(--surface-snack);
+  color: var(--text-on-snack);
+  border-radius: var(--radius-control);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
 }
-.enter {
-  animation: rise 600ms var(--ease-spring) both;
+
+/* Narrow window: the sidebar becomes a tab strip. The window is resizable, so
+   this is a real layout, not a phone breakpoint. */
+@media (max-width: 680px) {
+  .body { flex-direction: column; }
+  .sidebar {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+  .nav { flex-direction: row; flex: 1; overflow-x: auto; }
+  .nav-item kbd { display: none; }
+  .sidebar-foot { padding-top: 0; border-top: none; }
+  .sidebar-foot .btn { width: auto; }
+  .pairing-grid { grid-template-columns: minmax(0, 1fr); }
+  .qr-frame { justify-self: start; }
 }
-@keyframes rise {
-  from { opacity: 0; transform: translateY(30px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--raspberry) 28%, transparent); }
-  100% { box-shadow: 0 0 0 12px transparent; }
+
+/* ADR 0013: this window has no entrance choreography. Motion is limited to
+   press and state feedback, and stands down when reduced motion is requested. */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .nav-item { transition: none; }
+  .btn:active:not(:disabled) { transform: none; }
 }
 `;
 
-const SHELL_SCRIPT = `
+function shellScript(): string {
+  return `
 (function () {
   var POLL_MS = 4000;
-  var setupTitles = {
+  var SETUP_TITLES = {
     relay_running: "Relay running",
     wayland: "Wayland",
     wl_clipboard: "wl-clipboard",
@@ -369,8 +689,49 @@ const SHELL_SCRIPT = `
     autostart: "Autostart",
     firewall: "Firewall"
   };
+  var STATUS = ${JSON.stringify(STATUS_COPY)};
+  var PANES = ${JSON.stringify(PANES.map((pane) => pane.id))};
+  var ATTENTION = ["failed", "completed_with_issues", "waiting_for_source", "expired"];
+  // Error codes are internal identifiers. The vocabulary is fixed by
+  // src/transfer, so map it once instead of leaking snake_case at the user.
+  var FAILURES = {
+    body_digest_mismatch: "The file changed while it was moving.",
+    hash_mismatch: "The file changed while it was moving.",
+    source_changed: "The file changed after you picked it.",
+    source_short_read: "The file ended sooner than expected.",
+    chunk_auth_failed: "This device is no longer paired.",
+    transfer_auth_failed: "This device is no longer paired.",
+    chunk_too_large: "The file is too large to send.",
+    file_too_large: "The file is too large to send.",
+    destination_short_write: "The other device ran out of space.",
+    insufficient_storage: "The other device ran out of space.",
+    finalization_interrupted: "Saving the file was interrupted.",
+    verification_interrupted: "Checking the file was interrupted.",
+    invalid_chunk: "The transfer got out of step and was stopped.",
+    invalid_offset: "The transfer got out of step and was stopped.",
+    offset_not_confirmed: "The transfer got out of step and was stopped.",
+    partial_state_missing: "The transfer's saved state was incomplete.",
+    checkpoint_failed: "The transfer lost its place and could not resume.",
+    peer_disconnected: "The other device went away mid-transfer.",
+    terminal_processing_failed: "The transfer failed.",
+    transfer_failed: "The transfer failed.",
+    transfer_expired: "The resumable window passed."
+  };
+
+  function failureText(code) {
+    if (!code) return "";
+    if (FAILURES[code]) return FAILURES[code];
+    return String(code).replace(/_/g, " ").replace(/^./, function (ch) {
+      return ch.toUpperCase();
+    }) + ".";
+  }
   var snackTimer;
   var lastSecret = "";
+  var state = {};
+  var missed = 0;
+  var lastGoodAt = 0;
+  var lastSetupRows = null;
+  var MISSES_BEFORE_DOWN = 2;
 
   function $(id) { return document.getElementById(id); }
 
@@ -388,91 +749,196 @@ const SHELL_SCRIPT = `
     snackTimer = setTimeout(function () { el.hidden = true; }, 2800);
   }
 
-  function statusCopy(syncState) {
-    if (syncState === "sync_needs_attention") {
-      return {
-        label: "Sync needs attention",
-        detail: "Connected, but automatic clipboard sync needs recovery."
-      };
-    }
-    if (syncState === "relay_down") {
-      return {
-        label: "Relay down",
-        detail: "The Relay is not answering. Clipboard and transfers pause until it is running."
-      };
-    }
-    return {
-      label: "Ready",
-      detail: "Automatic clipboard sync is ready between your devices."
-    };
-  }
-
   function setText(id, value) {
     var node = $(id);
     if (node) node.textContent = value;
   }
 
-  function renderState(state) {
-    var copy = statusCopy(state.syncState);
-    document.body.setAttribute("data-sync", state.syncState);
+  function setAllText(id, value) {
+    setText(id, value);
+    setText(id + "-2", value);
+  }
+
+  function renderState(next, fresh) {
+    state = next;
+    var copy = fresh === false ? STATUS.relay_down : (STATUS[next.syncState] || STATUS.ready);
+    document.body.setAttribute("data-sync", copy === STATUS.relay_down ? "relay_down" : next.syncState);
     setText("status-label", copy.label);
+    $("status-icon").setAttribute("href", "#i-" + copy.icon);
     setText("status-detail", copy.detail);
-    setText("relay-name", state.relayName);
-    setText("host", state.host);
-    setText("port", String(state.port));
-    setText("secret", state.pairingSecret);
-    setText("manual", state.manual);
-    setText("devices", String(state.authenticatedDeviceCount));
-    if (state.pairingSecret !== lastSecret) {
-      lastSecret = state.pairingSecret;
-      $("qr").src = "/control/v1/qr.svg?v=" + encodeURIComponent(state.pairingSecret);
+    $("banner").hidden = copy.tone === "good";
+    setAllText("relay-name", next.relayName);
+    setAllText("endpoint", next.host + ":" + next.port);
+    setAllText("devices", String(next.authenticatedDeviceCount));
+    setAllText("devices-label", Number(next.authenticatedDeviceCount) === 1 ? "device" : "devices");
+    setText("pairing-hint", Number(next.authenticatedDeviceCount) > 0
+      ? "Already paired. Scan again to add another phone."
+      : "Point the phone at this QR. The Relay is reachable only on this WiFi network.");
+    if (next.pairingSecret !== lastSecret) {
+      lastSecret = next.pairingSecret;
+      $("qr").src = "/control/v1/qr.svg?v=" + encodeURIComponent(next.pairingSecret);
     }
+  }
+
+  // The Relay cannot report its own death: if it were down there would be
+  // nothing to ask. So the client is the only place that knows, and it must
+  // not guess from a single hiccup. Two consecutive failures, then say so.
+  function markUnreachable() {
+    renderState({
+      syncState: "relay_down",
+      relayName: state.relayName,
+      host: state.host,
+      port: state.port,
+      pairingSecret: lastSecret,
+      manual: state.manual,
+      authenticatedDeviceCount: 0
+    }, false);
+  }
+
+  // The QR is the entire point before pairing and near-pointless after it, so
+  // the window opens on Pairing only while unpaired. Once a device is paired
+  // the common task is sending, so open there instead.
+  function defaultPane() {
+    return Number(state.authenticatedDeviceCount || 0) > 0 ? "files" : "pairing";
+  }
+
+  function selectPane(id, focusTab) {
+    if (PANES.indexOf(id) === -1) return;
+    document.body.setAttribute("data-pane", id);
+    for (var paneId of PANES) {
+      var tab = $("tab-" + paneId);
+      var pane = $("pane-" + paneId);
+      var selected = paneId === id;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      pane.hidden = !selected;
+    }
+    if (focusTab) $("tab-" + id).focus();
   }
 
   function batchLabel(status) {
     if (status === "completed_with_issues") return "Completed with issues";
-    if (status === "laptop_to_phone") return "To phone";
-    if (status === "phone_to_laptop") return "From phone";
+    if (status === "waiting_for_source") return "Waiting for source";
     if (!status) return "";
     return status.replace(/_/g, " ").replace(/^./, function (ch) { return ch.toUpperCase(); });
   }
 
-  function renderTransfers(snapshot) {
-    var list = $("transfers");
-    var batches = snapshot && Array.isArray(snapshot.batches) ? snapshot.batches : [];
-    if (!batches.length) {
-      list.innerHTML = '<li class="muted">No transfers yet.</li>';
-      return;
-    }
-    list.innerHTML = batches.map(function (batch) {
-      var names = (batch.files || []).map(function (file) { return file.filename; }).filter(Boolean);
-      var title = names.length ? names.join(", ") : (batch.transferId || "Transfer");
-      var direction = batch.direction === "phone_to_laptop" ? "From phone" : "To phone";
-      return '<li><div class="row-title">' + escapeHtml(title) + '</div>' +
-        '<div class="row-detail">' + escapeHtml(direction + " · " + batchLabel(batch.status)) + '</div></li>';
-    }).join("");
+  function ago(ms) {
+    if (!ms) return "";
+    var seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (seconds < 10) return "just now";
+    if (seconds < 60) return seconds + " seconds ago";
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + (minutes === 1 ? " minute ago" : " minutes ago");
+    var hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
+    var days = Math.round(hours / 24);
+    return days === 1 ? "yesterday" : days + " days ago";
   }
 
-  function renderSetup(status) {
-    var list = $("setup");
-    var rows = status && Array.isArray(status.rows) ? status.rows : [];
-    if (!rows.length) {
-      list.innerHTML = '<li class="muted">Checking laptop setup status.</li>';
+  function bytes(size) {
+    if (!size || size < 1) return "";
+    if (size < 1024) return size + " B";
+    if (size < 1048576) return Math.round(size / 1024) + " KB";
+    return (size / 1048576).toFixed(1) + " MB";
+  }
+
+  function batchTitle(batch) {
+    var files = Array.isArray(batch.files) ? batch.files : [];
+    var names = files.map(function (file) { return file.filename; }).filter(Boolean);
+    if (names.length === 1) return names[0];
+    if (names.length > 1) return names.length + " files";
+    return batch.transferId || "Transfer";
+  }
+
+  function batchRow(batch) {
+    var needsAttention = ATTENTION.indexOf(batch.status) !== -1;
+    var tone = needsAttention ? " bad" : (batch.status === "completed" ? " good" : "");
+    var direction = batch.direction === "phone_to_laptop" ? "From phone" : "To phone";
+    var parts = [direction, batchLabel(batch.status)];
+    var when = ago(batch.updatedAtMs || batch.createdAtMs);
+    if (when) parts.push(when);
+    var failed = (batch.files || []).filter(function (file) { return file.errorCode; })[0];
+    return '<li><svg class="icon' + tone + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-' +
+      (needsAttention ? "warningAmber" : "checkCircle") + '"/></svg>' +
+      '<div class="grow"><div class="row-title">' + escapeHtml(batchTitle(batch)) + '</div>' +
+      '<div class="row-detail">' + escapeHtml(parts.join(" · ")) + '</div>' +
+      (failed ? '<div class="row-fix">' + escapeHtml(failureText(failed.errorCode)) + '</div>' : "") +
+      '</div></li>';
+  }
+
+  function renderTransfers(snapshot) {
+    var list = $("transfers");
+    var summary = $("file-summary");
+    var batches = snapshot && Array.isArray(snapshot.batches) ? snapshot.batches : [];
+    var ordered = batches.slice().sort(function (a, b) {
+      return (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0);
+    });
+    var attention = ordered.filter(function (batch) {
+      return ATTENTION.indexOf(batch.status) !== -1;
+    });
+    var active = ordered.filter(function (batch) {
+      return batch.status === "queued" || batch.status === "active" || batch.status === "paused";
+    });
+
+    summary.hidden = !ordered.length;
+    if (ordered.length) {
+      summary.innerHTML =
+        '<div><b>' + active.length + '</b><span>Active</span></div>' +
+        '<div><b>' + ordered.length + '</b><span>Transfers</span></div>' +
+        '<div class="' + (attention.length ? "bad" : "") + '"><b>' + attention.length + '</b><span>Need attention</span></div>';
+    }
+
+    if (!ordered.length) {
+      list.innerHTML = '<li class="empty">No transfers yet.</li>';
       return;
     }
+    var html = "";
+    if (attention.length) {
+      html += '<li class="group-label">Needs attention</li>';
+      html += attention.map(batchRow).join("");
+    }
+    html += '<li class="group-label">History</li>';
+    html += ordered
+      .filter(function (batch) { return ATTENTION.indexOf(batch.status) === -1; })
+      .map(batchRow).join("");
+    list.innerHTML = html;
+  }
+
+  function renderSetup(snapshot, checkedAt) {
+    var list = $("setup");
+    var summary = $("setup-summary");
+    var rows = snapshot && Array.isArray(snapshot.rows) ? snapshot.rows.slice() : [];
+    if (!rows.length) {
+      list.innerHTML = '<li class="empty">Checking laptop setup status.</li>';
+      return;
+    }
+    lastSetupRows = rows;
+    // The Relay hardcodes its own row to healthy, because a Relay that is down
+    // cannot answer. Only this client knows it lost contact, so it is the only
+    // place that row can be corrected.
+    var unreachable = missed >= MISSES_BEFORE_DOWN;
+    rows = rows.map(function (row) {
+      if (row.id !== "relay_running") return row;
+      return unreachable
+        ? { id: row.id, ok: false, detail: "The Relay is not answering." }
+        : row;
+    });
+    var broken = rows.filter(function (row) { return !row.ok; });
+    summary.hidden = false;
+    summary.innerHTML = broken.length
+      ? '<div class="bad"><b>' + broken.length + '</b><span>Need attention</span></div>' +
+        '<div><b>' + (rows.length - broken.length) + '</b><span>Healthy</span></div>'
+      : '<div><b>' + rows.length + '</b><span>All clear</span></div>';
     list.innerHTML = rows.map(function (row) {
-      var title = setupTitles[row.id] || row.id;
-      var icon = row.ok ? "check_circle" : "warning_amber";
-      var markClass = row.ok
-        ? "material-icons-outlined"
-        : "material-icons-outlined warn";
-      var fix = row.fix
-        ? '<p class="row-fix">' + escapeHtml(row.fix) + '</p>'
-        : "";
-      return '<li class="setup-row"><span class="' + markClass + '">' + icon + '</span>' +
-        '<div><div class="row-title">' + escapeHtml(title) + '</div>' +
+      var title = SETUP_TITLES[row.id] || row.id;
+      var fix = row.fix ? '<div class="row-fix">' + escapeHtml(row.fix) + '</div>' : "";
+      return '<li><svg class="icon ' + (row.ok ? "good" : "warn") + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-' +
+        (row.ok ? "checkCircle" : "warningAmber") + '"/></svg>' +
+        '<div class="grow"><div class="row-title">' + escapeHtml(title) + '</div>' +
         '<div class="row-detail">' + escapeHtml(row.detail || "") + '</div>' + fix + '</div></li>';
     }).join("");
+    if (checkedAt) $("setup-checked").textContent = "Checked " + ago(checkedAt) + ".";
   }
 
   function escapeHtml(value) {
@@ -483,92 +949,96 @@ const SHELL_SCRIPT = `
       .replace(/"/g, "&quot;");
   }
 
-  function collectPaths() {
-    var typed = $("path-input").value.split(/\\n/).map(function (line) {
-      return line.trim();
-    }).filter(Boolean);
-    var files = $("file-input").files;
-    var fromFiles = [];
-    for (var i = 0; i < files.length; i++) {
-      if (files[i].path) fromFiles.push(files[i].path);
-    }
-    return fromFiles.length ? fromFiles : typed;
-  }
-
   async function getJson(path) {
     var response = await fetch(path, { cache: "no-store" });
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
   }
 
+  var refreshing = false;
   async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
     try {
-      var state = await getJson("/control/v1/state");
-      renderState(state);
-    } catch (err) {
-      renderState({
-        syncState: "relay_down",
-        relayName: $("relay-name").textContent,
-        host: $("host").textContent,
-        port: $("port").textContent,
-        pairingSecret: $("secret").textContent,
-        manual: $("manual").textContent,
-        authenticatedDeviceCount: $("devices").textContent
-      });
-      return;
+      var live;
+      try {
+        live = await getJson("/control/v1/state");
+      } catch (err) {
+        // One missed poll is not a dead Relay. Hold the last known state until
+        // the failure repeats, then say so and mark the data stale.
+        missed += 1;
+        if (missed >= MISSES_BEFORE_DOWN) {
+          markUnreachable();
+          showStale();
+        }
+        return;
+      }
+      missed = 0;
+      lastGoodAt = Date.now();
+      var wasPaired = Number(state.authenticatedDeviceCount || 0) > 0;
+      renderState(live, true);
+      showStale();
+      // Re-anchor once, when the pairing situation actually changes, so the
+      // window does not yank a pane out from under someone mid-task.
+      var isPaired = Number(state.authenticatedDeviceCount || 0) > 0;
+      if (isPaired !== wasPaired) selectPane(defaultPane(), false);
+      try { renderTransfers(await getJson("/control/v1/transfers"), lastGoodAt); }
+      catch (err) { /* keep the last transfer history */ }
+      try {
+        var probed = await getJson("/control/v1/setup");
+        renderSetup(probed, probed.checkedAtMs);
+      } catch (err) { /* keep the last laptop setup status */ }
+    } finally {
+      refreshing = false;
     }
-    try { renderTransfers(await getJson("/control/v1/transfers")); }
-    catch (err) { /* keep last transfer history */ }
-    try { renderSetup(await getJson("/control/v1/setup")); }
-    catch (err) { /* keep last laptop setup status */ }
   }
 
-  $("copy-manual").addEventListener("click", async function () {
-    var line = $("manual").textContent || "";
-    try {
-      await navigator.clipboard.writeText(line);
-      snack("Copied the manual pairing line.");
-    } catch (err) {
-      snack("Select the manual line and copy it.");
+  // Anything the Relay told us is only as fresh as the last check. Say so
+  // rather than letting a frozen snapshot look live.
+  function showStale() {
+    var stale = missed >= MISSES_BEFORE_DOWN && lastGoodAt > 0;
+    document.body.setAttribute("data-stale", String(stale));
+    for (var id of ["transfers-stale", "setup-stale"]) {
+      var node = $(id);
+      if (!node) continue;
+      node.hidden = !stale;
+      if (stale) node.textContent = "Last checked " + ago(lastGoodAt) + ". The Relay is not answering.";
     }
-  });
-
-  $("file-input").addEventListener("change", function () {
-    var files = $("file-input").files;
-    var paths = [];
-    for (var i = 0; i < files.length; i++) {
-      if (files[i].path) paths.push(files[i].path);
-    }
-    if (paths.length) $("path-input").value = paths.join("\\n");
-  });
+    // The setup list still shows a hardcoded "Relay is answering" row from the
+    // last good response. Re-render it so the correction is not stranded
+    // waiting for a success that will never come.
+    if (stale && lastSetupRows) renderSetup({ rows: lastSetupRows }, lastGoodAt);
+  }
 
   function tauriCore() {
     return window.__TAURI__ && window.__TAURI__.core;
   }
 
-  function wireRelayButtons() {
+  function hasShell() {
     var core = tauriCore();
-    var start = $("start-relay");
-    var stop = $("stop-relay");
-    if (!core || start.dataset.wired === "1") return;
-    start.dataset.wired = "1";
-    start.disabled = false;
-    stop.disabled = false;
-    start.removeAttribute("title");
-    stop.removeAttribute("title");
-    start.addEventListener("click", async function () {
+    return Boolean(core && typeof core.invoke === "function");
+  }
+
+  function wireRelayButtons() {
+    if (!hasShell()) return;
+    for (var id of ["start-relay", "stop-relay"]) {
+      var button = $(id);
+      button.disabled = false;
+      button.removeAttribute("title");
+    }
+    $("start-relay").addEventListener("click", async function () {
       try {
-        await core.invoke("start_relay");
+        await tauriCore().invoke("start_relay");
         snack("Starting the Relay.");
         setTimeout(refresh, 800);
       } catch (err) {
         snack("The Relay did not start.");
       }
     });
-    stop.addEventListener("click", async function () {
+    $("stop-relay").addEventListener("click", async function () {
       try {
-        await core.invoke("stop_relay");
-        snack("Stop relay does not quit the desktop shell.");
+        await tauriCore().invoke("stop_relay");
+        snack("Stopped the Relay. This window is still open.");
         setTimeout(refresh, 400);
       } catch (err) {
         snack("The Relay did not stop.");
@@ -576,41 +1046,50 @@ const SHELL_SCRIPT = `
     });
   }
 
-  $("send-files").addEventListener("click", async function () {
-    var paths = collectPaths();
-    var core = tauriCore();
-    if (!paths.length && core) {
-      try {
-        var queued = await core.invoke("pick_and_send_files");
-        if (!queued) return;
-        snack("Queued.");
-        await refresh();
-      } catch (err) {
-        snack("The Relay did not accept that batch.");
+  // Without the Tauri shell behind it there is nothing to invoke, so say so
+  // instead of leaving a control that looks live and does nothing.
+  function markShellOnly() {
+    for (var id of ["start-relay", "stop-relay"]) {
+      var button = $(id);
+      if (button.disabled) {
+        button.title = "Start and stop relay run in the Vidyut desktop shell.";
       }
-      return;
     }
-    if (!paths.length) {
-      snack("Type each filesystem path on its own line.");
+  }
+
+  // The Relay caches the probe for 30s. "Check again" is how a user says they
+  // just fixed something, so it bypasses the cache instead of making them wait.
+  $("setup-recheck").addEventListener("click", async function () {
+    var button = $("setup-recheck");
+    button.disabled = true;
+    try {
+      var probed = await getJson("/control/v1/setup?refresh=1");
+      renderSetup(probed, probed.checkedAtMs);
+    } catch (err) {
+      snack("Could not re-check laptop setup status.");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("copy-manual").addEventListener("click", async function () {
+    try {
+      await navigator.clipboard.writeText(state.manual || "");
+      snack("Copied the pairing line.");
+    } catch (err) {
+      snack("Could not reach the clipboard.");
+    }
+  });
+
+  $("send-files").addEventListener("click", async function () {
+    if (!hasShell()) {
+      snack("Send files from the Vidyut desktop shell, or its tray.");
       return;
     }
     try {
-      var response = await fetch("/control/v1/transfers/enqueue", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ paths: paths })
-      });
-      if (response.status === 503) {
-        snack("Send files needs the desktop shell.");
-        return;
-      }
-      if (!response.ok) {
-        var body = await response.json().catch(function () { return {}; });
-        snack(body.message || "The batch was not queued.");
-        return;
-      }
-      $("path-input").value = "";
-      $("file-input").value = "";
+      var queued = await tauriCore().invoke("pick_and_send_files");
+      if (!queued) return;
+      selectPane("files", false);
       snack("Queued.");
       await refresh();
     } catch (err) {
@@ -618,22 +1097,21 @@ const SHELL_SCRIPT = `
     }
   });
 
-  $("rotate-open").addEventListener("click", function () {
-    $("rotate-confirm").hidden = false;
-  });
-  $("rotate-cancel").addEventListener("click", function () {
-    $("rotate-confirm").hidden = true;
-  });
+  function setRotateOpen(open) {
+    $("rotate-confirm").hidden = !open;
+    $("rotate-open").setAttribute("aria-expanded", String(open));
+    if (open) $("rotate-go").focus();
+    else $("rotate-open").focus();
+  }
+
+  $("rotate-open").addEventListener("click", function () { setRotateOpen(true); });
+  $("rotate-cancel").addEventListener("click", function () { setRotateOpen(false); });
   $("rotate-go").addEventListener("click", async function () {
     try {
       var response = await fetch("/control/v1/rotate-secret", { method: "POST" });
-      if (!response.ok) {
-        snack("The pairing secret was not rotated.");
-        return;
-      }
-      var state = await response.json();
-      renderState(state);
-      $("rotate-confirm").hidden = true;
+      if (!response.ok) throw new Error(String(response.status));
+      renderState(await response.json());
+      setRotateOpen(false);
       snack("Every phone must scan the new QR.");
     } catch (err) {
       snack("The pairing secret was not rotated.");
@@ -641,22 +1119,60 @@ const SHELL_SCRIPT = `
   });
 
   $("open-releases").addEventListener("click", function (event) {
-    var core = tauriCore();
-    if (!core || typeof core.invoke !== "function") return;
+    if (!hasShell()) return;
     event.preventDefault();
-    core.invoke("open_releases").catch(function () {});
+    tauriCore().invoke("open_releases").catch(function () {});
   });
 
-  lastSecret = (bootState().pairingSecret || $("secret").textContent || "");
+  // Sidebar navigation: click, arrow keys, and Ctrl+1..4.
+  $("nav").addEventListener("click", function (event) {
+    var tab = event.target.closest("[data-pane]");
+    if (tab) selectPane(tab.getAttribute("data-pane"), false);
+  });
+  $("nav").addEventListener("keydown", function (event) {
+    var step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    var current = PANES.indexOf(document.body.getAttribute("data-pane"));
+    var next = (current + step + PANES.length) % PANES.length;
+    selectPane(PANES[next], true);
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !$("rotate-confirm").hidden) {
+      setRotateOpen(false);
+      return;
+    }
+    if (!event.ctrlKey && !event.metaKey) return;
+    if (event.key >= "1" && event.key <= "4") {
+      event.preventDefault();
+      selectPane(PANES[Number(event.key) - 1], false);
+    }
+    if (event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      $("send-files").click();
+    }
+  });
+
+  state = bootState();
+  lastSecret = state.pairingSecret || "";
+  selectPane(defaultPane(), false);
+  markShellOnly();
   wireRelayButtons();
   (function waitTauri(tries) {
-    if (tauriCore() || tries <= 0) {
+    if (hasShell() || tries <= 0) {
       wireRelayButtons();
       return;
     }
     setTimeout(function () { waitTauri(tries - 1); }, 200);
   })(10);
   refresh();
+  // Keep polling even while the window is hidden. Hiding to the tray is this
+  // shell's normal state, so a visibility guard would leave it blind exactly
+  // when it is supposed to be reporting health.
   setInterval(refresh, POLL_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refresh();
+  });
 })();
 `;
+}
