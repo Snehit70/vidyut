@@ -4,7 +4,11 @@
 
 The paired Home remains an operational status surface, but it is no longer
 buttonless. Its primary hierarchy is automatic clipboard-sync status, an
-explicit **Send files** action, and latest activity. Setup status belongs in
+explicit **Send files** action, and laptop telemetry, followed by latest
+activity. Telemetry is the steady state a glance lands on, so it sits directly
+under **Send files** and above activity; activity is the answer to "what just
+happened", which is a question the user asks *after* confirming the tool is
+working. Setup status belongs in
 Settings because pairing and recovery are infrequent configuration tasks, not
 ordinary Home content. This supersedes ADR 0004's persistent Home Setup row
 and prohibition on an in-app file action while preserving its status-first
@@ -12,6 +16,11 @@ intent. Relay identity is available from connection details or Settings, not
 as ordinary Home content. The user-facing **Ready** state requires both a live
 phone-to-relay connection and a healthy laptop clipboard watcher; a connected
 but degraded clipboard path is presented as needing attention.
+
+Home order is therefore: sync status, **Send files**, laptop telemetry, latest
+activity, setup banner. This reverses the order commit b6d9ada introduced,
+which put activity first. Nothing tested that order, so the reversal was free;
+a widget test now pins it.
 
 ## Considered Options
 

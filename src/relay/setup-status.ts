@@ -15,6 +15,8 @@ export interface SetupRow {
 
 export interface LaptopSetupStatus {
   rows: SetupRow[];
+  /** When these rows were actually probed, not when they were served. */
+  checkedAtMs: number;
 }
 
 export interface SetupStatusDeps {
@@ -22,9 +24,13 @@ export interface SetupStatusDeps {
   which?: (bin: string) => string | null;
   run?: (argv: string[]) => Promise<{ code: number; text: string }>;
   port?: number;
+  now?: () => number;
 }
 
 const defaultRelayPort = 17321;
+
+/** Probing shells out to up to six processes, so it is cached, not free. */
+export const setupStatusTtlMs = 30_000;
 
 export async function collectLaptopSetupStatus(
   deps: SetupStatusDeps = {},
@@ -32,6 +38,7 @@ export async function collectLaptopSetupStatus(
   const env = deps.env ?? process.env;
   const which = deps.which ?? ((bin: string) => Bun.which(bin));
   const run = deps.run ?? runCapture;
+  const now = deps.now ?? Date.now;
   const port =
     typeof deps.port === "number" &&
     Number.isInteger(deps.port) &&
@@ -46,6 +53,7 @@ export async function collectLaptopSetupStatus(
     probeFirewall(which, run, port),
   ]);
   return {
+    checkedAtMs: now(),
     rows: [
       {
         id: "relay_running",
@@ -58,6 +66,59 @@ export async function collectLaptopSetupStatus(
       autostart,
       firewall,
     ],
+  };
+}
+
+export type SetupStatusReader = (
+  force?: boolean,
+) => Promise<LaptopSetupStatus>;
+
+export interface SetupStatusReaderOptions {
+  ttlMs?: number;
+  now?: () => number;
+  deps?: SetupStatusDeps;
+  collect?: (deps: SetupStatusDeps) => Promise<LaptopSetupStatus>;
+}
+
+/**
+ * A caching, single-flight reader for laptop setup status.
+ *
+ * Every probe forks several processes, so a naive read-per-request costs a
+ * process storm: the desktop shell polls every few seconds, and each open
+ * window adds its own poll. Two things fix that. A TTL keeps the answer warm,
+ * and single-flight makes concurrent readers share one probe instead of each
+ * starting their own.
+ *
+ * The reader stamps and checks freshness against its own clock rather than
+ * trusting the probe's timestamp, so a probe that reports its own time cannot
+ * desynchronise the cache.
+ *
+ * A failed probe is never cached, so a transient error cannot leave the UI
+ * showing a stale verdict as if it were current.
+ */
+export function createSetupStatusReader(
+  options: SetupStatusReaderOptions = {},
+): SetupStatusReader {
+  const ttlMs = options.ttlMs ?? setupStatusTtlMs;
+  const now = options.now ?? Date.now;
+  const collect = options.collect ?? collectLaptopSetupStatus;
+  let cached: LaptopSetupStatus | undefined;
+  let inFlight: Promise<LaptopSetupStatus> | undefined;
+
+  return async function read(force = false): Promise<LaptopSetupStatus> {
+    if (!force && cached && now() - cached.checkedAtMs < ttlMs) {
+      return cached;
+    }
+    if (inFlight) return inFlight;
+    inFlight = collect({ ...options.deps, now })
+      .then((status) => {
+        cached = { ...status, checkedAtMs: now() };
+        return cached;
+      })
+      .finally(() => {
+        inFlight = undefined;
+      });
+    return inFlight;
   };
 }
 

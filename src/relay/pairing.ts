@@ -1,8 +1,8 @@
-import { createRequire } from "node:module";
 import qrcode from "qrcode-terminal";
+import QRCodeModule from "qrcode-terminal/vendor/QRCode/index.js";
+import QRErrorCorrectLevelModule from "qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js";
 
-const require = createRequire(import.meta.url);
-const QRCode = require("qrcode-terminal/vendor/QRCode") as {
+const QRCode = QRCodeModule as unknown as {
   new (typeNumber: number, errorCorrectLevel: number): {
     addData(data: string): void;
     make(): void;
@@ -10,7 +10,7 @@ const QRCode = require("qrcode-terminal/vendor/QRCode") as {
     isDark(row: number, col: number): boolean;
   };
 };
-const QRErrorCorrectLevel = require("qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel") as {
+const QRErrorCorrectLevel = QRErrorCorrectLevelModule as unknown as {
   M: number;
 };
 

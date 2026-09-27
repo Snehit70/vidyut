@@ -89,7 +89,23 @@ else
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable --now vidyut-relay.service
+# `enable --now` only starts the unit when it is not already running, so on
+# every install after the first it left the previous binary serving. Restart
+# explicitly so the binary just installed is the one actually running.
+systemctl --user enable vidyut-relay.service
+systemctl --user restart vidyut-relay.service
+
+# Confirm the unit came up, so a failed install is not reported as a success.
+for _ in $(seq 1 25); do
+  if systemctl --user is-active --quiet vidyut-relay.service; then
+    break
+  fi
+  sleep 0.2
+done
+if ! systemctl --user is-active --quiet vidyut-relay.service; then
+  echo "error: vidyut-relay.service did not come up. Check: journalctl --user -u vidyut-relay -b --no-pager | tail -40" >&2
+  exit 1
+fi
 
 echo
 echo "Installed and started vidyut-relay.service."

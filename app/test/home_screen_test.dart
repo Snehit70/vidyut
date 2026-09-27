@@ -375,6 +375,121 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('places laptop telemetry above latest activity', (tester) async {
+    tester.view.physicalSize = const Size(400, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            batteryPercent: 88,
+            batteryState: 'charging',
+            cpuTemperatureCelsius: 65.4,
+            memoryUsedBytes: 4 * 1073741824,
+            memoryTotalBytes: 16 * 1073741824,
+            storageUsedBytes: 250 * 1073741824,
+            storageTotalBytes: 500 * 1073741824,
+            cpuUsagePercent: 32.5,
+          ),
+          lastActivity: LastActivity(
+            direction: ActivityDirection.received,
+            summary: 'text (42 chars)',
+            counterpart: 'laptop',
+            timestamp: DateTime.now(),
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Pinned deliberately: nothing asserted this order, which is how it was
+    // reversed without a test failing.
+    expect(
+      tester.getTopLeft(find.text('Laptop telemetry')).dy,
+      lessThan(tester.getTopLeft(find.text('Latest activity')).dy),
+    );
+  });
+
+  testWidgets('keeps the five telemetry metrics grouped as two plus three', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: HomeScreen(
+          connectionStatus: ConnectionStatus.connected,
+          relayHealth: const RelayHealth(
+            status: 'ok',
+            relayName: 'Desk laptop',
+            clipboardStatus: 'ok',
+          ),
+          laptopTelemetry: LaptopTelemetry(
+            ts: DateTime.now().millisecondsSinceEpoch,
+            batteryPercent: 88,
+            batteryState: 'charging',
+            cpuTemperatureCelsius: 65.4,
+            memoryUsedBytes: 4 * 1073741824,
+            memoryTotalBytes: 16 * 1073741824,
+            storageUsedBytes: 250 * 1073741824,
+            storageTotalBytes: 500 * 1073741824,
+            cpuUsagePercent: 32.5,
+          ),
+          onOpenFiles: () {},
+          onOpenSettings: () {},
+          onOpenRecentActivity: () {},
+          onOpenConnectionDetails: () {},
+          onSendFiles: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // A card's closest Row ancestor is the grid row it sits in, so grouping is
+    // read off the widget tree. Comparing geometry does not work: within one
+    // row the cards have very different heights, because memory and storage
+    // wrap their values and carry progress bars while CPU usage does not, and
+    // Row centre-aligns its children.
+    Row rowOf(String name) => tester.widget<Row>(
+          find
+              .ancestor(
+                of: find.byKey(Key('telemetry-$name')),
+                matching: find.byType(Row),
+              )
+              .first,
+        );
+
+    // Battery shares a row with CPU temperature rather than sitting alone.
+    expect(rowOf('battery'), same(rowOf('temp')));
+    // The remaining three share the second row.
+    expect(rowOf('cpu'), same(rowOf('memory')));
+    expect(rowOf('memory'), same(rowOf('storage')));
+    // And there are exactly two rows, not three.
+    expect(rowOf('battery'), isNot(same(rowOf('cpu'))));
+
+    // Three across at 320dp is what the old compact branch existed to avoid,
+    // so this is the assertion that would catch a regression.
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'prefers disconnected over hot readings when the laptop is offline',
     (tester) async {

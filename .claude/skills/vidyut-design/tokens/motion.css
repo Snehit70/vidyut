@@ -1,15 +1,12 @@
-/* Motion system — spring overshoot + staggered entrances.
-   Source: app/lib/src/design/motion.dart */
+/* Motion now lives in design/tokens.css at the repo root, which mirrors
+ * app/lib/src/design/motion.dart. */
+@import url("../../../../design/tokens.css");
+
 :root {
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* @kind other */ /* overshoot */
-  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1); /* @kind other */
-  --dur-entrance: 600ms; /* @kind other */ /* rise 30px + fade */
-  --dur-stagger: 100ms; /* @kind other */ /* per-sibling delay */
-  --dur-press-down: 120ms; /* @kind other */ /* scale to 0.93, easeOutCubic */
-  --dur-press-up: 300ms; /* @kind other */ /* back to 1, spring */
-  --press-scale: 0.93; /* @kind other */
-  --dur-dot-pulse: 1400ms; /* @kind other */ /* PulsingDot halo */
-  --dur-ripple: 2200ms; /* @kind other */ /* RippleRings loop */
-  --dur-blob-morph: 10s; /* @kind other */ /* MorphingBlob, repeat-reverse */
-  --dur-step-dot: 250ms; /* @kind other */ /* step indicator resize */
+  /* Retired with the MorphingBlob and RippleRings components. Kept so the
+   * existing UI-kit previews still resolve; product code must not reintroduce
+   * these loops. */
+  --dur-ripple: 2200ms;
+  --dur-blob-morph: 10s;
+  --dur-step-dot: var(--dur-state);
 }

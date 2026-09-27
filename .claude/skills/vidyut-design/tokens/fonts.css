@@ -1,6 +1,15 @@
-/* Vidyut ships Plus Jakarta Sans via the google_fonts Flutter package.
-   No font binaries live in the repo, so we load the same family from Google Fonts. */
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
-/* Material Icons — the app's icon set is Flutter's built-in Icons.* (Material). */
-@import url("https://fonts.googleapis.com/icon?family=Material+Icons");
-@import url("https://fonts.googleapis.com/icon?family=Material+Icons+Outlined");
+/* Manrope is the single product typeface (ADR 0011) and is packaged with the
+ * product, not fetched at runtime. It is the same variable font the Android app
+ * bundles in its APK; the desktop shell serves the identical file from the
+ * Relay at /ui/manrope.ttf so the shell renders correctly with no network.
+ *
+ * Material icons are inline SVG paths in product code (see
+ * src/relay/shell-assets.ts). Do not reintroduce a webfont icon dependency.
+ */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("../../../../app/assets/fonts/Manrope[wght].ttf") format("truetype");
+}

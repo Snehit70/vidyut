@@ -90,17 +90,17 @@ class HomeScreen extends StatelessWidget {
                   label: const Text('Send files'),
                 ),
                 const SizedBox(height: 12),
-                _LatestActivitySection(
-                  activity: lastActivity,
-                  onTap: onOpenRecentActivity,
-                ),
                 if (laptopTelemetry != null) ...[
-                  const SizedBox(height: 12),
                   _LaptopTelemetrySection(
                     telemetry: laptopTelemetry,
                     connected: connectionStatus == ConnectionStatus.connected,
                   ),
                 ],
+                const SizedBox(height: 12),
+                _LatestActivitySection(
+                  activity: lastActivity,
+                  onTap: onOpenRecentActivity,
+                ),
                 if (setupBannerLabel != null && onOpenSetup != null) ...[
                   const SizedBox(height: 10),
                   _HomeSetupBanner(
@@ -183,6 +183,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     }
 
     final batteryCard = _TelemetryCard(
+      key: const Key('telemetry-battery'),
       icon: Icons.battery_full_outlined,
       label: 'Battery',
       value: resolveValue(
@@ -197,6 +198,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final tempCard = _TelemetryCard(
+      key: const Key('telemetry-temp'),
       icon: Icons.thermostat_outlined,
       label: 'CPU temperature',
       value: resolveValue(
@@ -214,6 +216,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final memoryCard = _TelemetryCard(
+      key: const Key('telemetry-memory'),
       icon: Icons.memory_outlined,
       progress: isStale
           ? null
@@ -234,6 +237,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final storageCard = _TelemetryCard(
+      key: const Key('telemetry-storage'),
       icon: Icons.storage_outlined,
       progress: isStale
           ? null
@@ -256,6 +260,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
     );
 
     final cpuCard = _TelemetryCard(
+      key: const Key('telemetry-cpu'),
       icon: Icons.developer_board_outlined,
       label: 'CPU usage',
       value: resolveValue(
@@ -346,36 +351,24 @@ class _LaptopTelemetrySection extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 18),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 520;
-                    if (compact) {
-                      return Column(
-                        children: [
-                          pair(cpuCard, tempCard),
-                          const SizedBox(height: 8),
-                          pair(memoryCard, storageCard),
-                          const SizedBox(height: 8),
-                          batteryCard,
-                        ],
-                      );
-                    }
-                    return Column(
+                // Five metrics as one group. Battery leads with CPU
+                // temperature and the remaining three sit together, so no
+                // metric is left alone on its own row reading as a separate
+                // concern. ADR 0015.
+                Column(
+                  children: [
+                    pair(tempCard, batteryCard),
+                    const SizedBox(height: 8),
+                    Row(
                       children: [
-                        Row(
-                          children: [
-                            Expanded(child: cpuCard),
-                            const SizedBox(width: 8),
-                            Expanded(child: tempCard),
-                            const SizedBox(width: 8),
-                            Expanded(child: batteryCard),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        pair(memoryCard, storageCard),
+                        Expanded(child: cpuCard),
+                        const SizedBox(width: 8),
+                        Expanded(child: memoryCard),
+                        const SizedBox(width: 8),
+                        Expanded(child: storageCard),
                       ],
-                    );
-                  },
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -388,6 +381,7 @@ class _LaptopTelemetrySection extends StatelessWidget {
 
 class _TelemetryCard extends StatelessWidget {
   const _TelemetryCard({
+    super.key,
     required this.icon,
     this.progress,
     required this.label,

@@ -4,14 +4,16 @@ import {
   type PairingSecretRef,
 } from "./config";
 import { desktopShellHtml } from "./desktop-shell-page";
+import { manropeFontBytes } from "./shell-assets";
 import {
   createPairingQrSvg,
   pairingManualLine,
   type PairingCodeOptions,
 } from "./pairing";
 import {
-  collectLaptopSetupStatus,
+  createSetupStatusReader,
   type LaptopSetupStatus,
+  type SetupStatusReader,
 } from "./setup-status";
 import type { ClipboardHealth } from "./clipboard-sync";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
@@ -50,7 +52,7 @@ export interface ControlPlaneContext {
   kickDevices?: () => void;
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
-  setupStatus?: () => Promise<LaptopSetupStatus>;
+  setupStatus?: SetupStatusReader;
 }
 
 export function isControlPath(pathname: string): boolean {
@@ -58,6 +60,7 @@ export function isControlPath(pathname: string): boolean {
     pathname === "/" ||
     pathname === "/ui" ||
     pathname === "/ui/" ||
+    pathname.startsWith("/ui/") ||
     pathname.startsWith("/control/v1/")
   );
 }
@@ -77,6 +80,9 @@ export async function handleControlRequest(
   if (request.method === "GET" && path === "/control/v1/state") {
     return Response.json(controlState(context));
   }
+  if (request.method === "GET" && path === "/ui/manrope.ttf") {
+    return manropeFontResponse();
+  }
   if (request.method === "GET" && path === "/control/v1/qr.svg") {
     return new Response(createPairingQrSvg(pairingOptions(context)), {
       headers: {
@@ -95,11 +101,31 @@ export async function handleControlRequest(
     return enqueueTransfers(request, context);
   }
   if (request.method === "GET" && path === "/control/v1/setup") {
-    const status = await (context.setupStatus ?? (() =>
-      collectLaptopSetupStatus({ port: context.port })))();
+    // Probing shells out to several processes, so the default read is cached.
+    // An explicit refresh=1 is how the user says "I just changed something".
+    const force = url.searchParams.get("refresh") === "1";
+    const status = await (context.setupStatus ?? fallbackSetupStatus(context.port))(
+      force,
+    );
     return Response.json(status);
   }
   return new Response("Not found", { status: 404 });
+}
+
+/**
+ * Only used when a caller drives the control plane without supplying a reader.
+ * createRelay always supplies one. Keyed by port because the firewall probe
+ * needs the port the Relay is actually listening on.
+ */
+const fallbackReaders = new Map<number, SetupStatusReader>();
+
+function fallbackSetupStatus(port: number): SetupStatusReader {
+  let reader = fallbackReaders.get(port);
+  if (!reader) {
+    reader = createSetupStatusReader({ deps: { port } });
+    fallbackReaders.set(port, reader);
+  }
+  return reader;
 }
 
 export function controlState(context: ControlPlaneContext): ControlState {
@@ -199,11 +225,73 @@ async function enqueueTransfers(
   }
 }
 
+/**
+ * The shell renders no remote assets: Manrope is served from this Relay and
+ * the icons are inline SVG. Everything it needs is same-origin, so the policy
+ * can start from 'none'. The page holds the pairing secret, and it is also
+ * reachable by any browser on loopback, so it gets a real policy rather than
+ * none at all.
+ */
+export const SHELL_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+/**
+ * The policy for the bundled boot page, which Tauri serves from
+ * tauri://localhost before the shell navigates to the Relay.
+ *
+ * It differs from the Relay-served policy in exactly one place, and the
+ * difference is required: the boot page polls the Relay's /health endpoint
+ * over loopback while it waits for the service to answer, so its connect-src
+ * has to name the relay origin. The Relay-served shell talks only to its own
+ * origin and keeps the tighter `connect-src 'self'`.
+ *
+ * tauri.conf.json cannot import this, so tests/design-tokens.test.ts asserts
+ * the bundled page matches. If the two policies are edited apart, that test
+ * fails rather than the difference quietly becoming a second accident.
+ */
+export function bundledPageCsp(loopbackOriginPattern: string): string {
+  return SHELL_CSP.replace(
+    "connect-src 'self'",
+    `connect-src 'self' ${loopbackOriginPattern}`,
+  );
+}
+
 function htmlShellResponse(state: ControlState): Response {
   return new Response(desktopShellHtml(state), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
+      "content-security-policy": SHELL_CSP,
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
     },
   });
+}
+
+/**
+ * Manrope is served from the Relay rather than a font CDN. The shell is a LAN
+ * product, and ADR 0011 requires the product typeface to be locally packaged.
+ * The bytes are baked into the compiled binary, so this works with no network
+ * and no installed font.
+ */
+async function manropeFontResponse(): Promise<Response> {
+  try {
+    return new Response(await manropeFontBytes(), {
+      headers: {
+        "content-type": "font/ttf",
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  } catch (error) {
+    return new Response("Font unavailable", { status: 500 });
+  }
 }
