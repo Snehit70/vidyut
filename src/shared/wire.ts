@@ -1,4 +1,4 @@
-export type PayloadType = "image" | "text";
+export type PayloadType = "image" | "text" | "link";
 
 export interface PayloadFrame {
   v: 1;
@@ -130,7 +130,7 @@ export function isPayloadFrame(value: unknown): value is PayloadFrame {
   const frame = value as Record<string, unknown>;
   return (
     frame.v === 1 &&
-    (frame.type === "image" || frame.type === "text") &&
+    (frame.type === "image" || frame.type === "text" || frame.type === "link") &&
     typeof frame.mime === "string" &&
     typeof frame.origin === "string" &&
     typeof frame.ts === "number" &&

@@ -4,6 +4,7 @@ import { noopLogger, type Logger } from "./logger";
 import type { PayloadPool } from "./payload-pool";
 import { decryptPayload, encryptPayload } from "../shared/crypto";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
+import { isOpenableLink } from "./open-link";
 
 export interface WatchableClipboardAdapter extends ClipboardAdapter {
   watch(
@@ -28,6 +29,13 @@ interface ClipboardSyncOptions {
   now(): number;
   logger?: Logger;
   onHealthChange?: (health: ClipboardHealth) => void;
+  /**
+   * Opens a link payload in the desktop's browser, after the URL has been
+   * written to the clipboard. Injected so tests can observe the launch without
+   * spawning a process, and so the pool path carries no hard process
+   * dependency. Omitted, a link still reaches the clipboard and nothing opens.
+   */
+  openLink?: (url: string) => Promise<void>;
 }
 
 export function startClipboardSync(options: ClipboardSyncOptions): () => void {
@@ -149,6 +157,40 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
       frameTs: frame.ts,
       e2eMs: options.now() - frame.ts,
     });
+
+    if (frame.type === "link") {
+      // Fire and forget, for the same reason the write above is not awaited by
+      // the pool: a browser that takes seconds to surface must not hold the
+      // phone's ack. The clipboard already has the URL, so a failed launch
+      // costs a tab, not the payload.
+      void openLinkFrom(frame, data);
+    }
+  }
+
+  async function openLinkFrom(frame: PayloadFrame, data: Uint8Array) {
+    const openLink = options.openLink;
+    if (!openLink) return;
+    const url = new TextDecoder().decode(data).trim();
+    // The phone chose the type, but the relay is the side actually handing this
+    // string to a process, so it does not take the claim on trust.
+    if (!isOpenableLink(url)) {
+      logger.error("link_open_skipped", {
+        nonce: frame.nonce,
+        frameTs: frame.ts,
+        reason: "not an http or https URL",
+      });
+      return;
+    }
+    try {
+      await openLink(url);
+      logger.info("link_opened", { nonce: frame.nonce, frameTs: frame.ts, url });
+    } catch (error) {
+      logger.error("link_open_failed", {
+        nonce: frame.nonce,
+        frameTs: frame.ts,
+        error: describeError(error),
+      });
+    }
   }
 
   return () => {

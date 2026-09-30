@@ -2,7 +2,7 @@
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { createWaylandClipboardAdapter } from "./clipboard";
+import { BunProcessRunner, createWaylandClipboardAdapter } from "./clipboard";
 import { startClipboardSync, type ClipboardHealth } from "./clipboard-sync";
 import { loadOrCreateRelayConfig, writeRelayConfig, type LogLevel } from "./config";
 import { createLogger } from "./logger";
@@ -11,6 +11,7 @@ import { getLanIPv4Addresses, getPairingHost } from "./network";
 import { createPairingCode } from "./pairing";
 import { ensurePortFree } from "./port-check";
 import { createRelay } from "./relay";
+import { openLinkWith } from "./open-link";
 import { createTransferHttpAuth } from "../shared/transfer-http-auth";
 import { sha256Hex } from "../shared/transfer-crypto";
 import {
@@ -126,6 +127,10 @@ const stopClipboard = options.clipboard
       origin: config.deviceId,
       now: Date.now,
       logger,
+      // Reuses the same process runner type the clipboard adapter uses, so a
+      // link launch and a clipboard write are bounded the same way and a hung
+      // browser cannot stall the relay.
+      openLink: (url) => openLinkWith(new BunProcessRunner(), url),
       onHealthChange: (health) => {
         clipboardHealth = health;
         relay.publishHealth();
