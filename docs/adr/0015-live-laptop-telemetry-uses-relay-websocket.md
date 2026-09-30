@@ -20,15 +20,27 @@ are not treated as CPU temperature. Warning and critical thresholds mirror
 Waybar at 70°C and 82°C. If no CPU sensor is available, the temperature card is
 explicitly unavailable.
 
-Home presents five telemetry metrics beneath the single `Send files` action, as
-one group: CPU temperature and battery on the first row, then CPU usage, memory
-and storage together on the second row. No metric is given a row of its own,
-because a lone full-width card reads as a separate concern rather than one of
-five. This supersedes the earlier arrangement in this ADR, which specified CPU
-usage as a full-width third-row card; that layout was never actually built, and
-commit b6d9ada then orphaned battery on its own row at compact widths, which is
-the problem this corrects. CPU usage is color-coded as
-Low below 50%, Moderate from 50% through 80%, and High above 80%.
+Home presents five telemetry metrics beneath the single `Send files` action, in
+two rows ordered by how much each metric has to say. Memory and storage each
+carry a value, a detail line and a progress bar, so they lead as a two-across
+row with the wider tiles. Battery, CPU temperature and CPU usage each carry a
+single number, so they share a three-across row beneath. Every row is held to
+one height, so a tile with a progress bar lines up with its neighbour instead of
+floating centre-aligned against a shorter one. The arrangement reads as
+symmetric because the busier metrics get the roomier row and the number-only
+metrics are grouped together.
+
+This supersedes two earlier arrangements in this ADR. The first specified CPU
+usage as a full-width third-row card; that layout was never actually built. The
+second put CPU temperature and battery on the first row with CPU usage, memory
+and storage together on the second, on the reasoning that a lone full-width card
+reads as a separate concern rather than one of five. That reasoning was wrong
+about which metrics deserved the room: it left CPU usage sharing a tile width
+with memory and storage, which wrap their values and carry progress bars, so
+CPU usage rendered short and centre-aligned against two much taller tiles. Commit
+b6d9ada had earlier orphaned battery on its own row at compact widths, which is
+what the second arrangement was correcting. CPU usage is color-coded as Low
+below 50%, Moderate from 50% through 80%, and High above 80%.
 
 Telemetry is a latest-snapshot concern. Vidyut does not persist telemetry
 history, upload it to a service, or create a second polling endpoint. The
