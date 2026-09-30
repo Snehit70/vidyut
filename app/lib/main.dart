@@ -561,6 +561,7 @@ class _PairingScreenState extends State<PairingScreen>
   }) {
     final summary = switch (payload.type) {
       SharePayloadType.text => 'text (${payload.text?.length ?? 0} chars)',
+      SharePayloadType.link => 'link',
       SharePayloadType.image => 'image',
       SharePayloadType.file => 'file',
     };
@@ -586,7 +587,10 @@ class _PairingScreenState extends State<PairingScreen>
         counterpart: _knownCounterpart,
         timestamp: DateTime.now(),
         outcome: outcome,
-        excerpt: payload.type == SharePayloadType.text ? payload.text : null,
+        excerpt: payload.type == SharePayloadType.text ||
+                payload.type == SharePayloadType.link
+            ? payload.text
+            : null,
         previewPath: previewPath,
         detail: detail,
       ),

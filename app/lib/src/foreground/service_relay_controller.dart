@@ -9,6 +9,7 @@ import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
 import '../settings/app_settings.dart';
+import '../share/link_payload.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
 import '../shared/relay_connection.dart';
@@ -335,8 +336,14 @@ class ServiceRelayController {
       return;
     }
     _manualSendInFlight = true;
+    // A URL is published as a link, so the laptop both holds it in the
+    // clipboard and opens it. The clipboard half is what makes this worth doing
+    // even when the tab is closed again.
+    final payload = looksLikeUrl(text)
+        ? SharePayload.link(text.trim())
+        : SharePayload.text(text);
     try {
-      final publishResult = await publish(SharePayload.text(text));
+      final publishResult = await publish(payload);
       _log(
         'Manual clipboard send: ${publishResult.message}',
         isError: !publishResult.published,
@@ -355,14 +362,18 @@ class ServiceRelayController {
         publishResult.published
             ? 'Vidyut sent to laptop'
             : 'Vidyut could not send',
-        publishResult.published ? 'Copied text sent.' : publishResult.message,
+        publishResult.published
+            ? payload.type == SharePayloadType.link
+                  ? 'Copied link sent.'
+                  : 'Copied text sent.'
+            : publishResult.message,
         'manual send: result',
       );
       emit({
         'kind': 'send',
         'sent': publishResult.published,
         'message': publishResult.message,
-        'type': 'text',
+        'type': payload.type == SharePayloadType.link ? 'link' : 'text',
         'size': text.length,
       });
     } catch (error) {

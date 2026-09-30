@@ -14,6 +14,7 @@ import 'package:vidyut/src/receive/payload_receiver.dart';
 import 'package:vidyut/src/receive/received_image_repository.dart';
 import 'package:vidyut/src/receive/received_text_repository.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
+import 'package:vidyut/src/share/share_payload.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
@@ -1036,6 +1037,46 @@ void main() {
       },
     );
 
+    test('notification action publishes a URL as a link', () async {
+      final watcher = _FakeAutoSendWatcher();
+      final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
+      await harness.controller.start();
+
+      watcher.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: '  https://example.com/a?b=c  ',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+
+      // A link is both a link and a payload, so the laptop puts it in the
+      // clipboard and opens it. Trimming matters: the surrounding whitespace
+      // would make the URL unopenable.
+      expect(harness.autoSendPublishedTypes, [SharePayloadType.link]);
+      expect(harness.autoSendPublished.single, 'https://example.com/a?b=c');
+    });
+
+    test('notification action publishes ordinary text as text', () async {
+      final watcher = _FakeAutoSendWatcher();
+      final harness = _Harness(pairing: pairing, autoSendWatcher: watcher);
+      await harness.controller.start();
+
+      watcher.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'see this article about https://example.com',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+
+      // Prose that merely contains an address stays text. Otherwise every
+      // copied message with a link in it would open a browser.
+      expect(harness.autoSendPublishedTypes, [SharePayloadType.text]);
+    });
+
     test('notification action reports an unavailable publisher', () async {
       final watcher = _FakeAutoSendWatcher();
       final harness = _Harness(
@@ -1375,6 +1416,7 @@ class _Harness {
       autoSendPublish: provideAutoSendPublish
           ? (payload) async {
               autoSendPublished.add(payload.text ?? '');
+              autoSendPublishedTypes.add(payload.type);
               if (autoSendError != null) throw autoSendError!;
               return autoSendGate?.future ?? autoSendResult;
             }
@@ -1434,6 +1476,7 @@ class _Harness {
   final notifications = <({String title, String text})>[];
   final clipboard = _RecordingClipboard();
   final autoSendPublished = <String>[];
+  final autoSendPublishedTypes = <SharePayloadType>[];
   final Object? autoSendError;
   SharePublishResult autoSendResult = const SharePublishResult.published();
 }

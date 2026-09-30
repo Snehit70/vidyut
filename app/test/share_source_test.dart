@@ -52,7 +52,7 @@ void main() {
     expect(payloads.single.mime, 'application/pdf');
   });
 
-  test('maps stream updates', () async {
+  test('maps a shared url to a link so the laptop opens it', () async {
     final stream = StreamController<List<SharedMediaFile>>();
     ReceiveSharingIntent.setMockValues(
       initialMedia: const [],
@@ -63,15 +63,39 @@ void main() {
     final next = source.payloadStream().first;
     stream.add([
       SharedMediaFile(
-        path: 'https://example.test/image',
+        path: 'https://example.test/page',
         type: SharedMediaType.url,
         mimeType: 'text/plain',
       ),
     ]);
 
     final payloads = await next;
+    expect(payloads.single.type, SharePayloadType.link);
+    expect(payloads.single.text, 'https://example.test/page');
+    await stream.close();
+  });
+
+  test('keeps a url-typed share as text when it is not a URL', () async {
+    final stream = StreamController<List<SharedMediaFile>>();
+    ReceiveSharingIntent.setMockValues(
+      initialMedia: const [],
+      mediaStream: stream.stream,
+    );
+
+    final source = const ReceiveSharingIntentSource();
+    final next = source.payloadStream().first;
+    stream.add([
+      SharedMediaFile(
+        path: 'https://example.test/page and more words',
+        type: SharedMediaType.url,
+        mimeType: 'text/plain',
+      ),
+    ]);
+
+    // The share sheet labels things url that are not addresses, so the check is
+    // not taken on the declared type.
+    final payloads = await next;
     expect(payloads.single.type, SharePayloadType.text);
-    expect(payloads.single.text, 'https://example.test/image');
     await stream.close();
   });
 }
