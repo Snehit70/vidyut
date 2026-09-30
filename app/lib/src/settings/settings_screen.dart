@@ -83,6 +83,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int? _issueCount;
   String? _appVersion;
   bool _checkingForUpdates = false;
+
+  /// Held rather than shown once in a dialog, so the About section can state
+  /// what the check found the moment the screen opens.
+  UpdateCheckResult? _updateState;
   String _filesDestination = 'Downloads/Vidyut';
   late final ApkInstaller _apkInstaller = widget.apkInstaller ?? ApkInstaller();
 
@@ -108,7 +112,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadAppVersion() async {
     final info = await PackageInfo.fromPlatform();
-    if (mounted) setState(() => _appVersion = info.version);
+    if (!mounted) return;
+    setState(() => _appVersion = info.version);
+    // About reports update state whether or not anyone asks, so the check runs
+    // on open. The trailing Check action is a retry, not the first source.
+    await _refreshUpdateState();
   }
 
   Future<void> _loadIssueCount() async {
@@ -242,7 +250,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  Future<void> _checkForUpdates() async {
+  /// Resolves the update check and keeps the outcome in [_updateState], which
+  /// the About section renders in place. There is no result dialog any more:
+  /// the answer belongs on the surface that asked the question, where it stays
+  /// readable, rather than in a modal the reader dismisses and forgets.
+  Future<void> _refreshUpdateState() async {
     final checker = widget.updateChecker;
     final currentVersion = _appVersion;
     if (checker == null || currentVersion == null || _checkingForUpdates) {
@@ -251,68 +263,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _checkingForUpdates = true);
     final result = await checker.check(currentVersion);
     if (!mounted) return;
-    setState(() => _checkingForUpdates = false);
-    await _showUpdateResultDialog(result);
-  }
-
-  Future<void> _showUpdateResultDialog(UpdateCheckResult result) async {
-    final String title;
-    final String message;
-    UpdateAvailable? update;
-    switch (result) {
-      case UpToDate():
-        title = "You're up to date";
-        message = 'Vidyut $_appVersion is the latest version.';
-      case UpdateAvailable():
-        title = 'Update available';
-        message = result.releaseNotes.trim().isEmpty
-            ? 'Vidyut ${result.version} is available.'
-            : 'Vidyut ${result.version} is available.\n\n${result.releaseNotes.trim()}';
-        update = result;
-      case MissingAsset():
-        title = 'Update available';
-        message =
-            'Vidyut ${result.tagName} is available, but no compatible APK was '
-            'attached to the release yet.';
-      case NoReleaseFound():
-        title = 'No releases yet';
-        message = "This app hasn't published a GitHub release yet.";
-      case RateLimited():
-        title = "Can't check right now";
-        message = "GitHub's rate limit was hit. Try again in a few minutes.";
-      case UpdateCheckOffline():
-        title = "Can't check right now";
-        message =
-            'Vidyut could not reach GitHub. Check your connection and try again.';
-      case MalformedMetadata():
-        title = "Can't check right now";
-        message = 'GitHub returned unexpected release data. Try again later.';
-    }
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-            child: Text(update == null ? 'Close' : 'Install later'),
-          ),
-          if (update != null)
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                unawaited(_downloadAndInstall(update!));
-              },
-              child: const Text('Download and install'),
-            ),
-        ],
-      ),
-    );
+    setState(() {
+      _updateState = result;
+      _checkingForUpdates = false;
+    });
   }
 
   Future<void> _downloadAndInstall(UpdateAvailable update) async {
@@ -587,25 +541,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsSection(
               title: 'About',
               children: [
-                ListTile(
-                  contentPadding: _rowPadding,
-                  title: const Text('Check for updates'),
-                  subtitle: Text(
-                    _appVersion == null
-                        ? 'Loading version…'
-                        : 'Version $_appVersion',
-                  ),
-                  trailing: _checkingForUpdates
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.chevron_right),
-                  onTap: _checkingForUpdates
-                      ? null
-                      : () => unawaited(_checkForUpdates()),
+                _AboutMasthead(
+                  installedVersion: _appVersion,
+                  checking: _checkingForUpdates,
+                  onCheck: () => unawaited(_refreshUpdateState()),
                 ),
+                // The outcome only appears once there is one, so the section is
+                // never split by a divider above an empty row.
+                if (_updateState case final state?)
+                  _AboutRelease(
+                    state: state,
+                    installedVersion: _appVersion,
+                    onInstall: (update) =>
+                        unawaited(_downloadAndInstall(update)),
+                  ),
               ],
             ),
           if (widget.paired && widget.onForgetPairing != null)
@@ -645,6 +594,258 @@ String _transferSize(int bytes) {
     return '${bytes ~/ (1024 * 1024 * 1024)} GB';
   }
   return '${bytes ~/ (1024 * 1024)} MB';
+}
+
+/// About masthead: who this is and which build is running, with the check
+/// demoted to a quiet trailing action.
+///
+/// The arrangement puts identity above state on purpose. A lone "Check for
+/// updates" row tells the reader nothing until it is tapped, and once tapped it
+/// answers in a dialog they dismiss and forget. Here the section is already
+/// worth reading on open, and Check is a retry rather than the only way in.
+class _AboutMasthead extends StatelessWidget {
+  const _AboutMasthead({
+    required this.installedVersion,
+    required this.checking,
+    required this.onCheck,
+  });
+
+  final String? installedVersion;
+  final bool checking;
+  final VoidCallback onCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      child: Row(
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(7),
+              child: Icon(
+                Icons.swap_horiz,
+                size: 18,
+                color: theme.colorScheme.onPrimaryContainer,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Vidyut', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 2),
+                Text(
+                  // "Installed" separates the running build from the latest
+                  // published one, which the release row below may contradict.
+                  installedVersion == null
+                      ? 'Installed build unavailable'
+                      : 'Installed $installedVersion',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (checking)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            TextButton(onPressed: onCheck, child: const Text('Check')),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row stating what the update check found.
+///
+/// Every outcome gets a sentence. A bare version number does not say whether
+/// the reader has to do anything, and colour alone does not reach everyone, so
+/// the consequence is written out and the action appears only when there is
+/// something to act on.
+class _AboutRelease extends StatelessWidget {
+  const _AboutRelease({
+    required this.state,
+    required this.installedVersion,
+    required this.onInstall,
+  });
+
+  final UpdateCheckResult state;
+  final String? installedVersion;
+  final ValueChanged<UpdateAvailable> onInstall;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return switch (state) {
+      UpToDate() => _sentence(
+        context,
+        icon: Icons.check_circle_outline,
+        color: theme.colorScheme.primary,
+        title: 'Up to date',
+        detail: installedVersion == null
+            ? 'Vidyut is on the latest published build.'
+            : 'Vidyut $installedVersion is the latest published build.',
+      ),
+      final UpdateAvailable update => _available(context, update),
+      MissingAsset(:final tagName) => _sentence(
+        context,
+        icon: Icons.info_outline,
+        color: theme.colorScheme.onSurfaceVariant,
+        title: 'Latest release $tagName',
+        detail:
+            'That release has no installable file attached yet, so Vidyut '
+            'cannot offer it. Use Check to try again.',
+      ),
+      NoReleaseFound() => _sentence(
+        context,
+        icon: Icons.info_outline,
+        color: theme.colorScheme.onSurfaceVariant,
+        title: 'No releases yet',
+        detail: 'Vidyut has not published a GitHub release yet.',
+      ),
+      RateLimited() => _sentence(
+        context,
+        icon: Icons.cloud_off_outlined,
+        color: theme.colorScheme.onSurfaceVariant,
+        title: 'Cannot check right now',
+        detail:
+            "GitHub's rate limit was reached. Use Check to try again in a few "
+            'minutes.',
+      ),
+      UpdateCheckOffline() => _sentence(
+        context,
+        icon: Icons.wifi_off_outlined,
+        color: theme.colorScheme.onSurfaceVariant,
+        title: 'Cannot check right now',
+        detail:
+            'Vidyut could not reach GitHub. Check the connection, then use '
+            'Check to try again.',
+      ),
+      MalformedMetadata() => _sentence(
+        context,
+        icon: Icons.help_outline,
+        color: theme.colorScheme.onSurfaceVariant,
+        title: 'Cannot check right now',
+        detail:
+            'GitHub returned release data Vidyut did not expect. Use Check to '
+            'try again later.',
+      ),
+    };
+  }
+
+  Widget _sentence(
+    BuildContext context, {
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String detail,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.titleSmall),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // The install action is here because an update was found, not because the row
+  // exists. A button that is always present and usually inert is worse than no
+  // button, because it never says which state Vidyut is actually in.
+  Widget _available(BuildContext context, UpdateAvailable update) {
+    final theme = Theme.of(context);
+    final notes = update.releaseNotes.trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.upgrade, size: 20, color: theme.colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Update available',
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
+              Text(
+                update.version.toString(),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Vidyut ${update.version} is available.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              notes,
+              // Release notes are unbounded. Clamp so one long changelog cannot
+              // push the rest of Settings off the screen.
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.tonal(
+              onPressed: () => onInstall(update),
+              child: const Text('Download and install'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SettingsSection extends StatelessWidget {
