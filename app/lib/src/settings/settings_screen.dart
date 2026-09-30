@@ -13,6 +13,7 @@ import '../update/github_update_checker.dart';
 import '../update/apk_installer.dart';
 import 'app_settings.dart';
 import 'clipboard_autosend_screen.dart';
+import 'whats_new_screen.dart';
 
 typedef AppSettingsChanged = Future<void> Function(AppSettings settings);
 
@@ -249,6 +250,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await onForget();
     if (mounted) Navigator.of(context).pop();
   }
+
+  /// The release the notes in [_releaseNotes] describe, or null when the check
+  /// produced none.
+  String? get _releaseVersion => switch (_updateState) {
+    UpToDate(:final version) => version?.toString(),
+    UpdateAvailable(:final version) => version.toString(),
+    _ => null,
+  };
+
+  /// Release notes for the release the reader is on, or the newest one when the
+  /// build is behind. Up to date still carries notes, because those are the
+  /// notes for the running build, which is what "what's new" means once the
+  /// reader has updated. Null when the check found no notes at all.
+  String? get _releaseNotes => switch (_updateState) {
+    UpToDate(:final releaseNotes) => releaseNotes,
+    UpdateAvailable(:final releaseNotes) => releaseNotes,
+    _ => null,
+  };
 
   /// Resolves the update check and keeps the outcome in [_updateState], which
   /// the About section renders in place. There is no result dialog any more:
@@ -554,6 +573,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     installedVersion: _appVersion,
                     onInstall: (update) =>
                         unawaited(_downloadAndInstall(update)),
+                  ),
+                // Reading what changed lives here rather than behind the check,
+                // so the notes are one tap from the version they belong to.
+                if (_releaseNotes case final notes? when notes.isNotEmpty)
+                  ListTile(
+                    contentPadding: _rowPadding,
+                    title: const Text("What's new"),
+                    subtitle: Text(_releaseVersion ?? 'Latest release'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => unawaited(
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (context) => WhatsNewScreen(
+                            version: _releaseVersion,
+                            releaseNotes: notes,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
               ],
             ),

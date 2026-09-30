@@ -224,4 +224,52 @@ void main() {
     expect(find.text('Up to date'), findsNothing);
     expect(find.text('Update available'), findsNothing);
   });
+
+  testWidgets("about offers what's new once the build is current", (
+    tester,
+  ) async {
+    // Up to date used to discard the release notes, which left nothing to read
+    // in the common case. It now carries the notes for the running build.
+    await _openSettings(
+      tester,
+      _StubUpdateChecker(
+        const UpToDate(
+          version: SemVer(1, 13, 0),
+          releaseNotes: '* fix(shell): keep the brand mark by @snehit',
+        ),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+
+    expect(find.text("What's new"), findsOneWidget);
+    // The row is labelled with the release the notes describe, not the raw
+    // installed string, so the two can be compared at a glance.
+    expect(find.text('1.13.0'), findsOneWidget);
+
+    await tester.tap(find.text("What's new"));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vidyut 1.13.0'), findsOneWidget);
+    expect(find.text('fix(shell): keep the brand mark by @snehit'), findsOneWidget);
+  });
+
+  testWidgets('about hides what\'s new when the release carried no notes', (
+    tester,
+  ) async {
+    await _openSettings(tester, _StubUpdateChecker(const UpToDate()));
+
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+
+    // A row leading to an empty screen is worse than no row.
+    expect(find.text("What's new"), findsNothing);
+  });
 }
