@@ -276,13 +276,20 @@ class _LaptopTelemetrySection extends StatelessWidget {
       color: _cpuColor(theme, isStale ? null : telemetry?.cpuUsagePercent),
     );
 
-    Widget pair(_TelemetryCard left, _TelemetryCard right) {
-      return Row(
-        children: [
-          Expanded(child: left),
-          const SizedBox(width: 8),
-          Expanded(child: right),
-        ],
+    Widget metricRow(List<_TelemetryCard> cards) {
+      final children = <Widget>[];
+      for (var i = 0; i < cards.length; i++) {
+        if (i > 0) children.add(const SizedBox(width: 8));
+        children.add(Expanded(child: cards[i]));
+      }
+      // IntrinsicHeight plus stretch holds each row to one height, so tiles
+      // with a progress bar line up with each other instead of centre-floating
+      // against a shorter neighbour.
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
       );
     }
 
@@ -351,23 +358,16 @@ class _LaptopTelemetrySection extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 18),
-                // Five metrics as one group. Battery leads with CPU
-                // temperature and the remaining three sit together, so no
-                // metric is left alone on its own row reading as a separate
-                // concern. ADR 0015.
+                // Two rows. Memory and storage carry the most information, so
+                // they take the roomier two-across row; battery, CPU
+                // temperature and CPU usage are each a single number, so they
+                // share the three-across row beneath. ADR 0015.
                 Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    pair(tempCard, batteryCard),
+                    metricRow([memoryCard, storageCard]),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(child: cpuCard),
-                        const SizedBox(width: 8),
-                        Expanded(child: memoryCard),
-                        const SizedBox(width: 8),
-                        Expanded(child: storageCard),
-                      ],
-                    ),
+                    metricRow([batteryCard, tempCard, cpuCard]),
                   ],
                 ),
               ],
