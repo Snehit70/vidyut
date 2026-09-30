@@ -196,7 +196,9 @@ void main() {
     );
 
     expect(find.text('Update available'), findsOneWidget);
-    expect(find.text('1.14.0'), findsOneWidget);
+    // The version appears twice on purpose: in the release row, and again as the
+    // label on the What's new row, so the two can be compared at a glance.
+    expect(find.text('1.14.0'), findsNWidgets(2));
     expect(find.text('Telemetry rows regrouped.'), findsOneWidget);
     // Found by text, not by type: FilledButton.tonal builds a private
     // subclass, so an exact-type finder would miss it.
