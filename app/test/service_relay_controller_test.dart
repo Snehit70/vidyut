@@ -980,6 +980,62 @@ void main() {
       },
     );
 
+    test(
+      'a notification update that never replies does not wedge later sends',
+      () async {
+        // The symptom: after one tap, every later tap is refused as "already
+        // sending" and the action never recovers. The class doc calls out a
+        // dropped platform-channel reply as exactly this class of wedge (#35),
+        // but the manual-send path did not bound its awaits, so the guard was
+        // held by a future that could never complete.
+        final watcher = _FakeAutoSendWatcher();
+        final harness = _Harness(
+          pairing: pairing,
+          autoSendWatcher: watcher,
+          syncStepTimeout: const Duration(milliseconds: 50),
+        );
+        await harness.controller.start();
+
+        // Freeze the reply only after the sync pass has settled, so this
+        // exercises the send path rather than startup.
+        harness.hangNotifications = true;
+
+        watcher.emitManual(
+          const ManualClipboardReadResult(
+            requestId: 1,
+            status: ManualClipboardReadStatus.text,
+            text: 'https://example.com',
+          ),
+        );
+        await _waitUntil(() => harness.autoSendPublished.length == 1);
+
+        // Past the bound the wedged update must have been abandoned, so a
+        // second tap publishes instead of being refused. Asserted directly
+        // rather than polled, so the failure is fast and names what published.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        watcher.emitManual(
+          const ManualClipboardReadResult(
+            requestId: 2,
+            status: ManualClipboardReadStatus.text,
+            text: 'https://example.org',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+
+        expect(harness.autoSendPublished, [
+          'https://example.com',
+          'https://example.org',
+        ]);
+        expect(
+          harness.notifications.where(
+            (notification) => notification.title == 'Vidyut is already sending',
+          ),
+          isEmpty,
+          reason: 'a wedged notification must not be reported as a real conflict',
+        );
+      },
+    );
+
     test('notification action reports an unavailable publisher', () async {
       final watcher = _FakeAutoSendWatcher();
       final harness = _Harness(
@@ -1351,8 +1407,10 @@ class _Harness {
         ),
       ),
       emit: emitted.add,
-      updateNotification: (title, text) async {
+      updateNotification: (title, text) {
         notifications.add((title: title, text: text));
+        if (hangNotifications) return Completer<void>().future;
+        return Future<void>.value();
       },
     );
     // Mirror the production echo-guard clipboard wrapper: every received-text
@@ -1362,6 +1420,11 @@ class _Harness {
 
   PairingCode? pairing;
   AppSettings settings;
+
+  /// Simulates a process freeze that drops a platform-channel reply, leaving a
+  /// future that never completes. Mutable so the sync pass can finish first.
+  bool hangNotifications = false;
+
   final screenOn = StreamController<void>.broadcast();
   final _FakeScreenshotWatcher? screenshotWatcher;
   final _FakeAutoSendWatcher? autoSendWatcher;
