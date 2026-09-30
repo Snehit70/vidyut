@@ -1,5 +1,6 @@
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
+import 'link_payload.dart';
 import 'share_payload.dart';
 
 abstract interface class ShareSource {
@@ -34,6 +35,12 @@ List<SharePayload> _mapFiles(List<SharedMediaFile> files) {
 SharePayload? _mapFile(SharedMediaFile file) {
   final mime = file.mimeType ?? _defaultMime(file);
   return switch (file.type) {
+    // A shared URL is a link, not a blob of text, so the laptop opens it as
+    // well as holding it in the clipboard. Shared text is left alone: the
+    // share sheet's text type carries all sorts of prose, and guessing which of
+    // it is an address is the job of the manual action's own check.
+    SharedMediaType.url when looksLikeUrl(file.path) =>
+      SharePayload.link(file.path),
     SharedMediaType.text ||
     SharedMediaType.url => SharePayload.text(file.path, mime: mime),
     SharedMediaType.image => SharePayload.image(path: file.path, mime: mime),

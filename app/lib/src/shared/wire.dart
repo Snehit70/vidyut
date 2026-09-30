@@ -2,7 +2,12 @@ import 'dart:convert';
 
 enum PayloadType {
   image('image'),
-  text('text');
+  text('text'),
+
+  /// A single URL. Behaves as text everywhere except that the laptop also opens
+  /// it in a browser, so the address is both in the clipboard and on screen.
+  /// The mime stays text/plain so pasting still yields plain text.
+  link('link');
 
   const PayloadType(this.wireName);
 

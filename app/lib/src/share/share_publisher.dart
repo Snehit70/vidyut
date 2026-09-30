@@ -78,6 +78,7 @@ class SharePublisher {
           metadata: PayloadMetadata(
             type: switch (payload.type) {
               SharePayloadType.text => PayloadType.text,
+              SharePayloadType.link => PayloadType.link,
               SharePayloadType.image => PayloadType.image,
               SharePayloadType.file => throw StateError(
                 'File reached clipboard publisher.',
@@ -104,6 +105,7 @@ class SharePublisher {
   Future<List<int>> _plaintext(SharePayload payload) {
     return switch (payload.type) {
       SharePayloadType.text => Future.value(utf8.encode(payload.text ?? '')),
+      SharePayloadType.link => Future.value(utf8.encode(payload.text ?? '')),
       SharePayloadType.image => fileReader.readBytes(payload.path!),
       SharePayloadType.file => Future.error(
         StateError('File reached clipboard publisher.'),

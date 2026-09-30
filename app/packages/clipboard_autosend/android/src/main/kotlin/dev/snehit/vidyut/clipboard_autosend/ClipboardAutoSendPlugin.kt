@@ -136,6 +136,11 @@ object ClipboardAutoSendWatcher {
     private const val MANUAL_ACTION_REQUEST_CODE = 17322
     private const val CONTENT_REQUEST_CODE = 17323
 
+    /// Ceiling on how long a manual-read lock may be held with no report. The
+    /// activity's own focus timeout is 2s, so this only ever fires when that
+    /// report was lost, and is long enough not to race a slow cold start.
+    private const val MANUAL_LOCK_EXPIRY_MS = 15_000L
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val sinks = CopyOnWriteArraySet<EventChannel.EventSink>()
 
@@ -146,6 +151,27 @@ object ClipboardAutoSendWatcher {
     private var lastLaunchAtMs = 0L
     private var activeManualRequestId: Long? = null
     private var nextManualRequestId = 0L
+
+    /// Releases a manual-read lock whose owner never reported back.
+    private val manualLockExpiry = Runnable { expireStaleManualLock() }
+
+    @Synchronized
+    private fun expireStaleManualLock() {
+        val stale = activeManualRequestId ?: return
+        activeManualRequestId = null
+        emitLog("Manual clipboard read lock expired without a report; id=$stale")
+        // Reported as a timeout rather than silence, so the Dart side updates the
+        // notification and releases its own guard instead of leaving the action
+        // looking busy.
+        fanOut(
+            mapOf(
+                "type" to "manualResult",
+                "requestId" to stale,
+                "status" to "focusTimeout",
+            ),
+        )
+    }
+
     private var foregroundNotificationId: Int? = null
     private var foregroundChannelId: String? = null
 
@@ -265,7 +291,19 @@ object ClipboardAutoSendWatcher {
     fun beginManualRead(): Long? {
         if (activeManualRequestId != null) return null
         nextManualRequestId += 1
-        return nextManualRequestId.also { activeManualRequestId = it }
+        val requestId = nextManualRequestId
+        activeManualRequestId = requestId
+        // Defence in depth. The activity that holds this lock reports back from
+        // three places: window focus, its own 2s focus timeout, and onDestroy.
+        // The activity is singleTask, so a second tap while the first instance
+        // is still alive is delivered to onNewIntent and starts no new read, and
+        // any path that fails to report leaves the lock set with no owner and no
+        // timer. While that lasts, every later tap is refused as busy until the
+        // process dies. Expire the lock instead, well past the activity's own
+        // 2s budget, so a missed report costs one tap rather than the feature.
+        mainHandler.removeCallbacks(manualLockExpiry)
+        mainHandler.postDelayed(manualLockExpiry, MANUAL_LOCK_EXPIRY_MS)
+        return requestId
     }
 
     @Synchronized
@@ -276,6 +314,7 @@ object ClipboardAutoSendWatcher {
     ) {
         if (activeManualRequestId != requestId) return
         activeManualRequestId = null
+        mainHandler.removeCallbacks(manualLockExpiry)
         val payload = mutableMapOf<String, Any?>(
             "type" to "manualResult",
             "requestId" to requestId,
@@ -341,6 +380,12 @@ object ClipboardAutoSendWatcher {
             mainHandler.post { manager?.removePrimaryClipChangedListener(l) }
         }
         clipListener = null
+
+        // A stopped watcher cannot receive the report that releases a manual
+        // read, so drop the lock here rather than leaving the notification
+        // action busy until the expiry fires.
+        mainHandler.removeCallbacks(manualLockExpiry)
+        activeManualRequestId = null
 
         logcatProcess?.destroy()
         logcatProcess = null

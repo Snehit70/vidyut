@@ -39,7 +39,16 @@ sealed class UpdateCheckResult {
 }
 
 class UpToDate extends UpdateCheckResult {
-  const UpToDate();
+  const UpToDate({this.version, this.releaseNotes = ''});
+
+  /// The published release this build corresponds to. Carried even though the
+  /// build is current, because "what's new" needs the notes for the version
+  /// being run, not only for one newer than it. Null when the response named no
+  /// parseable release.
+  final SemVer? version;
+
+  /// GitHub's generated notes for [version], empty when absent.
+  final String releaseNotes;
 }
 
 class UpdateAvailable extends UpdateCheckResult {
@@ -133,7 +142,13 @@ UpdateCheckResult resolveUpdate({
   }
 
   if (latest.compareTo(current) <= 0) {
-    return const UpToDate();
+    // The build is current, but the release body is still the notes for the
+    // version being run, which is what "what's new" shows. Discarding it here
+    // is what previously left that view empty in the common case.
+    return UpToDate(
+      version: latest,
+      releaseNotes: (decoded['body'] as String?) ?? '',
+    );
   }
 
   final assets = decoded['assets'];

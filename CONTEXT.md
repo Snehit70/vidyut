@@ -13,9 +13,16 @@ Latest write wins; there is no history.
 _Avoid_: queue, history, buffer, stack
 
 **Payload**:
-One clipboard item synced through the pool — either an image or a text blob,
-plus its metadata (type, size, origin device, timestamp).
+One clipboard item synced through the pool — an image, a text blob, or a
+**Link** — plus its metadata (type, size, origin device, timestamp).
 _Avoid_: item, entry, message, clip
+
+**Link**:
+A Payload that is a single web address. The laptop writes it to the clipboard
+exactly as it would any text and additionally opens it in a browser, so the
+address is both pasteable and already on screen. A link is still one payload,
+not a link plus a payload.
+_Avoid_: URL payload, browser payload, open-link
 
 **Relay**:
 The small server that holds the current pool payload and broadcasts new payloads

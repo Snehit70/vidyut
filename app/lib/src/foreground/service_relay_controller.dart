@@ -9,6 +9,7 @@ import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
 import '../settings/app_settings.dart';
+import '../share/link_payload.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
 import '../shared/relay_connection.dart';
@@ -272,39 +273,44 @@ class ServiceRelayController {
     if (_stopped) return;
     final publish = autoSendPublish;
     if (publish == null) {
-      await updateNotification(
+      await _notify(
         'Vidyut could not send',
         'Clipboard publisher is unavailable.',
+        'manual send: no publisher',
       );
       return;
     }
     switch (result.status) {
       case ManualClipboardReadStatus.empty:
         _log('Manual clipboard send stopped: clipboard is empty.');
-        await updateNotification(
+        await _notify(
           'Vidyut could not send',
           'The clipboard has no text.',
+          'manual send: empty clipboard',
         );
         return;
       case ManualClipboardReadStatus.unreadable:
         _log('Manual clipboard read failed.', isError: true);
-        await updateNotification(
+        await _notify(
           'Vidyut could not send',
           'Clipboard text could not be read.',
+          'manual send: unreadable',
         );
         return;
       case ManualClipboardReadStatus.focusTimeout:
         _log('Manual clipboard read timed out.', isError: true);
-        await updateNotification(
+        await _notify(
           'Vidyut could not send',
           'Clipboard access timed out. Tap to try again.',
+          'manual send: native focus timeout',
         );
         return;
       case ManualClipboardReadStatus.busy:
         _log('Manual clipboard send ignored: another read is active.');
-        await updateNotification(
+        await _notify(
           'Vidyut is already sending',
           'Wait for the current send to finish.',
+          'manual send: native busy',
         );
         return;
       case ManualClipboardReadStatus.text:
@@ -312,24 +318,32 @@ class ServiceRelayController {
     }
     if (_manualSendInFlight) {
       _log('Manual clipboard send ignored: publish already in progress.');
-      await updateNotification(
+      await _notify(
         'Vidyut is already sending',
         'Wait for the current send to finish.',
+        'manual send: already in flight',
       );
       return;
     }
     final text = result.text;
     if (text == null || text.trim().isEmpty) {
       _log('Manual clipboard result had no text.', isError: true);
-      await updateNotification(
+      await _notify(
         'Vidyut could not send',
         'Clipboard text could not be read.',
+        'manual send: empty result',
       );
       return;
     }
     _manualSendInFlight = true;
+    // A URL is published as a link, so the laptop both holds it in the
+    // clipboard and opens it. The clipboard half is what makes this worth doing
+    // even when the tab is closed again.
+    final payload = looksLikeUrl(text)
+        ? SharePayload.link(text.trim())
+        : SharePayload.text(text);
     try {
-      final publishResult = await publish(SharePayload.text(text));
+      final publishResult = await publish(payload);
       _log(
         'Manual clipboard send: ${publishResult.message}',
         isError: !publishResult.published,
@@ -344,17 +358,22 @@ class ServiceRelayController {
           ),
         ),
       );
-      await updateNotification(
+      await _notify(
         publishResult.published
             ? 'Vidyut sent to laptop'
             : 'Vidyut could not send',
-        publishResult.published ? 'Copied text sent.' : publishResult.message,
+        publishResult.published
+            ? payload.type == SharePayloadType.link
+                  ? 'Copied link sent.'
+                  : 'Copied text sent.'
+            : publishResult.message,
+        'manual send: result',
       );
       emit({
         'kind': 'send',
         'sent': publishResult.published,
         'message': publishResult.message,
-        'type': 'text',
+        'type': payload.type == SharePayloadType.link ? 'link' : 'text',
         'size': text.length,
       });
     } catch (error) {
@@ -362,7 +381,11 @@ class ServiceRelayController {
       unawaited(
         recordActivity(_sentTextActivity(text, ActivityOutcome.failed)),
       );
-      await updateNotification('Vidyut could not send', 'Tap to try again.');
+      await _notify(
+        'Vidyut could not send',
+        'Tap to try again.',
+        'manual send: threw',
+      );
     } finally {
       _manualSendInFlight = false;
     }
@@ -437,6 +460,23 @@ class ServiceRelayController {
       syncStepTimeout,
       onTimeout: () => throw TimeoutException(label, syncStepTimeout),
     );
+  }
+
+  /// Shows a notification without ever letting the caller wait forever.
+  ///
+  /// The same dropped platform-channel reply that [_bounded] exists for also
+  /// strands the manual-send path: an unbounded await there sits inside the
+  /// `_manualSendInFlight` guard, so the `finally` that releases it never runs
+  /// and every later tap is refused as "already sending" for the life of the
+  /// process. A timed-out notification is cosmetic, so the timeout is logged
+  /// and swallowed rather than thrown, which also keeps it from escaping into
+  /// the unawaited manual-result listener.
+  Future<void> _notify(String title, String text, String label) async {
+    try {
+      await _bounded(updateNotification(title, text), label);
+    } on TimeoutException {
+      _log('Notification update timed out: $label', isError: true);
+    }
   }
 
   Future<void> _syncOnce(int generation) async {

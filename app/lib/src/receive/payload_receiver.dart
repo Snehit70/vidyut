@@ -313,6 +313,10 @@ class PayloadReceiver {
       // Repository first (source of truth): whatever happens to the write,
       // the notification tap can always re-copy from the repository.
       switch (frame.type) {
+        // A link is text as far as this device is concerned: it lands in the
+        // clipboard and shows a receipt. The browser half is the laptop's job,
+        // and it keys off the type rather than the content.
+        case PayloadType.link:
         case PayloadType.text:
           final text = utf8.decode(plaintext);
           await receivedTextRepository.saveLatest(text, id: frame.nonce);
@@ -323,7 +327,10 @@ class PayloadReceiver {
           );
           await _maybeShowMiuiHint(outcome);
           return PayloadReceiveResult.received(
-            _message('Text', outcome),
+            _message(
+              frame.type == PayloadType.link ? 'Link' : 'Text',
+              outcome,
+            ),
             excerpt: text,
           );
         case PayloadType.image:
