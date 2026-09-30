@@ -425,7 +425,7 @@ void main() {
     );
   });
 
-  testWidgets('keeps the five telemetry metrics grouped as two plus three', (
+  testWidgets('splits the telemetry metrics into a two-up and a three-up row', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 1200);
@@ -463,30 +463,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // A card's closest Row ancestor is the grid row it sits in, so grouping is
-    // read off the widget tree. Comparing geometry does not work: within one
-    // row the cards have very different heights, because memory and storage
-    // wrap their values and carry progress bars while CPU usage does not, and
-    // Row centre-aligns its children.
-    Row rowOf(String name) => tester.widget<Row>(
-          find
-              .ancestor(
-                of: find.byKey(Key('telemetry-$name')),
-                matching: find.byType(Row),
-              )
-              .first,
-        );
+    Rect rectOf(String name) => tester.getRect(find.byKey(Key('telemetry-$name')));
+    double topOf(String name) => rectOf(name).top;
+    double bottomOf(String name) => rectOf(name).bottom;
 
-    // Battery shares a row with CPU temperature rather than sitting alone.
-    expect(rowOf('battery'), same(rowOf('temp')));
-    // The remaining three share the second row.
-    expect(rowOf('cpu'), same(rowOf('memory')));
-    expect(rowOf('memory'), same(rowOf('storage')));
-    // And there are exactly two rows, not three.
-    expect(rowOf('battery'), isNot(same(rowOf('cpu'))));
+    // The two metrics that carry the most information lead, side by side.
+    expect(topOf('memory'), topOf('storage'));
+    expect(bottomOf('memory'), bottomOf('storage'));
+    expect(rectOf('memory').width, rectOf('storage').width);
 
-    // Three across at 320dp is what the old compact branch existed to avoid,
-    // so this is the assertion that would catch a regression.
+    // The three single-number metrics share the row beneath them.
+    expect(topOf('battery'), topOf('temp'));
+    expect(topOf('battery'), topOf('cpu'));
+    expect(bottomOf('storage'), lessThan(topOf('battery')));
+
+    // The bottom row is three across, so each tile is narrower than the two
+    // above it. This is the assertion that catches a tile drifting back into
+    // the crowded row it came from.
+    expect(rectOf('cpu').width, lessThan(rectOf('memory').width));
+    expect(rectOf('battery').width, rectOf('cpu').width);
+
+    // Three across at 320dp is the narrowest width this ships at.
     expect(tester.takeException(), isNull);
   });
 
