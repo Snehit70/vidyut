@@ -122,6 +122,9 @@ class WebSocketRelayTransport implements RelayTransport {
   Future<void> close() => _channel.sink.close();
 }
 
+/// Relay protocol feature: telemetry flows only after the phone asks for it.
+const telemetrySubscribeFeature = 'telemetry_subscribe';
+
 class RelayConnection implements RelaySession {
   RelayConnection({
     required this.pairing,
@@ -160,6 +163,9 @@ class RelayConnection implements RelaySession {
   final _transferControls = StreamController<Map<String, Object?>>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
+  Set<String> _relayFeatures = const {};
+  bool _authenticated = false;
+  bool _telemetryWanted = false;
 
   @override
   Stream<ConnectionStatus> get status => _status.stream;
@@ -179,6 +185,29 @@ class RelayConnection implements RelaySession {
   /// ciphertext (plaintext + 16-byte GCM tag); [defaultMaxPayloadBytes]
   /// until the hello arrives.
   int get maxPayloadBytes => _maxPayloadBytes ?? defaultMaxPayloadBytes;
+
+  /// Whether laptop telemetry should flow on this session. The relay starts
+  /// a phone that advertised `telemetry_subscribe` unsubscribed, so nothing is
+  /// sampled or sent while no screen shows the numbers. Set before the
+  /// handshake, the value is sent once auth succeeds. A relay that predates
+  /// the feature never gets the message: it would answer with an error, and
+  /// it streams telemetry regardless.
+  set telemetryWanted(bool wanted) {
+    if (_telemetryWanted == wanted) return;
+    _telemetryWanted = wanted;
+    if (_authenticated) _sendTelemetrySubscription();
+  }
+
+  bool get telemetryWanted => _telemetryWanted;
+
+  void _sendTelemetrySubscription() {
+    if (!_relayFeatures.contains(telemetrySubscribeFeature)) return;
+    transport.send({
+      'v': 1,
+      'kind': 'telemetry_subscribe',
+      'active': _telemetryWanted,
+    });
+  }
 
   @override
   Future<void> start() async {
@@ -257,6 +286,10 @@ class RelayConnection implements RelaySession {
         final challenge = _stringField(message, 'challenge');
         final cap = message['maxPayloadBytes'];
         if (cap is int && cap > 0) _maxPayloadBytes = cap;
+        final features = message['features'];
+        _relayFeatures = features is List
+            ? features.whereType<String>().toSet()
+            : const {};
         _events.add(const RelayEvent('Challenge received, sending proof.'));
         transport.send({
           'v': 1,
@@ -267,11 +300,16 @@ class RelayConnection implements RelaySession {
             challenge: challenge,
             deviceId: deviceId,
           ),
+          'features': const [telemetrySubscribeFeature],
         });
       case 'auth_ok':
         final health = RelayHealth.fromJson(message['health']);
         if (health != null) _health.add(health);
         _events.add(const RelayEvent('Auth accepted by relay.'));
+        _authenticated = true;
+        // The relay starts this session unsubscribed; only an active wish
+        // needs saying.
+        if (_telemetryWanted) _sendTelemetrySubscription();
         _status.add(ConnectionStatus.connected);
       case 'health':
         final health = RelayHealth.fromJson(message['health']);

@@ -101,6 +101,48 @@ void main() {
     expect(find.text('Send files'), findsOneWidget);
   });
 
+  testWidgets('asks for laptop telemetry only while home is on screen', (
+    tester,
+  ) async {
+    final storage = MemoryPairingStorage();
+    await PairingRepository(storage).save(
+      const PairingCode(host: '192.168.1.20', port: 17321, secret: 'secret'),
+    );
+    final service = FakeForegroundServiceClient();
+    List<Object?> telemetryRequests() => service.taskData
+        .whereType<Map<String, Object?>>()
+        .where((data) => data['kind'] == 'telemetry')
+        .map((data) => data['active'])
+        .toList();
+
+    await tester.pumpWidget(
+      VidyutApp(
+        appSettingsRepository: AppSettingsRepository(
+          MemoryAppSettingsStorage(),
+        ),
+        lastActivityRepository: LastActivityRepository(
+          MemoryLastActivityStorage(),
+        ),
+        foregroundServiceClient: service,
+        pairingRepository: PairingRepository(storage),
+        relayConnectionFactory: fakeConnection,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(telemetryRequests(), [true]);
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    expect(telemetryRequests(), [true, false, true, false]);
+  });
+
   testWidgets('lists nearby relays and selecting one fills host and port', (
     tester,
   ) async {
@@ -378,6 +420,8 @@ class FakeForegroundServiceClient implements ForegroundServiceClient {
   @override
   void removeTaskDataCallback(TaskDataCallback callback) {}
 
+  final taskData = <Object>[];
+
   @override
-  Future<void> sendToTask(Object data) async {}
+  Future<void> sendToTask(Object data) async => taskData.add(data);
 }

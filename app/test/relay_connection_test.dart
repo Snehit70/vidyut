@@ -294,6 +294,76 @@ void main() {
     expect(connection.maxPayloadBytes, 4096);
   });
 
+  test('asks for telemetry only while wanted on a relay that offers it', () async {
+    final transport = FakeRelayTransport();
+    final sent = <Map<String, Object?>>[];
+    transport.sent.listen(sent.add);
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+    connection.telemetryWanted = true;
+
+    await connection.start();
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+      'features': ['telemetry_subscribe'],
+    });
+    await pumpEventQueue();
+    expect(sent.single['features'], ['telemetry_subscribe']);
+
+    transport.receive({'v': 1, 'kind': 'auth_ok'});
+    await pumpEventQueue();
+    connection.telemetryWanted = false;
+    connection.telemetryWanted = false;
+    await pumpEventQueue();
+
+    expect(sent.skip(1), [
+      {'v': 1, 'kind': 'telemetry_subscribe', 'active': true},
+      {'v': 1, 'kind': 'telemetry_subscribe', 'active': false},
+    ]);
+  });
+
+  test('never sends a telemetry subscription to an older relay', () async {
+    final transport = FakeRelayTransport();
+    final sent = <Map<String, Object?>>[];
+    transport.sent.listen(sent.add);
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+    connection.telemetryWanted = true;
+
+    await connection.start();
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+    });
+    transport.receive({'v': 1, 'kind': 'auth_ok'});
+    await pumpEventQueue();
+    connection.telemetryWanted = false;
+    connection.telemetryWanted = true;
+    await pumpEventQueue();
+
+    // An unknown kind would come back as an error and drop the session.
+    expect(sent.map((message) => message['kind']), ['auth']);
+  });
+
   test('surfaces publish acks as a stream of acked ts', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(

@@ -20,6 +20,8 @@ import 'src/foreground/foreground_service_client.dart';
 import 'src/foreground/foreground_service_coordinator.dart';
 import 'src/foreground/vidyut_foreground_service.dart';
 import 'src/foreground/send_clipboard_screen.dart';
+import 'src/foreground/service_relay_controller.dart'
+    show serviceTelemetryCommand;
 import 'src/home/home_screen.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';
@@ -165,6 +167,7 @@ class _VidyutAppState extends State<VidyutApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Vidyut',
+      navigatorObservers: [_pageRouteObserver],
       theme: buildVidyutTheme(),
       darkTheme: buildVidyutDarkTheme(),
       themeMode: _materialThemeMode,
@@ -256,8 +259,12 @@ class PairingScreen extends StatefulWidget {
   State<PairingScreen> createState() => _PairingScreenState();
 }
 
+/// Lets the home screen tell when another page covers it, so laptop
+/// telemetry is only requested while it is on screen.
+final _pageRouteObserver = RouteObserver<PageRoute<dynamic>>();
+
 class _PairingScreenState extends State<PairingScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   final _hostController = TextEditingController();
   final _portController = TextEditingController(text: '17321');
   final _secretController = TextEditingController();
@@ -301,6 +308,9 @@ class _PairingScreenState extends State<PairingScreen>
   SetupStatus? _setupStatus;
   RelayHealth? _relayHealth;
   LaptopTelemetry? _laptopTelemetry;
+  bool _appVisible = true;
+  bool _homeCovered = false;
+  bool? _telemetryRequested;
   String? _connectionDetail;
   String? _discoveryError;
 
@@ -348,10 +358,52 @@ class _PairingScreenState extends State<PairingScreen>
       unawaited(_loadLastActivity());
       unawaited(_refreshSetupStatus());
     }
+    // Inactive still shows the app (notification shade, split screen).
+    _appVisible =
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    _updateTelemetryRequest();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<dynamic>) {
+      _pageRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    _homeCovered = true;
+    _updateTelemetryRequest();
+  }
+
+  @override
+  void didPopNext() {
+    _homeCovered = false;
+    _updateTelemetryRequest();
+  }
+
+  /// Laptop telemetry costs a /proc sample on the laptop and a radio wake
+  /// here every five seconds, so the service only asks for it while the home
+  /// screen is in front of someone. [resend] repeats the current answer for a
+  /// service that has just (re)connected and may not have heard it.
+  void _updateTelemetryRequest({bool resend = false}) {
+    final wanted = _pairing != null && _appVisible && !_homeCovered;
+    if (!resend && wanted == _telemetryRequested) return;
+    _telemetryRequested = wanted;
+    unawaited(
+      widget.foregroundServiceClient.sendToTask(
+        serviceTelemetryCommand(active: wanted),
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _pageRouteObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _activitySubscription?.cancel();
     _relativeTimeTimer?.cancel();
@@ -385,6 +437,9 @@ class _PairingScreenState extends State<PairingScreen>
               _connectionDetail = null;
             }
           });
+          if (status == ConnectionStatus.connected) {
+            _updateTelemetryRequest(resend: true);
+          }
         }
       case 'health':
         final status = data['status'];
@@ -930,6 +985,7 @@ class _PairingScreenState extends State<PairingScreen>
   }
 
   Future<void> _syncForegroundService() {
+    _updateTelemetryRequest();
     return _foregroundServiceCoordinator.sync(
       settings: _settings,
       pairing: _pairing,

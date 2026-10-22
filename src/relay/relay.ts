@@ -23,6 +23,7 @@ import {
   type PayloadFrame,
   type RelayHealth,
   type LaptopTelemetry,
+  type RelayFeature,
   type RelayMessage,
   type TransferControlMessage,
 } from "../shared/wire";
@@ -77,6 +78,7 @@ interface DeviceSocketData {
   deviceId?: string;
   connectedAt: number;
   lastSeen: number;
+  telemetrySubscribed: boolean;
   authTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -137,14 +139,25 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       socket.ping();
     }
   }, heartbeatIntervalMs);
-  const telemetryInterval = setInterval(() => {
-    if (![...devices].some((socket) => socket.data.authenticated)) return;
-    void (options.telemetry ?? sampleLaptopTelemetry)().then(
-      (telemetry) => broadcast(devices, undefined, telemetry),
+  const sampleTelemetry = options.telemetry ?? sampleLaptopTelemetry;
+  const sendTelemetry = (candidates: RelaySocket[]) => {
+    const recipients = candidates.filter(isTelemetryRecipient);
+    if (recipients.length === 0) return;
+    void sampleTelemetry().then(
+      (telemetry) => {
+        for (const socket of recipients) {
+          if (isTelemetryRecipient(socket)) send(socket, telemetry);
+        }
+      },
       (error) => logger.error("telemetry_sampling_failed", {
         error: error instanceof Error ? error.message : String(error),
       }),
     );
+  };
+  // Sampling reads /proc and /sys, and every sample wakes the phone's radio.
+  // Only phones showing the numbers right now get them.
+  const telemetryInterval = setInterval(() => {
+    sendTelemetry([...devices]);
   }, 5_000);
 
   const server = Bun.serve<DeviceSocketData>({
@@ -169,6 +182,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             remote: address ? `${address.address}:${address.port}` : "unknown",
             challenge: randomBase64(24),
             authenticated: false,
+            telemetrySubscribed: false,
             connectedAt: now,
             lastSeen: now,
           },
@@ -264,6 +278,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           kind: "hello",
           challenge: socket.data.challenge,
           maxPayloadBytes: options.maxPayloadBytes,
+          features: [...relayFeatures],
         });
       },
       async message(socket, rawMessage) {
@@ -290,8 +305,16 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
               socket.data.deviceId,
               (message) => send(socket, message),
             );
-            void (options.telemetry ?? sampleLaptopTelemetry)().then((telemetry) => send(socket, telemetry));
+            sendTelemetry([socket]);
           }
+          return;
+        }
+
+        if (message.kind === "telemetry_subscribe") {
+          const active = message.active === true;
+          const changed = socket.data.telemetrySubscribed !== active;
+          socket.data.telemetrySubscribed = active;
+          if (active && changed) sendTelemetry([socket]);
           return;
         }
 
@@ -451,6 +474,12 @@ export function websocketMessageLimit(maxPayloadBytes: number): number {
   return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
 }
 
+const relayFeatures: readonly RelayFeature[] = ["telemetry_subscribe"];
+
+function isTelemetryRecipient(socket: RelaySocket): boolean {
+  return socket.data.authenticated && socket.data.telemetrySubscribed;
+}
+
 function notifyDeviceDisconnected(
   devices: Set<RelaySocket>,
   callback: RelayOptions["deviceDisconnected"],
@@ -513,6 +542,12 @@ async function authenticate(
 
   socket.data.authenticated = true;
   socket.data.deviceId = message.deviceId;
+  // A phone that predates telemetry_subscribe never asks, so it keeps the
+  // always-on stream it was built against.
+  socket.data.telemetrySubscribed = !(
+    Array.isArray(message.features) &&
+    message.features.includes("telemetry_subscribe")
+  );
   logger.info("auth_ok", {
     connId: socket.data.connId,
     deviceId: message.deviceId,

@@ -19,6 +19,12 @@ import '../transfer/phone_transfer_receiver.dart';
 
 const serviceSyncCommand = {'kind': 'sync'};
 
+/// Tells the service whether the UI is showing laptop telemetry.
+Map<String, Object?> serviceTelemetryCommand({required bool active}) => {
+  'kind': 'telemetry',
+  'active': active,
+};
+
 typedef ServicePairingLoader = Future<PairingCode?> Function();
 typedef ServiceSettingsLoader = Future<AppSettings> Function();
 typedef ServiceConnectionFactory =
@@ -148,6 +154,8 @@ class ServiceRelayController {
   final Duration watchdogInterval;
 
   RelayConnection? _connection;
+  // Whether the UI is showing laptop telemetry; carried across reconnects.
+  bool _telemetryWanted = false;
   PhoneTransferReceiver? _transferReceiver;
   PayloadReceiveController? _receiveController;
   StreamSubscription<ConnectionStatus>? _statusSubscription;
@@ -263,6 +271,10 @@ class ServiceRelayController {
       case 'sync':
         _reconnectAttempt = 0;
         await _sync();
+        return;
+      case 'telemetry':
+        _telemetryWanted = data['active'] == true;
+        _connection?.telemetryWanted = _telemetryWanted;
         return;
     }
   }
@@ -506,6 +518,7 @@ class ServiceRelayController {
     }
     _log('Connecting to relay at ${pairing.host}:${pairing.port}.');
     final connection = connectionFactory(pairing);
+    connection.telemetryWanted = _telemetryWanted;
     _connection = connection;
     // Attach before start() so the pipeline sees this session's `connected`
     // transition and republishes any frame held while offline.

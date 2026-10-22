@@ -165,6 +165,42 @@ void main() {
     expect(harness.transports.last.closed, isFalse);
   });
 
+  test('carries the telemetry request across reconnects', () async {
+    final harness = _Harness(pairing: pairing);
+    const hello = {
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+      'features': ['telemetry_subscribe'],
+    };
+    Iterable<Object?> subscriptions(_FakeTransport transport) => transport.sent
+        .where((message) => message['kind'] == 'telemetry_subscribe')
+        .map((message) => message['active']);
+
+    await harness.controller.start();
+    harness.transports.single
+      ..receive(hello)
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await harness.controller.handleTaskData(const {
+      'kind': 'telemetry',
+      'active': true,
+    });
+    await _waitUntil(
+      () => subscriptions(harness.transports.single).isNotEmpty,
+    );
+    expect(subscriptions(harness.transports.single), [true]);
+
+    await harness.controller.handleTaskData(const {'kind': 'sync'});
+    harness.transports.last
+      ..receive(hello)
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await _waitUntil(() => subscriptions(harness.transports.last).isNotEmpty);
+
+    expect(subscriptions(harness.transports.last), [true]);
+    await harness.controller.stop();
+  });
+
   test('creates a fresh transfer receiver for each relay session', () async {
     final receivers = <PhoneTransferReceiver>[];
     final harness = _Harness(

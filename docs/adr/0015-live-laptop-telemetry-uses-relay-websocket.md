@@ -48,6 +48,23 @@ Relay may omit a metric when the operating system cannot provide it, and the
 Android UI must render an explicit unavailable state rather than fabricate or
 silently reuse an old value.
 
+## Sent only while someone is looking
+
+The Relay samples and sends telemetry only to a Device that has asked for it.
+Every sample reads `/proc` and `/sys` on the laptop and wakes the phone's radio,
+and a phone in a pocket has no use for either. The Relay's `hello` advertises
+`features: ["telemetry_subscribe"]`; a Device that lists the same feature in its
+`auth` starts the session unsubscribed and sends
+`{kind: "telemetry_subscribe", active}` as its Home screen comes into and out of
+view. Home counts as in view while the app is resumed or inactive and no other
+page covers it. The service keeps the last answer across reconnects, and the UI
+repeats it each time the service reports `connected`.
+
+Compatibility runs both ways. A Device that does not advertise the feature
+stays subscribed for its whole session, as before. A Device only sends
+`telemetry_subscribe` to a Relay that advertised it, because an older Relay
+answers an unknown message with `error`, which drops the phone offline.
+
 ## Considered options
 
 - Collect telemetry in the Android app through a second laptop HTTP endpoint.

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { connectDevice } from "../src/relay/client";
 import { createRelay } from "../src/relay/relay";
+import { createAuthMessage } from "../src/shared/auth";
 import { encryptPayload } from "../src/shared/crypto";
 import { authenticateRawClient, connectRawWebSocket } from "./helpers/raw-ws-client";
 
@@ -355,5 +356,54 @@ describe("relay protocol", () => {
     expect(relay.pool.current?.origin).toBe("phone");
 
     phone.close();
+  });
+
+  test("sends telemetry only to phones that asked for it", async () => {
+    await relay.stop();
+    let samples = 0;
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      telemetry: async () => ({
+        v: 1,
+        kind: "telemetry",
+        ts: ++samples,
+        batteryPercent: null,
+        batteryState: null,
+        memoryUsedBytes: null,
+        memoryTotalBytes: null,
+        storageUsedBytes: null,
+        storageTotalBytes: null,
+        cpuUsagePercent: null,
+        cpuTemperatureCelsius: null,
+      }),
+    });
+
+    const phone = await connectRawWebSocket(relay.url);
+    const hello = await phone.next();
+    expect(hello).toMatchObject({ kind: "hello", features: ["telemetry_subscribe"] });
+    if (hello.kind !== "hello") throw new Error("expected hello");
+    phone.send({
+      ...(await createAuthMessage(secret, hello.challenge, "phone")),
+      features: ["telemetry_subscribe"],
+    });
+    await phone.next((message) => message.kind === "auth_ok");
+    await Bun.sleep(50);
+    expect(samples).toBe(0);
+
+    phone.send({ v: 1, kind: "telemetry_subscribe", active: true });
+    expect(await phone.next((message) => message.kind === "telemetry")).toMatchObject({ ts: 1 });
+
+    // A phone that predates the feature keeps the always-on stream.
+    const legacy = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(legacy, secret, "legacy");
+    expect(await legacy.next((message) => message.kind === "telemetry")).toMatchObject({
+      kind: "telemetry",
+    });
+
+    phone.close();
+    legacy.close();
   });
 });

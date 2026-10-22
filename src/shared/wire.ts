@@ -114,8 +114,21 @@ export type TransferControlMessage =
     };
 
 export type RelayMessage =
-  | { v: 1; kind: "hello"; challenge: string; maxPayloadBytes: number }
-  | { v: 1; kind: "auth"; deviceId: string; proof: string }
+  /** `features` names optional protocol behaviour this Relay understands. */
+  | {
+      v: 1;
+      kind: "hello";
+      challenge: string;
+      maxPayloadBytes: number;
+      features?: RelayFeature[];
+    }
+  | {
+      v: 1;
+      kind: "auth";
+      deviceId: string;
+      proof: string;
+      features?: string[];
+    }
   | { v: 1; kind: "auth_ok"; health?: RelayHealth }
   | { v: 1; kind: "health"; health: RelayHealth }
   | LaptopTelemetry
@@ -128,7 +141,15 @@ export type RelayMessage =
   /** `stale` marks a frame the pool dropped because it already held a newer one. */
   | { v: 1; kind: "ack"; ts: number; stale?: true }
   | TransferControlMessage
+  /**
+   * The phone wants laptop telemetry only while someone is looking at it. A
+   * device that advertised `telemetry_subscribe` starts unsubscribed; one that
+   * did not is subscribed for its whole session, as before the feature.
+   */
+  | { v: 1; kind: "telemetry_subscribe"; active: boolean }
   | { v: 1; kind: "error"; code: string; message: string };
+
+export type RelayFeature = "telemetry_subscribe";
 
 export function isPayloadFrame(value: unknown): value is PayloadFrame {
   if (!value || typeof value !== "object") return false;
