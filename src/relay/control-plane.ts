@@ -193,6 +193,12 @@ async function enqueueTransfers(
   if (!context.enqueueLaptopFiles) {
     return Response.json({ code: "enqueue_unavailable" }, { status: 503 });
   }
+  // A JSON content type cannot be sent cross-site without a CORS preflight,
+  // which the Relay never answers. text/plain could be.
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
+    return Response.json({ code: "unsupported_media_type" }, { status: 415 });
+  }
   let body: unknown;
   try {
     body = await request.json();

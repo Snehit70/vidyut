@@ -4,6 +4,10 @@ import {
   type PairingSecretRef,
 } from "./config";
 import { handleControlRequest, isControlPath } from "./control-plane";
+import {
+  isTrustedWebSocketOrigin,
+  rejectUntrustedControlRequest,
+} from "./local-origin";
 import { noopLogger, type Logger } from "./logger";
 import { getPairingHost } from "./network";
 import { PayloadPool } from "./payload-pool";
@@ -144,6 +148,15 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       const address = bunServer.requestIP(request);
       const now = Date.now();
       if (
+        request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+        !isTrustedWebSocketOrigin(request.headers.get("origin"), bunServer.port ?? options.port)
+      ) {
+        logger.warn("websocket_origin_rejected", {
+          remote: address ? `${address.address}:${address.port}` : "unknown",
+        });
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (
         bunServer.upgrade(request, {
           data: {
             connId: randomConnId(),
@@ -181,6 +194,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         const port = bunServer.port;
         if (port === undefined) {
           return new Response("Relay has no listen port.", { status: 500 });
+        }
+        const rejection = rejectUntrustedControlRequest(request, port);
+        if (rejection) {
+          logger.warn("control_request_rejected", { method: request.method, pathname });
+          return rejection;
         }
         return handleControlRequest(request, {
           pairingSecret,

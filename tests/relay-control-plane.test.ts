@@ -408,3 +408,114 @@ describe("desktop shell content security policy", () => {
     expect(local.headers.get("referrer-policy")).toBe("no-referrer");
   });
 });
+
+describe("control plane rejects browser callers from other origins", () => {
+  test("a rebound Host header cannot read the pairing secret", async () => {
+    const handle = await startRelay();
+    const rebound = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+      headers: { host: "evil.example" },
+    });
+    expect(rebound.status).toBe(403);
+    expect(await rebound.text()).not.toContain(secret);
+
+    const port = new URL(handle.url.replace("ws://", "http://")).port;
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, "localhost"]) {
+      const local = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+        headers: { host },
+      });
+      expect(local.status).toBe(200);
+    }
+    const wrongPort = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+      headers: { host: "127.0.0.1:1" },
+    });
+    expect(wrongPort.status).toBe(403);
+  });
+
+  test("a cross-site simple POST cannot rotate the secret or enqueue files", async () => {
+    const seen: string[][] = [];
+    const persisted: string[] = [];
+    const handle = await startRelay({
+      enqueueLaptopFiles: async (paths) => {
+        seen.push(paths);
+        return { transferId: "transfer_enqueued" };
+      },
+      persistPairingSecret: async (next) => {
+        persisted.push(next);
+      },
+    });
+    const rotate = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { origin: "https://evil.example", "content-type": "text/plain" },
+    });
+    expect(rotate.status).toBe(403);
+
+    const crossSite = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { "sec-fetch-site": "cross-site" },
+    });
+    expect(crossSite.status).toBe(403);
+    expect(persisted).toEqual([]);
+
+    const plainText = await fetchPath(
+      handle,
+      "127.0.0.1",
+      "/control/v1/transfers/enqueue",
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ paths: ["/etc/hostname"] }),
+      },
+    );
+    expect(plainText.status).toBe(415);
+    expect(seen).toEqual([]);
+  });
+
+  test("the shell's own same-origin POST still rotates the secret", async () => {
+    const handle = await startRelay({ persistPairingSecret: async () => undefined });
+    const port = new URL(handle.url.replace("ws://", "http://")).port;
+    const rotate = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" },
+    });
+    expect(rotate.status).toBe(200);
+  });
+
+  test("a WebSocket handshake from a foreign origin is refused", async () => {
+    const handle = await startRelay();
+    const port = Number(new URL(handle.url.replace("ws://", "http://")).port);
+    const handshake = (origin?: string) =>
+      rawHandshakeStatus(port, origin);
+    expect(await handshake("https://evil.example")).toBe(403);
+    expect(await handshake(`http://127.0.0.1:${port}`)).toBe(101);
+    // The phone's dart:io client sends no Origin at all.
+    expect(await handshake()).toBe(101);
+  });
+});
+
+// Bun's WebSocket client does not let a test set Origin, so speak the
+// handshake by hand and read only the status line.
+async function rawHandshakeStatus(port: number, origin?: string): Promise<number> {
+  const { connect } = await import("node:net");
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        [
+          "GET / HTTP/1.1",
+          `Host: 127.0.0.1:${port}`,
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version: 13",
+          ...(origin ? [`Origin: ${origin}`] : []),
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    socket.once("data", (chunk) => {
+      socket.destroy();
+      resolve(Number(String(chunk).split(" ")[1]));
+    });
+    socket.once("error", reject);
+  });
+}
