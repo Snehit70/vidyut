@@ -64,6 +64,10 @@ export async function connectDevice(options: ConnectDeviceOptions): Promise<Conn
         authSettled = true;
         reject(new Error(event.reason || "connection_closed"));
       }
+      // A publish in flight never gets its ack once the socket is gone.
+      for (const waiter of publishWaiters.splice(0)) {
+        waiter.reject(new Error(`connection_closed (${event.code})`));
+      }
     });
     socket.addEventListener("error", () => {
       if (!authSettled) {

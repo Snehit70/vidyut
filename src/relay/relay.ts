@@ -231,6 +231,12 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       return new Response("Vidyut relay", { status: 200 });
     },
     websocket: {
+      // Bun's default cap is 16 MiB per message, and a publish carries the
+      // ciphertext as base64 inside JSON, so the default silently dropped the
+      // socket (1006) for anything over ~12 MiB of plaintext. Size the cap from
+      // maxPayloadBytes so an over-limit frame reaches the payload_too_large
+      // check below instead.
+      maxPayloadLength: websocketMessageLimit(options.maxPayloadBytes),
       open(socket) {
         devices.add(socket);
         logger.info("device_connected", { connId: socket.data.connId, remote: socket.data.remote });
@@ -395,6 +401,12 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       devices.clear();
     },
   };
+}
+
+const websocketEnvelopeBytes = 64 * 1024;
+
+export function websocketMessageLimit(maxPayloadBytes: number): number {
+  return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
 }
 
 function notifyDeviceDisconnected(

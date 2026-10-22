@@ -257,4 +257,33 @@ describe("relay protocol", () => {
 
     laptop.close();
   });
+
+  test("accepts payloads past Bun's 16 MiB default message cap", async () => {
+    await relay.stop();
+    const maxPayloadBytes = 20 * 1024 * 1024;
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes,
+    });
+    const laptop = await connectDevice({ url: relay.url, pairingSecret: secret, deviceId: "laptop" });
+    const metadata = { type: "image" as const, mime: "image/png", origin: "laptop" };
+    // 18 MiB of ciphertext is ~24 MiB of base64 on the wire.
+    const fits = await encryptPayload(
+      { ...metadata, ts: 1_800_000_000_040 },
+      new Uint8Array(18 * 1024 * 1024),
+      secret,
+    );
+    await expect(laptop.publish(fits)).resolves.toBeUndefined();
+
+    const over = await encryptPayload(
+      { ...metadata, ts: 1_800_000_000_041 },
+      new Uint8Array(maxPayloadBytes + 1024),
+      secret,
+    );
+    await expect(laptop.publish(over)).rejects.toThrow(/payload_too_large/);
+
+    laptop.close();
+  });
 });
