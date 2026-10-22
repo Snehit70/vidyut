@@ -119,9 +119,14 @@ export type RelayMessage =
   | { v: 1; kind: "auth_ok"; health?: RelayHealth }
   | { v: 1; kind: "health"; health: RelayHealth }
   | LaptopTelemetry
-  | { v: 1; kind: "publish"; frame: PayloadFrame }
+  /**
+   * `sentAt` is the sender's clock at send time. The Relay uses it to map
+   * `frame.ts` onto its own clock before ordering. Absent from older phones.
+   */
+  | { v: 1; kind: "publish"; frame: PayloadFrame; sentAt?: number }
   | { v: 1; kind: "payload"; frame: PayloadFrame }
-  | { v: 1; kind: "ack"; ts: number }
+  /** `stale` marks a frame the pool dropped because it already held a newer one. */
+  | { v: 1; kind: "ack"; ts: number; stale?: true }
   | TransferControlMessage
   | { v: 1; kind: "error"; code: string; message: string };
 

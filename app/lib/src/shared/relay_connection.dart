@@ -128,6 +128,7 @@ class RelayConnection implements RelaySession {
     required this.deviceId,
     required this.transport,
     this.closeTimeout = defaultCloseTimeout,
+    this.clock = DateTime.now,
   });
 
   /// Mirrors the relay's `defaultMaxPayloadBytes` (25MiB); the fallback until
@@ -144,6 +145,11 @@ class RelayConnection implements RelaySession {
   final String deviceId;
   final RelayTransport transport;
   final Duration closeTimeout;
+
+  /// Stamps `sentAt` on each publish so the relay can map `frame.ts` onto its
+  /// own clock before ordering (a phone clock that drifts must not decide
+  /// which copy wins).
+  final DateTime Function() clock;
 
   final _status = StreamController<ConnectionStatus>.broadcast();
   final _payloads = StreamController<PayloadFrame>.broadcast();
@@ -204,7 +210,12 @@ class RelayConnection implements RelaySession {
 
   @override
   void publish(PayloadFrame frame) {
-    transport.send({'v': 1, 'kind': 'publish', 'frame': frame.toJson()});
+    transport.send({
+      'v': 1,
+      'kind': 'publish',
+      'frame': frame.toJson(),
+      'sentAt': clock().millisecondsSinceEpoch,
+    });
   }
 
   void sendTransferControl(Map<String, Object?> message) {
@@ -272,6 +283,16 @@ class RelayConnection implements RelaySession {
         _payloads.add(PayloadFrame.fromJson(message['frame']));
       case 'ack':
         final ts = message['ts'];
+        if (message['stale'] == true) {
+          // Still an ack: the relay has the frame and a retry would lose the
+          // same race, so pending sends clear as usual.
+          _events.add(
+            const RelayEvent(
+              'Laptop already had a newer clipboard; this copy was not applied.',
+              code: 'stale',
+            ),
+          );
+        }
         if (ts is int) _acks.add(ts);
       case String kind when kind.startsWith('transfer_'):
         _transferControls.add(message);

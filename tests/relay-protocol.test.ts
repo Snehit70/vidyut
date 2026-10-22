@@ -313,4 +313,47 @@ describe("relay protocol", () => {
     await expect(laptop.publish(frame)).resolves.toBeUndefined();
     laptop.close();
   });
+
+  test("orders a phone's frame on the relay clock, not the phone's", async () => {
+    const hour = 60 * 60 * 1000;
+    const phone = await connectRawWebSocket(relay.url);
+    await authenticateRawClient(phone, secret, "phone");
+    const text = (value: string) => new TextEncoder().encode(value);
+    const publishFromPhone = async (copiedAt: number, sentAt: number) => {
+      const frame = await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "phone", ts: copiedAt },
+        text(`phone ${copiedAt}`),
+        secret,
+      );
+      phone.send({ v: 1, kind: "publish", frame, sentAt });
+      return phone.next((message) => message.kind === "ack");
+    };
+
+    // Phone clock an hour ahead. It copied 10s before the laptop did but the
+    // frame arrives after: the laptop's newer copy must win.
+    await relay.pool.publish(
+      await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "laptop", ts: Date.now() },
+        text("laptop"),
+        secret,
+      ),
+      "laptop",
+    );
+    const aheadNow = Date.now() + hour;
+    expect(await publishFromPhone(aheadNow - 10_000, aheadNow)).toMatchObject({
+      kind: "ack",
+      stale: true,
+    });
+    expect(relay.pool.current?.origin).toBe("laptop");
+
+    // Phone clock an hour behind. It copied after the laptop: it must win even
+    // though its ts is an hour older than the laptop's.
+    const behindNow = Date.now() - hour;
+    const ack = await publishFromPhone(behindNow, behindNow);
+    expect(ack).toMatchObject({ kind: "ack", ts: behindNow });
+    expect(ack).not.toHaveProperty("stale");
+    expect(relay.pool.current?.origin).toBe("phone");
+
+    phone.close();
+  });
 });

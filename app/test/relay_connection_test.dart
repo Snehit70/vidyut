@@ -145,6 +145,7 @@ void main() {
       ),
       deviceId: 'phone',
       transport: transport,
+      clock: () => DateTime.fromMillisecondsSinceEpoch(1800000200050),
     );
     const frame = PayloadFrame(
       type: PayloadType.text,
@@ -160,8 +161,36 @@ void main() {
 
     await expectLater(
       transport.sent,
-      emits({'v': 1, 'kind': 'publish', 'frame': frame.toJson()}),
+      emits({
+        'v': 1,
+        'kind': 'publish',
+        'frame': frame.toJson(),
+        'sentAt': 1800000200050,
+      }),
     );
+  });
+
+  test('a stale ack still acks and explains the dropped copy', () async {
+    final transport = FakeRelayTransport();
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+
+    await connection.start();
+    final ack = connection.acks.first;
+    final event = connection.events.first;
+    transport.receive({'v': 1, 'kind': 'ack', 'ts': 42, 'stale': true});
+
+    expect(await ack, 42);
+    final dropped = await event;
+    expect(dropped.code, 'stale');
+    expect(dropped.isError, isFalse);
   });
 
   test('sends and emits typed transfer control messages', () async {

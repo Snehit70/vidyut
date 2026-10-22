@@ -141,6 +141,14 @@ swallows the first `wl-paste --watch` fire; every later one is a real change.
 Confirmed on-device: restart no longer re-publishes the clipboard, and a
 screenshot held across a full relay stop/start now republishes and lands.
 
+**Ordering across clocks:** the pool orders by the relay's clock. A phone
+publish carries `sentAt` (the phone's clock at send), and the relay orders the
+frame at `frame.ts + (relayNow - sentAt)`, so phone clock drift no longer
+decides which copy wins. `payload_stale_dropped` logs `clockOffsetMs`. The
+phone gets `{kind: "ack", stale: true}` for a dropped frame and logs "Laptop
+already had a newer clipboard". A verbatim republish (same nonce) of the
+frame the pool already holds is accepted as a no-op.
+
 ## Laptop: `clipboard_write` logs seconds after the payload arrived, acks stall
 
 **Symptom:** A phone payload reaches the relay instantly (`payload_published`

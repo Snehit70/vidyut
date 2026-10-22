@@ -343,16 +343,27 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
 
-        const accepted = await pool.publish(message.frame, socket);
+        const clockOffsetMs = senderClockOffset(message.sentAt);
+        const accepted = await pool.publish(
+          message.frame,
+          socket,
+          message.frame.ts + clockOffsetMs,
+        );
         if (!accepted) {
           logger.warn("payload_stale_dropped", {
             connId: socket.data.connId,
             deviceId: socket.data.deviceId,
             ...frameIdentity(message.frame),
+            clockOffsetMs,
             currentTs: pool.current?.ts,
           });
         }
-        send(socket, { v: 1, kind: "ack", ts: message.frame.ts });
+        send(socket, {
+          v: 1,
+          kind: "ack",
+          ts: message.frame.ts,
+          ...(!accepted && { stale: true as const }),
+        });
       },
       pong(socket) {
         socket.data.lastSeen = Date.now();
@@ -422,6 +433,16 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       devices.clear();
     },
   };
+}
+
+/**
+ * How far the sender's clock is behind the Relay's (negative when ahead),
+ * measured at receipt. Includes the one-way network delay, which is noise at
+ * the scale of clipboard races. Senders that predate `sentAt` get 0.
+ */
+function senderClockOffset(sentAt: unknown): number {
+  if (typeof sentAt !== "number" || !Number.isFinite(sentAt)) return 0;
+  return Date.now() - sentAt;
 }
 
 const websocketEnvelopeBytes = 64 * 1024;
