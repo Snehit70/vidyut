@@ -3,6 +3,11 @@ import type { PayloadFrame, PayloadMetadata } from "./wire";
 const textEncoder = new TextEncoder();
 const kdfSalt = textEncoder.encode("vidyut-v1-pairing-secret");
 const kdfIterations = 200_000;
+// PBKDF2 at 200k iterations costs ~100 ms, and every clipboard copy in either
+// direction derives the same key. Keyed by secret so a rotation derives fresh;
+// the bound keeps a long-running Relay from holding every secret it has used.
+const keyCache = new Map<string, Promise<CryptoKey>>();
+const keyCacheLimit = 4;
 
 export async function encryptPayload(
   metadata: PayloadMetadata,
@@ -43,27 +48,40 @@ export async function decryptPayload(frame: PayloadFrame, pairingSecret: string)
   return new Uint8Array(plaintext);
 }
 
-async function derivePayloadKey(pairingSecret: string): Promise<CryptoKey> {
-  const baseKey = await crypto.subtle.importKey(
-    "raw",
-    textEncoder.encode(pairingSecret),
-    "PBKDF2",
-    false,
-    ["deriveKey"],
-  );
+function derivePayloadKey(pairingSecret: string): Promise<CryptoKey> {
+  const cached = keyCache.get(pairingSecret);
+  if (cached) return cached;
+  const key = (async () => {
+    const baseKey = await crypto.subtle.importKey(
+      "raw",
+      textEncoder.encode(pairingSecret),
+      "PBKDF2",
+      false,
+      ["deriveKey"],
+    );
 
-  return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: kdfSalt,
-      iterations: kdfIterations,
-      hash: "SHA-256",
-    },
-    baseKey,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
+    return crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt: kdfSalt,
+        iterations: kdfIterations,
+        hash: "SHA-256",
+      },
+      baseKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  })();
+  // A failed derivation must not poison every later payload.
+  key.catch(() => {
+    if (keyCache.get(pairingSecret) === key) keyCache.delete(pairingSecret);
+  });
+  keyCache.set(pairingSecret, key);
+  while (keyCache.size > keyCacheLimit) {
+    keyCache.delete(keyCache.keys().next().value as string);
+  }
+  return key;
 }
 
 function associatedData(frame: Omit<PayloadFrame, "payload">): ArrayBuffer {

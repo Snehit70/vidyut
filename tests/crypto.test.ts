@@ -34,4 +34,28 @@ describe("payload crypto", () => {
 
     await expect(decryptPayload({ ...frame, mime: "image/jpeg" }, "pairing-secret")).rejects.toThrow();
   });
+
+  test("derives the key once per secret so repeat payloads skip PBKDF2", async () => {
+    const secret = "pairing-secret-cache-check";
+    const metadata = { type: "text" as const, mime: "text/plain", origin: "laptop", ts: 1_800_000_010_003 };
+    const plaintext = new TextEncoder().encode("x");
+    const first = performance.now();
+    await encryptPayload(metadata, plaintext, secret);
+    const cold = performance.now() - first;
+    const second = performance.now();
+    for (let index = 0; index < 5; index += 1) {
+      await encryptPayload(metadata, plaintext, secret);
+    }
+    const warm = (performance.now() - second) / 5;
+    expect(warm).toBeLessThan(cold / 4);
+  });
+
+  test("a rotated secret still decrypts with its own key", async () => {
+    const metadata = { type: "text" as const, mime: "text/plain", origin: "laptop", ts: 1_800_000_010_004 };
+    const plaintext = new TextEncoder().encode("rotated");
+    await encryptPayload(metadata, plaintext, "before-rotation");
+    const frame = await encryptPayload(metadata, plaintext, "after-rotation");
+    await expect(decryptPayload(frame, "after-rotation")).resolves.toEqual(plaintext);
+    await expect(decryptPayload(frame, "before-rotation")).rejects.toThrow();
+  });
 });
