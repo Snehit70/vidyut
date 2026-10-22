@@ -37,6 +37,7 @@ interface RelayOptions {
   pool?: PayloadPool;
   heartbeatIntervalMs?: number;
   staleAfterMs?: number;
+  authTimeoutMs?: number;
   logger?: Logger;
   clipboardHealth?: () => ClipboardHealth;
   relayName?: string;
@@ -63,6 +64,10 @@ interface RelayOptions {
 
 const defaultHeartbeatIntervalMs = 30_000;
 const defaultStaleAfterMs = 90_000;
+// The phone answers hello within one round trip. A socket that has not proved
+// the secret by now is a scanner or a stuck client, and holding it open only
+// lets it sit on a challenge.
+const defaultAuthTimeoutMs = 10_000;
 
 interface DeviceSocketData {
   connId: string;
@@ -72,6 +77,7 @@ interface DeviceSocketData {
   deviceId?: string;
   connectedAt: number;
   lastSeen: number;
+  authTimer?: ReturnType<typeof setTimeout>;
 }
 
 type RelaySocket = Bun.ServerWebSocket<DeviceSocketData>;
@@ -185,7 +191,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         );
       }
       if (pathname === "/health") {
-        return Response.json(healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.()));
+        const snapshot = healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.());
+        // The detail (device IPs, what was last copied and when) is for the
+        // person at this laptop. Anyone else on the WiFi learns only that a
+        // Relay is up.
+        return Response.json(isLoopback ? snapshot : { status: snapshot.status });
       }
       if (isControlPath(pathname)) {
         if (!isLoopback) {
@@ -240,6 +250,15 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       open(socket) {
         devices.add(socket);
         logger.info("device_connected", { connId: socket.data.connId, remote: socket.data.remote });
+        socket.data.authTimer = setTimeout(() => {
+          if (socket.data.authenticated) return;
+          logger.warn("auth_failed", {
+            connId: socket.data.connId,
+            remote: socket.data.remote,
+            reason: "auth_timeout",
+          });
+          socket.close(1008, "auth_timeout");
+        }, options.authTimeoutMs ?? defaultAuthTimeoutMs);
         send(socket, {
           v: 1,
           kind: "hello",
@@ -265,6 +284,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
           );
           if (socket.data.authenticated) {
+            clearTimeout(socket.data.authTimer);
             notifyDeviceConnected(
               options.deviceConnected,
               socket.data.deviceId,
@@ -343,6 +363,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         socket.data.lastSeen = Date.now();
       },
       close(socket, wsCode, wsReason) {
+        clearTimeout(socket.data.authTimer);
         // A reaped socket was already removed by the heartbeat sweep and got
         // its socket_reaped terminal event; skip it so each connection ends
         // with exactly one terminal event.

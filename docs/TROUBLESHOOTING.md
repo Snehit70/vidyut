@@ -203,7 +203,8 @@ of silently claiming clipboard sync is enabled.
 Use these diagnosis tools:
 
 - One-curl overview: `curl http://localhost:17321/health` — uptime, authenticated
-  devices (with last-seen age), and current pool payload identity/age.
+  devices (with last-seen age), and current pool payload identity/age. Run it
+  on the laptop: from another machine `/health` answers only `{"status":...}`.
 - Live socket check: `ss -tn state established '( sport = :17321 )'`
 - Reconnect cadence monitor: loop `ss` output and log changes (see ticket #26
   resolution for the script).

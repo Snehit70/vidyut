@@ -44,7 +44,12 @@ export interface ProcessRunner {
 
 export interface ClipboardAdapter {
   read(): Promise<ClipboardPayload | undefined>;
-  write(payload: ClipboardPayload): Promise<void>;
+  /**
+   * Resolves with what actually reached the clipboard when that differs from
+   * the input (an image re-encoded to PNG), so echo suppression can recognise
+   * the change the write itself provokes.
+   */
+  write(payload: ClipboardPayload): Promise<ClipboardPayload | void>;
   watch(
     onChange: () => void | Promise<void>,
     onReady?: () => void,
@@ -131,7 +136,10 @@ async function readClipboard(runner: ProcessRunner): Promise<ClipboardPayload | 
   };
 }
 
-async function writeClipboard(runner: ProcessRunner, payload: ClipboardPayload): Promise<void> {
+async function writeClipboard(
+  runner: ProcessRunner,
+  payload: ClipboardPayload,
+): Promise<ClipboardPayload> {
   const { mime, data } = await normalizeImageToPng(runner, payload);
   // Without detachOutput this blocks until the NEXT clipboard change —
   // and everything downstream of the write (the ack to the sender, the
@@ -140,6 +148,7 @@ async function writeClipboard(runner: ProcessRunner, payload: ClipboardPayload):
     detachOutput: true,
   });
   ensureProcessOk(result, `wl-copy --type ${mime}`);
+  return { type: payload.type, mime, data };
 }
 
 /**

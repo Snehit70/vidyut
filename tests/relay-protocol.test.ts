@@ -286,4 +286,31 @@ describe("relay protocol", () => {
 
     laptop.close();
   });
+
+  test("closes a socket that never authenticates", async () => {
+    await relay.stop();
+    relay = await createRelay({
+      hostname: "127.0.0.1",
+      port: 0,
+      pairingSecret: secret,
+      maxPayloadBytes: 1024,
+      authTimeoutMs: 50,
+    });
+    const socket = new WebSocket(relay.url);
+    const closed = await new Promise<{ code: number; reason: string }>((resolve) => {
+      socket.addEventListener("close", (event) => resolve({ code: event.code, reason: event.reason }));
+    });
+    expect(closed).toEqual({ code: 1008, reason: "auth_timeout" });
+
+    // An authenticated device outlives the deadline.
+    const laptop = await connectDevice({ url: relay.url, pairingSecret: secret, deviceId: "laptop" });
+    await Bun.sleep(120);
+    const frame = await encryptPayload(
+      { type: "text", mime: "text/plain", origin: "laptop", ts: 1_800_000_000_050 },
+      new TextEncoder().encode("hi"),
+      secret,
+    );
+    await expect(laptop.publish(frame)).resolves.toBeUndefined();
+    laptop.close();
+  });
 });

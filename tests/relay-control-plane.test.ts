@@ -191,6 +191,15 @@ describe("relay loopback control plane", () => {
     }
   });
 
+  test("LAN /health says only whether the relay is up", async () => {
+    const handle = await startRelay();
+    const response = await fetchPath(handle, lanClientHost(), "/health");
+    expect(await response.json()).toEqual({ status: "ok" });
+    const local = await (await fetchPath(handle, "127.0.0.1", "/health")).json();
+    expect(local).toHaveProperty("devices");
+    expect(local).toHaveProperty("pool");
+  });
+
   test("POST /control/v1/rotate-secret persists a new secret and rejects the old one", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-rotate-"));
     const path = join(dir, "relay.json");
