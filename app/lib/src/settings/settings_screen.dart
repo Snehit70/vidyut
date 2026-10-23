@@ -94,6 +94,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _settings = widget.settings;
   int? _issueCount;
+  bool _isMiui = false;
   String? _appVersion;
   bool _checkingForUpdates = false;
 
@@ -136,7 +137,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final loader = widget.setupLoader;
     if (loader == null) return;
     final status = await loader.load();
-    if (mounted) setState(() => _issueCount = status.issueCount);
+    if (!mounted) return;
+    setState(() {
+      _issueCount = status.issueCount;
+      _isMiui = status.isMiui;
+    });
   }
 
   Future<void> _openChecklist() async {
@@ -213,33 +218,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (selected != null) {
       await _updateSettings(_settings.copyWith(maxTransferFileBytes: selected));
-    }
-  }
-
-  Future<void> _chooseThemeMode() async {
-    final selected = await showModalBottomSheet<AppThemeMode>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: RadioGroup<AppThemeMode>(
-          groupValue: _settings.themeMode,
-          onChanged: (value) => Navigator.pop(context, value),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final mode in AppThemeMode.values)
-                RadioListTile<AppThemeMode>(
-                  value: mode,
-                  title: Text(mode.label),
-                  subtitle: Text(mode.description),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (selected != null) {
-      await _updateSettings(_settings.copyWith(themeMode: selected));
     }
   }
 
@@ -413,40 +391,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pairedDevice = widget.paired
-        ? ListTile(
-            contentPadding: _rowPadding,
-            leading: const Icon(Icons.laptop_mac_outlined),
-            title: Text(widget.pairedDeviceName ?? 'Paired laptop'),
-            subtitle: Text(widget.pairedDeviceAddress ?? 'Connected locally'),
-          )
-        : null;
+    final scheme = Theme.of(context).colorScheme;
+    final canForget = widget.paired && widget.onForgetPairing != null;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          _SettingsSection(
-            title: 'Appearance',
-            children: [
-              ListTile(
-                contentPadding: _rowPadding,
-                leading: Icon(switch (_settings.themeMode) {
-                  AppThemeMode.system => Icons.brightness_auto_outlined,
-                  AppThemeMode.light => Icons.light_mode_outlined,
-                  AppThemeMode.dark => Icons.dark_mode_outlined,
-                }),
-                title: const Text('Theme'),
-                subtitle: Text(_settings.themeMode.label),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _chooseThemeMode,
+          // Setup problems stop everything else from working, so they lead the
+          // page while there are any and take no room otherwise.
+          if ((_issueCount ?? 0) > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _SetupBanner(
+                issueCount: _issueCount!,
+                onTap: () => unawaited(_openChecklist()),
               ),
-            ],
-          ),
+            ),
           _SettingsSection(
             title: 'Connection',
             children: [
+              if (widget.paired)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  leading: const Icon(Icons.laptop_mac_outlined),
+                  title: Text(widget.pairedDeviceName ?? 'Paired laptop'),
+                  subtitle: Text(
+                    widget.pairedDeviceAddress ?? 'Connected locally',
+                  ),
+                ),
               // Master switch: it governs all syncing (ADR 0006).
               SwitchListTile(
                 contentPadding: _rowPadding,
@@ -459,11 +433,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _settings.copyWith(showPersistentSendNotification: value),
                 ),
               ),
-              ?pairedDevice,
+              if (widget.paired && widget.onBrowseLaptop != null)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  title: const Text('Laptop folders'),
+                  subtitle: const Text(
+                    'Browse and download from the laptop\'s shared folders.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: widget.onBrowseLaptop,
+                ),
+              if (canForget)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  leading: Icon(Icons.link_off, color: scheme.error),
+                  title: Text(
+                    'Forget this laptop',
+                    style: TextStyle(color: scheme.error),
+                  ),
+                  subtitle: const Text('Delete this pairing and stop syncing.'),
+                  onTap: () => unawaited(_confirmForget()),
+                ),
             ],
           ),
           _SettingsSection(
-            title: 'Clipboard & screenshots',
+            title: 'Automatic sending',
             children: [
               SwitchListTile(
                 contentPadding: _rowPadding,
@@ -501,18 +495,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
           _SettingsSection(
-            title: 'Files',
+            title: 'Receiving files',
             children: [
-              if (widget.paired && widget.onBrowseLaptop != null)
-                ListTile(
-                  contentPadding: _rowPadding,
-                  title: const Text('Laptop folders'),
-                  subtitle: const Text(
-                    'Browse and download from the laptop\'s shared folders.',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: widget.onBrowseLaptop,
-                ),
               SwitchListTile(
                 contentPadding: _rowPadding,
                 value: _settings.receiveFiles,
@@ -550,6 +534,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _settings.copyWith(allowMeteredFileTransfers: value),
                 ),
               ),
+            ],
+          ),
+          _SettingsSection(
+            title: 'Notifications',
+            children: [
+              SwitchListTile(
+                contentPadding: _rowPadding,
+                value: _settings.showReceiveNotifications,
+                title: const Text('Notify when something arrives'),
+                subtitle: const Text(
+                  'Show a notification when text or a link arrives from the laptop.',
+                ),
+                onChanged: (value) => _updateSettings(
+                  _settings.copyWith(showReceiveNotifications: value),
+                ),
+              ),
               SwitchListTile(
                 contentPadding: _rowPadding,
                 value: _settings.fileTransferAlerts,
@@ -564,17 +564,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
           _SettingsSection(
-            title: 'Notifications',
+            title: 'Appearance',
             children: [
-              SwitchListTile(
-                contentPadding: _rowPadding,
-                value: _settings.showReceiveNotifications,
-                title: const Text('Notify when laptop payloads arrive'),
-                subtitle: const Text(
-                  'Show a receipt when something arrives from the laptop.',
-                ),
-                onChanged: (value) => _updateSettings(
-                  _settings.copyWith(showReceiveNotifications: value),
+              Padding(
+                padding: _rowPadding,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SegmentedButton<AppThemeMode>(
+                        showSelectedIcon: false,
+                        segments: [
+                          for (final mode in AppThemeMode.values)
+                            ButtonSegment(
+                              value: mode,
+                              label: Text(mode.label),
+                              icon: Icon(switch (mode) {
+                                AppThemeMode.system =>
+                                  Icons.brightness_auto_outlined,
+                                AppThemeMode.light => Icons.light_mode_outlined,
+                                AppThemeMode.dark => Icons.dark_mode_outlined,
+                              }),
+                            ),
+                        ],
+                        selected: {_settings.themeMode},
+                        onSelectionChanged: (selection) => _updateSettings(
+                          _settings.copyWith(themeMode: selection.first),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -586,8 +604,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   contentPadding: _rowPadding,
                   title: const Text('Setup status'),
-                  subtitle: const Text(
-                    'Permissions, battery, and Xiaomi switches.',
+                  subtitle: Text(
+                    _isMiui
+                        ? 'Permissions, battery, and Xiaomi switches.'
+                        : 'Permissions and battery.',
                   ),
                   trailing: _SummaryChip(issueCount: _issueCount),
                   onTap: () => unawaited(_openChecklist()),
@@ -641,27 +661,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
-              ],
-            ),
-          if (widget.paired && widget.onForgetPairing != null)
-            _SettingsSection(
-              title: 'Danger zone',
-              children: [
-                ListTile(
-                  contentPadding: _rowPadding,
-                  leading: Icon(
-                    Icons.link_off,
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                  title: Text(
-                    'Forget this laptop',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                  subtitle: const Text('Delete this pairing and stop syncing.'),
-                  onTap: () => unawaited(_confirmForget()),
-                ),
               ],
             ),
         ],
@@ -989,6 +988,41 @@ class _SectionHeader extends StatelessWidget {
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
+      ),
+    );
+  }
+}
+
+/// Leads the page while setup has open items, so a broken permission is not
+/// something to go looking for under Troubleshooting.
+class _SetupBanner extends StatelessWidget {
+  const _SetupBanner({required this.issueCount, required this.onTap});
+
+  final int issueCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primaryContainer,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        contentPadding: _rowPadding,
+        leading: Icon(Icons.rule, color: scheme.onPrimaryContainer),
+        title: Text(
+          issueCount == 1
+              ? '1 setup item needs attention'
+              : '$issueCount setup items need attention',
+          style: TextStyle(color: scheme.onPrimaryContainer),
+        ),
+        subtitle: Text(
+          'Vidyut may not sync reliably until these are fixed.',
+          style: TextStyle(color: scheme.onPrimaryContainer),
+        ),
+        trailing: Icon(Icons.chevron_right, color: scheme.onPrimaryContainer),
+        onTap: onTap,
       ),
     );
   }

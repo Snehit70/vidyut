@@ -74,7 +74,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.text('Send files'), findsOneWidget);
+    expect(find.text('Send clipboard or link'), findsOneWidget);
   });
 
   testWidgets('loads existing pairing from storage', (tester) async {
@@ -99,7 +99,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.text('Send files'), findsOneWidget);
+    expect(find.text('Send clipboard or link'), findsOneWidget);
   });
 
   testWidgets('asks for laptop telemetry only while home is on screen', (
@@ -249,7 +249,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Searching'), findsOneWidget);
-    expect(find.text('Send files'), findsOneWidget);
+    expect(find.text('Send clipboard or link'), findsOneWidget);
   });
 
   testWidgets('shows guidance when no relays are discovered', (tester) async {
@@ -297,18 +297,17 @@ void main() {
 
     expect(find.text('Settings'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('Notify when laptop payloads arrive'),
+      find.text('Notify when something arrives'),
       300,
     );
-    expect(find.text('Notify when laptop payloads arrive'), findsOneWidget);
+    expect(find.text('Notify when something arrives'), findsOneWidget);
 
     await tester.ensureVisible(
-      find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
+      find.widgetWithText(SwitchListTile, 'Notify when something arrives'),
     );
-    await tester.drag(find.byType(ListView), const Offset(0, -96));
     await tester.pumpAndSettle();
     await tester.tap(
-      find.widgetWithText(SwitchListTile, 'Notify when laptop payloads arrive'),
+      find.widgetWithText(SwitchListTile, 'Notify when something arrives'),
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Sync with laptop'), -300);
@@ -346,9 +345,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Theme'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Dark').last);
+    await tester.scrollUntilVisible(find.text('Dark'), 300);
+    await tester.tap(find.text('Dark'));
     await tester.pumpAndSettle();
 
     expect(

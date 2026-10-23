@@ -90,8 +90,9 @@ it. Screenshots and share-sheet push already cover the zero-/one-tap story witho
 
 ## The home screen
 
-The paired home is a **buttonless status dashboard** — there's nothing to press, it just
-tells you the truth:
+The paired home is a status dashboard with one action, **Send clipboard or link**, which
+sends whatever text or link you last copied. Files has its own entry in the app bar. The
+rest of the page just tells you the truth:
 
 - **Connected / status ring** — whether the phone and laptop currently share a clipboard.
 - **Last activity** — the most recent payload, its type/size, direction, and when.
@@ -102,18 +103,28 @@ Everything else lives behind the **gear icon → Settings**.
 
 ## Settings at a glance
 
-- **Auto-send screenshots** — the screenshot auto-push toggle.
-- **Verification codes** — send one-time codes from phone notifications to the
-  laptop clipboard (needs notification access).
-- **Notify when laptop payloads arrive** — receipt notifications on/off (delivery-failure
-  notices always show).
-- **Setup status** — the live permission/OEM checklist; your recovery surface when
-  something stops working.
-- **Advanced** — the opt-in READ_LOGS text auto-send (one-time computer setup).
-- **Debug log** — timestamped connection and payload events, newest first. This is where
-  you look first when sync misbehaves (Flutter logs don't reach `logcat`).
-- **Forget this laptop** (Danger zone) — deletes the pairing and stops syncing. Use it to
-  move to a new laptop or revoke a device, then re-pair from scratch.
+Settings is grouped by what the rows do, in this order.
+
+- **Setup banner** — appears at the top only while permissions or battery
+  settings need attention. Tap it to open the checklist.
+- **Connection** — the paired laptop, the **Sync with laptop** master switch,
+  **Laptop folders** (browse the laptop from the phone), and **Forget this
+  laptop**, which deletes the pairing and stops syncing. Use it to move to a new
+  laptop or revoke a device, then re-pair from scratch.
+- **Automatic sending** — screenshot auto-push, the opt-in READ_LOGS text
+  auto-send (one-time computer setup), and **Verification codes**, which send
+  one-time codes from phone notifications to the laptop clipboard (needs
+  notification access).
+- **Receiving files** — receive on/off, where files are saved, the maximum file
+  size, and whether to use metered Wi-Fi.
+- **Notifications** — **Notify when something arrives** and **File transfer
+  alerts** (delivery-failure notices always show).
+- **Appearance** — System, Light or Dark in one tap.
+- **Troubleshooting** — **Setup status**, the live permission/OEM checklist and
+  your recovery surface when something stops working, and the **Debug log**,
+  timestamped connection and payload events, newest first. This is where you
+  look first when sync misbehaves (Flutter logs don't reach `logcat`).
+- **About** — the running build, update check and what's new.
 
 ---
 
@@ -160,7 +171,7 @@ Field-verified symptom → cause → fix entries live in
 
 On Android, open **Files** in Vidyut and tap **Send files**, or share one or
 more files to Vidyut from another app. Received files appear in
-`Downloads/Vidyut` by default; change the folder under **Settings → Files**.
+`Downloads/Vidyut` by default; change the folder under **Settings → Receiving files**.
 
 On Linux, select files in Dolphin or Nautilus and choose **Send with Vidyut**,
 or use **Send files** in the desktop shell or tray. From a terminal:
@@ -176,7 +187,7 @@ with SHA-256 before they become visible.
 
 ### Pull files from the laptop
 
-In **Files**, tap **Laptop** (or **Laptop folders** in Settings) to browse the
+In **Files**, tap **Browse your laptop's folders** (or **Laptop folders** in Settings) to browse the
 laptop's shared folders. Tap a folder to open it, and the download button on a
 row to pull that file or the whole folder. Long-press to pick several. The
 download button in the top bar pulls the folder you are in. Pulled files

@@ -21,7 +21,7 @@ void main() {
     var settingsOpened = false;
     var activityOpened = false;
     var detailsOpened = false;
-    var sendFilesPressed = false;
+    var sendClipboardPressed = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -43,14 +43,14 @@ void main() {
           onOpenSettings: () => settingsOpened = true,
           onOpenRecentActivity: () => activityOpened = true,
           onOpenConnectionDetails: () => detailsOpened = true,
-          onSendFiles: () => sendFilesPressed = true,
+          onSendClipboard: () => sendClipboardPressed = true,
         ),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('Ready'), findsOneWidget);
-    expect(find.text('Send files'), findsOneWidget);
+    expect(find.text('Send clipboard or link'), findsOneWidget);
     expect(find.text('Latest activity'), findsOneWidget);
     expect(find.text('text (42 chars) from laptop · just now'), findsOneWidget);
     expect(find.text('Setup'), findsNothing);
@@ -58,13 +58,13 @@ void main() {
     expect(find.text('192.168.1.20:17321'), findsNothing);
     expect(find.byType(NavigationBar), findsNothing);
 
-    await tester.tap(find.text('Send files'));
+    await tester.tap(find.text('Send clipboard or link'));
     await tester.tap(find.byTooltip('Files'));
     await tester.tap(find.byTooltip('Settings'));
     await tester.tap(find.text('Latest activity'));
     await tester.tap(find.text('Ready'));
 
-    expect(sendFilesPressed, isTrue);
+    expect(sendClipboardPressed, isTrue);
     expect(filesOpened, isTrue);
     expect(settingsOpened, isTrue);
     expect(activityOpened, isTrue);
@@ -95,7 +95,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -133,7 +133,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -171,7 +171,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -207,7 +207,7 @@ void main() {
             onOpenSettings: () {},
             onOpenRecentActivity: () {},
             onOpenConnectionDetails: () {},
-            onSendFiles: () {},
+            onSendClipboard: () {},
           ),
         ),
       );
@@ -260,7 +260,7 @@ void main() {
               onOpenSettings: () {},
               onOpenRecentActivity: () {},
               onOpenConnectionDetails: () {},
-              onSendFiles: () {},
+              onSendClipboard: () {},
             ),
           ),
         );
@@ -289,7 +289,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -330,7 +330,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -378,7 +378,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -423,7 +423,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -470,7 +470,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -516,13 +516,14 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    Rect rectOf(String name) => tester.getRect(find.byKey(Key('telemetry-$name')));
+    Rect rectOf(String name) =>
+        tester.getRect(find.byKey(Key('telemetry-$name')));
     double topOf(String name) => rectOf(name).top;
     double bottomOf(String name) => rectOf(name).bottom;
 
@@ -567,7 +568,7 @@ void main() {
             onOpenSettings: () {},
             onOpenRecentActivity: () {},
             onOpenConnectionDetails: () {},
-            onSendFiles: () {},
+            onSendClipboard: () {},
           ),
         ),
       );
@@ -609,7 +610,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -647,7 +648,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );
@@ -682,7 +683,7 @@ void main() {
           onOpenSettings: () {},
           onOpenRecentActivity: () {},
           onOpenConnectionDetails: () {},
-          onSendFiles: () {},
+          onSendClipboard: () {},
         ),
       ),
     );

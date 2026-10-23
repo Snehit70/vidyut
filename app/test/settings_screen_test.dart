@@ -4,9 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/design/widgets.dart';
 import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/debug/debug_log.dart';
+import 'package:vidyut/src/onboarding/setup_actions.dart';
+import 'package:vidyut/src/onboarding/setup_checklist_screen.dart';
+import 'package:vidyut/src/pairing/pairing_repository.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
+import 'package:vidyut/src/settings/app_settings_repository.dart';
 import 'package:vidyut/src/settings/settings_screen.dart';
 import 'package:vidyut/src/update/github_update_checker.dart';
+
+import 'onboarding_test.dart' show FakeSetupActions;
 
 /// A checker that answers with a fixed outcome and counts calls, so a test can
 /// assert both what About says and that the check ran without a tap.
@@ -100,16 +106,20 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Theme'), findsOneWidget);
     expect(find.text('Sync with laptop'), findsOneWidget);
     expect(find.text('Connection'), findsOneWidget);
-    expect(find.text('Clipboard & screenshots'), findsOneWidget);
+    expect(find.text('Automatic sending'), findsOneWidget);
     expect(find.text('Desk laptop'), findsOneWidget);
     expect(find.text('192.168.1.5:17321'), findsOneWidget);
     expect(find.byType(Card), findsNothing);
     expect(find.byType(Entrance), findsNothing);
 
+    await tester.scrollUntilVisible(
+      find.text('Appearance'),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+    expect(find.text('Appearance'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Troubleshooting'),
       500,
@@ -152,6 +162,139 @@ void main() {
     await tester.tap(find.text('Laptop folders'));
     await tester.pump();
     expect(opened, 1);
+  });
+
+  testWidgets(
+    'groups settings by what they do and keeps forget with the laptop',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: SettingsScreen(
+            settings: const AppSettings(),
+            onChanged: (_) async {},
+            debugLog: DebugLog(),
+            paired: true,
+            onForgetPairing: () async {},
+            onBrowseLaptop: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      double top(String text) => tester.getTopLeft(find.text(text)).dy;
+      final headings = [
+        'Connection',
+        'Automatic sending',
+        'Receiving files',
+        'Notifications',
+        'Appearance',
+        'Troubleshooting',
+      ];
+      for (var i = 1; i < headings.length; i++) {
+        expect(top(headings[i]), greaterThan(top(headings[i - 1])));
+      }
+
+      // The laptop's own rows sit together, destructive one last.
+      expect(top('Sync with laptop'), lessThan(top('Laptop folders')));
+      expect(top('Laptop folders'), lessThan(top('Forget this laptop')));
+      expect(top('Forget this laptop'), lessThan(top('Automatic sending')));
+      expect(find.text('Danger zone'), findsNothing);
+
+      // Both alerts live under Notifications.
+      for (final alert in [
+        'Notify when something arrives',
+        'File transfer alerts',
+      ]) {
+        expect(top(alert), greaterThan(top('Notifications')));
+        expect(top(alert), lessThan(top('Appearance')));
+      }
+      expect(find.textContaining('payloads arrive'), findsNothing);
+    },
+  );
+
+  testWidgets('theme is one tap on an inline choice', (tester) async {
+    AppSettings? saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVidyutTheme(),
+        home: SettingsScreen(
+          settings: const AppSettings(),
+          onChanged: (next) async => saved = next,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.scrollUntilVisible(
+      find.text('Dark'),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+
+    await tester.ensureVisible(find.text('Dark'));
+    await tester.pump();
+    await tester.tap(find.text('Dark'));
+    await tester.pump();
+
+    expect(saved?.themeMode, AppThemeMode.dark);
+  });
+
+  group('setup status', () {
+    SetupStatusLoader loaderFor(FakeSetupActions actions) => SetupStatusLoader(
+      actions: actions,
+      settingsRepository: AppSettingsRepository(MemoryAppSettingsStorage()),
+      pairingRepository: PairingRepository(MemoryPairingStorage()),
+    );
+
+    Future<void> pumpWith(WidgetTester tester, SetupStatusLoader loader) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: SettingsScreen(
+            settings: const AppSettings(),
+            onChanged: (_) async {},
+            setupLoader: loader,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('leads the page while something needs attention', (
+      tester,
+    ) async {
+      await pumpWith(tester, loaderFor(FakeSetupActions()));
+
+      final banner = find.textContaining('setup items need attention');
+      expect(banner, findsOneWidget);
+      expect(
+        tester.getTopLeft(banner).dy,
+        lessThan(tester.getTopLeft(find.text('Connection')).dy),
+      );
+
+      await tester.tap(banner);
+      await tester.pumpAndSettle();
+      expect(find.byType(SetupChecklistScreen), findsOneWidget);
+    });
+
+    testWidgets('names Xiaomi switches only on a Xiaomi phone', (tester) async {
+      await pumpWith(tester, loaderFor(FakeSetupActions()));
+      expect(find.text('Permissions and battery.'), findsOneWidget);
+
+      // A fresh tree: the screen reads the loader once, when it opens.
+      await tester.pumpWidget(const SizedBox());
+      await pumpWith(tester, loaderFor(FakeSetupActions()..miui = true));
+      expect(
+        find.text('Permissions, battery, and Xiaomi switches.'),
+        findsOneWidget,
+      );
+    });
   });
 
   testWidgets('shared entrance and press motion respect reduced motion', (

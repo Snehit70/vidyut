@@ -438,7 +438,8 @@ class _PairingScreenState extends State<PairingScreen>
         counterpart: _knownCounterpart,
         timestamp: DateTime.now(),
         outcome: outcome,
-        excerpt: payload.type == SharePayloadType.text ||
+        excerpt:
+            payload.type == SharePayloadType.text ||
                 payload.type == SharePayloadType.link
             ? payload.text
             : null,
@@ -827,7 +828,7 @@ class _PairingScreenState extends State<PairingScreen>
         onOpenSettings: () => unawaited(_openSettings()),
         onOpenRecentActivity: () => unawaited(_openRecentActivity()),
         onOpenConnectionDetails: () => unawaited(_showConnectionHelp()),
-        onSendFiles: () => unawaited(_openFiles()),
+        onSendClipboard: () => unawaited(_openSendClipboard()),
         setupBannerLabel: setupNeedsAttention
             ? _setupStatus!.bannerLabel(_settings)
             : null,

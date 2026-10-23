@@ -35,9 +35,10 @@ void main() {
         await tester.pumpWidget(_screen(history));
         await tester.pumpAndSettle();
 
-        expect(find.text('All · 2'), findsOneWidget);
-        expect(find.text('Active · 0'), findsOneWidget);
-        expect(find.text('Needs attention · 0'), findsOneWidget);
+        // Nothing is active or failing, so there is nothing to filter by.
+        expect(find.text('All · 2'), findsNothing);
+        expect(find.text('Active · 0'), findsNothing);
+        expect(find.text('Needs attention · 0'), findsNothing);
         expect(find.text('Today'), findsOneWidget);
         expect(find.text('Yesterday'), findsOneWidget);
         expect(find.text('today.pdf'), findsOneWidget);
@@ -101,15 +102,66 @@ void main() {
 
       await tester.pumpWidget(_screen(storage));
       await tester.pumpAndSettle();
-      expect(find.text('Laptop'), findsNothing);
+      expect(find.text("Browse your laptop's folders"), findsNothing);
 
       await tester.pumpWidget(
         _screen(storage, onBrowseLaptop: () => browsed += 1),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Laptop'));
+      await tester.tap(find.text("Browse your laptop's folders"));
 
       expect(browsed, 1);
+    });
+
+    testWidgets('search lives behind an icon and filters by filename', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'beach.png',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 2,
+        ),
+        _batch(
+          filename: 'report.pdf',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+
+      await tester.tap(find.byTooltip('Search filenames'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'beach');
+      await tester.pumpAndSettle();
+      expect(find.text('beach.png'), findsOneWidget);
+      expect(find.text('report.pdf'), findsNothing);
+
+      await tester.tap(find.byTooltip('Close search'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('report.pdf'), findsOneWidget);
+    });
+
+    testWidgets('rows say which way the file went', (tester) async {
+      final history = MemoryTransferHistoryStorage();
+      await _seed(history, [
+        _batch(
+          filename: 'out.pdf',
+          status: PhoneTransferStatus.completed,
+          createdAtMs: 2,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
     });
 
     testWidgets('active filter excludes waiting-for-source batches', (
