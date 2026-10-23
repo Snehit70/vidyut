@@ -262,6 +262,7 @@ class TransferFileOffer {
     required this.lastModifiedMs,
     this.lastModifiedKnown = true,
     required this.sha256,
+    this.folder,
   });
 
   final String fileId;
@@ -272,6 +273,10 @@ class TransferFileOffer {
   final bool lastModifiedKnown;
   final String sha256;
 
+  /// Subfolder the file lands in, relative and "/"-separated. Set when the
+  /// phone pulled a whole laptop folder (ADR 0026).
+  final String? folder;
+
   Map<String, Object?> toJson() => {
     'fileId': fileId,
     'filename': filename,
@@ -280,6 +285,7 @@ class TransferFileOffer {
     'lastModifiedMs': lastModifiedMs,
     if (!lastModifiedKnown) 'lastModifiedKnown': false,
     'sha256': sha256,
+    'folder': ?folder,
   };
 
   static TransferFileOffer fromJson(Object? value) {
@@ -303,6 +309,10 @@ class TransferFileOffer {
     if (!_sha256Pattern.hasMatch(sha256)) {
       throw const FormatException('sha256 must be lowercase hexadecimal.');
     }
+    final folder = json['folder'];
+    if (folder != null && !isRelativeFolder(folder)) {
+      throw const FormatException('folder must be a relative path.');
+    }
     return TransferFileOffer(
       fileId: fileId,
       filename: filename,
@@ -311,8 +321,24 @@ class TransferFileOffer {
       lastModifiedMs: lastModifiedMs,
       lastModifiedKnown: json['lastModifiedKnown'] != false,
       sha256: sha256,
+      folder: folder as String?,
     );
   }
+}
+
+/// A relative "/"-separated folder with no empty, "." or ".." segment.
+bool isRelativeFolder(Object? value) {
+  if (value is! String || value.isEmpty) return false;
+  if (utf8.encode(value).length > 1024) return false;
+  if (value.runes.any((rune) => rune <= 0x1f || rune == 0x7f) ||
+      value.contains(r'\')) {
+    return false;
+  }
+  return value
+      .split('/')
+      .every(
+        (segment) => segment.isNotEmpty && segment != '.' && segment != '..',
+      );
 }
 
 class TransferOffer {

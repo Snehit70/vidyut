@@ -44,6 +44,23 @@ void main() {
       expect(find.text('yesterday.csv'), findsOneWidget);
     });
 
+    testWidgets('offers to browse the laptop when it can', (tester) async {
+      final storage = MemoryTransferHistoryStorage();
+      var browsed = 0;
+
+      await tester.pumpWidget(_screen(storage));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Browse laptop'), findsNothing);
+
+      await tester.pumpWidget(
+        _screen(storage, onBrowseLaptop: () => browsed += 1),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Browse laptop'));
+
+      expect(browsed, 1);
+    });
+
     testWidgets('active filter excludes waiting-for-source batches', (
       tester,
     ) async {
@@ -621,6 +638,7 @@ Widget _screen(
   Future<void> Function(PhoneTransferFile file)? onOpenFile,
   Future<void> Function(PhoneTransferFile file)? onShareFile,
   Future<void> Function(PhoneTransferFile file)? onSendAgain,
+  VoidCallback? onBrowseLaptop,
 }) {
   return MaterialApp(
     theme: buildVidyutTheme(),
@@ -636,6 +654,7 @@ Widget _screen(
       onOpenFile: onOpenFile,
       onShareFile: onShareFile,
       onSendAgain: onSendAgain,
+      onBrowseLaptop: onBrowseLaptop,
     ),
   );
 }

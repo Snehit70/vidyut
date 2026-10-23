@@ -254,6 +254,7 @@ class PhoneTransferReceiver {
           partial,
           root,
           offeredFile.filename,
+          offeredFile.folder,
         );
         if (offeredFile.lastModifiedKnown) {
           await privateDestination.setLastModified(
@@ -269,6 +270,7 @@ class PhoneTransferReceiver {
                 lastModifiedMs: offeredFile.lastModifiedKnown
                     ? offeredFile.lastModifiedMs
                     : null,
+                folder: offeredFile.folder,
               );
         record = record.copyWith(
           status: PhoneTransferStatus.completed,
@@ -525,11 +527,13 @@ class LocalTransferNotifier implements TransferNotifier {
 }
 
 abstract interface class ReceivedFilePublisher {
+  /// [folder] is the relative subfolder a pulled laptop folder keeps.
   Future<String> publish({
     required String sourcePath,
     required String filename,
     required String mime,
     required int? lastModifiedMs,
+    String? folder,
   });
 }
 
@@ -544,12 +548,14 @@ class AndroidReceivedFilePublisher implements ReceivedFilePublisher {
     required String filename,
     required String mime,
     required int? lastModifiedMs,
+    String? folder,
   }) {
     return _files.publish(
       sourcePath: sourcePath,
       filename: filename,
       mime: mime,
       lastModifiedMs: lastModifiedMs,
+      folder: folder,
     );
   }
 }
@@ -565,13 +571,21 @@ class _TransferCancelled implements Exception {
   const _TransferCancelled();
 }
 
-Future<File> _finalize(File partial, Directory root, String filename) async {
+Future<File> _finalize(
+  File partial,
+  Directory root,
+  String filename,
+  String? folder,
+) async {
+  final directory = folder == null
+      ? root
+      : await Directory('${root.path}/$folder').create(recursive: true);
   final dot = filename.lastIndexOf('.');
   final stem = dot > 0 ? filename.substring(0, dot) : filename;
   final extension = dot > 0 ? filename.substring(dot) : '';
   for (var suffix = 0; suffix < 10000; suffix++) {
     final candidate = File(
-      '${root.path}/${suffix == 0 ? filename : '$stem ($suffix)$extension'}',
+      '${directory.path}/${suffix == 0 ? filename : '$stem ($suffix)$extension'}',
     );
     if (await candidate.exists()) continue;
     return partial.rename(candidate.path);

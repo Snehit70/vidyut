@@ -79,6 +79,42 @@ void main() {
       );
     });
 
+    test('carries the folder of a pulled file and refuses one that climbs', () {
+      final pulled = {
+        ...offer,
+        'files': [
+          {...file, 'folder': 'Trip/Day 1'},
+        ],
+      };
+
+      final parsed = TransferOffer.fromJson(pulled);
+
+      expect(parsed.files.single.folder, 'Trip/Day 1');
+      expect(parsed.toJson(), pulled);
+      expect(TransferOffer.fromJson(offer).files.single.folder, isNull);
+      for (final folder in [
+        '',
+        '..',
+        'Trip/../..',
+        '/etc',
+        'Trip//Day',
+        r'Trip\Day',
+        'Trip/\u0000',
+        3,
+      ]) {
+        expect(
+          () => TransferOffer.fromJson({
+            ...offer,
+            'files': [
+              {...file, 'folder': folder},
+            ],
+          }),
+          throwsFormatException,
+          reason: '$folder',
+        );
+      }
+    });
+
     test('rejects negative sizes and malformed hashes', () {
       expect(
         () => TransferOffer.fromJson({
