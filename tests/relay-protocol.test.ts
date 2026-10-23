@@ -3,7 +3,17 @@ import { connectDevice } from "../src/relay/client";
 import { createRelay } from "../src/relay/relay";
 import { createAuthMessage } from "../src/shared/auth";
 import { encryptPayload } from "../src/shared/crypto";
-import { authenticateRawClient, connectRawWebSocket } from "./helpers/raw-ws-client";
+import {
+  deriveSessionKey,
+  SessionSealer,
+  verifyRelayProof,
+} from "../src/shared/session-seal";
+import type { RelayMessage } from "../src/shared/wire";
+import {
+  authenticateRawClient,
+  connectRawWebSocket,
+  type RawWebSocketClient,
+} from "./helpers/raw-ws-client";
 
 const secret = "pairing-secret-for-tests";
 
@@ -383,8 +393,8 @@ describe("relay protocol", () => {
 
     const phone = await connectRawWebSocket(relay.url);
     const hello = await phone.next();
-    expect(hello).toMatchObject({ kind: "hello", features: ["telemetry_subscribe"] });
     if (hello.kind !== "hello") throw new Error("expected hello");
+    expect(hello.features).toContain("telemetry_subscribe");
     phone.send({
       ...(await createAuthMessage(secret, hello.challenge, "phone")),
       features: ["telemetry_subscribe"],
@@ -405,5 +415,113 @@ describe("relay protocol", () => {
 
     phone.close();
     legacy.close();
+  });
+
+  describe("mutual auth and sealed control", () => {
+    async function sealedPhone(deviceId = "phone") {
+      const phone = await connectRawWebSocket(relay.url);
+      const hello = await phone.next();
+      if (hello.kind !== "hello") throw new Error("expected hello");
+      expect(hello.features).toEqual(expect.arrayContaining(["relay_proof", "sealed_control"]));
+      const clientChallenge = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64");
+      phone.send({
+        ...(await createAuthMessage(secret, hello.challenge, deviceId)),
+        clientChallenge,
+        features: ["telemetry_subscribe", "sealed_control"],
+      });
+      const authOk = await phone.next((message) => message.kind === "auth_ok");
+      if (authOk.kind !== "auth_ok") throw new Error("expected auth_ok");
+      const sealer = new SessionSealer(
+        deriveSessionKey(secret, hello.challenge, clientChallenge, deviceId),
+        "phone_to_relay",
+      );
+      return { phone, sealer, authOk, challenge: hello.challenge, clientChallenge };
+    }
+
+    async function nextOpened(phone: RawWebSocketClient, sealer: SessionSealer): Promise<RelayMessage> {
+      const sealed = await phone.next((message) => message.kind === "sealed");
+      if (sealed.kind !== "sealed") throw new Error("expected sealed");
+      return sealer.open(sealed);
+    }
+
+    test("proves the relay holds the secret, over the negotiated features", async () => {
+      const { phone, authOk, challenge, clientChallenge } = await sealedPhone();
+
+      expect(authOk.features).toEqual(["sealed_control"]);
+      expect(
+        verifyRelayProof(secret, challenge, clientChallenge, ["sealed_control"], "phone", authOk.relayProof ?? ""),
+      ).toBe(true);
+      // Stripping the feature in transit would not survive the proof.
+      expect(
+        verifyRelayProof(secret, challenge, clientChallenge, [], "phone", authOk.relayProof ?? ""),
+      ).toBe(false);
+      expect(
+        verifyRelayProof("other-secret", challenge, clientChallenge, ["sealed_control"], "phone", authOk.relayProof ?? ""),
+      ).toBe(false);
+      phone.close();
+    });
+
+    test("seals control both ways and leaves payload frames as they are", async () => {
+      const { phone, sealer } = await sealedPhone();
+
+      phone.send(sealer.seal({ v: 1, kind: "telemetry_subscribe", active: true }));
+      expect(await nextOpened(phone, sealer)).toMatchObject({ kind: "telemetry" });
+
+      const frame = await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "phone", ts: Date.now() },
+        new TextEncoder().encode("sealed session"),
+        secret,
+      );
+      phone.send({ v: 1, kind: "publish", frame });
+      expect(await nextOpened(phone, sealer)).toEqual({ v: 1, kind: "ack", ts: frame.ts });
+
+      relay.publishHealth();
+      expect(await nextOpened(phone, sealer)).toMatchObject({ kind: "health" });
+
+      const other = await connectRawWebSocket(relay.url);
+      await authenticateRawClient(other, secret, "laptop-tool");
+      const fromOther = await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "laptop", ts: Date.now() + 1 },
+        new TextEncoder().encode("to the phone"),
+        secret,
+      );
+      other.send({ v: 1, kind: "publish", frame: fromOther });
+      expect(await phone.next((message) => message.kind === "payload")).toEqual({
+        v: 1,
+        kind: "payload",
+        frame: fromOther,
+      });
+      phone.close();
+      other.close();
+    });
+
+    test("ends a sealed session on an unsealed control message", async () => {
+      const { phone } = await sealedPhone();
+
+      phone.send({ v: 1, kind: "telemetry_subscribe", active: true });
+
+      await phone.closed;
+      expect(phone.isClosed()).toBe(true);
+    });
+
+    test("ends a sealed session on a replayed message", async () => {
+      const { phone, sealer } = await sealedPhone();
+      const subscribe = sealer.seal({ v: 1, kind: "telemetry_subscribe", active: false });
+
+      phone.send(subscribe);
+      phone.send(subscribe);
+
+      await phone.closed;
+      expect(phone.isClosed()).toBe(true);
+    });
+
+    test("keeps the one-way handshake for a phone without a client challenge", async () => {
+      const legacy = await connectRawWebSocket(relay.url);
+      await authenticateRawClient(legacy, secret, "legacy");
+
+      relay.publishHealth();
+      expect(await legacy.next((message) => message.kind === "health")).toMatchObject({ kind: "health" });
+      legacy.close();
+    });
   });
 });

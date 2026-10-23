@@ -32,4 +32,23 @@ void main() {
 
     expect(await repository.load(), isNull);
   });
+
+  test('pins a verified relay until the phone is paired again', () async {
+    final repository = PairingRepository(MemoryPairingStorage());
+    const pairing = PairingCode(
+      host: '192.168.1.10',
+      port: 17321,
+      secret: 'pairing-secret',
+    );
+    await repository.save(pairing);
+
+    await repository.markRelayVerified('stale-secret');
+    expect((await repository.load())!.relayVerified, isFalse);
+
+    await repository.markRelayVerified('pairing-secret');
+    expect((await repository.load())!.relayVerified, isTrue);
+
+    await repository.save(pairing);
+    expect((await repository.load())!.relayVerified, isFalse);
+  });
 }

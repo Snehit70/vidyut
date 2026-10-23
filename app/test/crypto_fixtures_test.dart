@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/shared/pairing_auth.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
+import 'package:vidyut/src/shared/session_seal.dart';
 import 'package:vidyut/src/shared/wire.dart';
 
 /// Replays fixture nonce bytes so encrypt reproduces the vector exactly.
@@ -35,6 +36,10 @@ void main() {
   final payloadVectors = (fixtures['payloadVectors'] as List<Object?>)
       .cast<Map<String, Object?>>();
   final proofVectors = (fixtures['pairingProofVectors'] as List<Object?>)
+      .cast<Map<String, Object?>>();
+  final sessionVectors = (fixtures['sessionVectors'] as List<Object?>)
+      .cast<Map<String, Object?>>();
+  final sealVectors = (fixtures['sealVectors'] as List<Object?>)
       .cast<Map<String, Object?>>();
 
   for (final vector in payloadVectors) {
@@ -118,6 +123,80 @@ void main() {
       );
 
       expect(proof, vector['proofBase64']);
+    });
+  }
+
+  for (final vector in sessionVectors) {
+    test(
+      'reproduces relay proof and session key vector ${vector['name']}',
+      () async {
+        final pairingSecret = vector['pairingSecret'] as String;
+        final challenge = vector['challenge'] as String;
+        final clientChallenge = vector['clientChallenge'] as String;
+        final deviceId = vector['deviceId'] as String;
+        final features = (vector['sessionFeatures'] as List<Object?>)
+            .cast<String>();
+
+        expect(
+          await createRelayProof(
+            pairingSecret: pairingSecret,
+            challenge: challenge,
+            clientChallenge: clientChallenge,
+            sessionFeatures: features,
+            deviceId: deviceId,
+          ),
+          vector['relayProofBase64'],
+        );
+        expect(
+          base64Encode(
+            await deriveSessionKey(
+              pairingSecret: pairingSecret,
+              challenge: challenge,
+              clientChallenge: clientChallenge,
+              deviceId: deviceId,
+            ),
+          ),
+          vector['sessionKeyBase64'],
+        );
+      },
+    );
+  }
+
+  for (final vector in sealVectors) {
+    final key = base64Decode(vector['sessionKeyBase64'] as String);
+    final direction = vector['direction'] == 'relay_to_phone'
+        ? SealDirection.relayToPhone
+        : SealDirection.phoneToRelay;
+    final peer = direction == SealDirection.relayToPhone
+        ? SealDirection.phoneToRelay
+        : SealDirection.relayToPhone;
+    final index = vector['index'] as int;
+    final message =
+        jsonDecode(vector['plaintextJson'] as String) as Map<String, Object?>;
+    final sealed = (vector['sealed'] as Map<String, Object?>);
+
+    test('seals vector ${vector['name']} byte-for-byte', () async {
+      final sender = SessionSealer(key, direction);
+      for (var i = 0; i < index; i++) {
+        await sender.seal(message);
+      }
+
+      expect(await sender.seal(message), sealed);
+    });
+
+    test('opens seal vector ${vector['name']} only in sequence', () async {
+      final sender = SessionSealer(key, direction);
+      final receiver = SessionSealer(key, peer);
+      for (var i = 0; i < index; i++) {
+        await receiver.open(await sender.seal(message));
+      }
+
+      expect(await receiver.open(sealed), message);
+      // Reflected back at its sender, it does not open.
+      await expectLater(
+        SessionSealer(key, direction).open(sealed),
+        throwsFormatException,
+      );
     });
   }
 }

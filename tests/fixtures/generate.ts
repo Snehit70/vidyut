@@ -4,7 +4,13 @@
 // so both languages must agree on KDF, AAD encoding, nonce, and tag layout.
 import { createPairingProof } from "../../src/shared/auth";
 import { encryptPayload } from "../../src/shared/crypto";
-import type { PayloadMetadata } from "../../src/shared/wire";
+import {
+  createRelayProof,
+  deriveSessionKey,
+  SessionSealer,
+  type SealDirection,
+} from "../../src/shared/session-seal";
+import type { PayloadMetadata, RelayMessage } from "../../src/shared/wire";
 
 interface PayloadVectorInput {
   name: string;
@@ -80,6 +86,97 @@ const pairingProofVectors = await Promise.all(
   })),
 );
 
+const sessionInputs = [
+  {
+    name: "session-ascii",
+    pairingSecret: "fixture-secret-1",
+    challenge: "cmVsYXktY2hhbGxlbmdlLWJ5dGVzLTEyMzQ=",
+    clientChallenge: "cGhvbmUtY2hhbGxlbmdlLWJ5dGVzLTU2Nzg=",
+    deviceId: "phone",
+    sessionFeatures: ["sealed_control"],
+  },
+  {
+    name: "session-unicode-no-features",
+    pairingSecret: "paîring-🔑-secret",
+    challenge: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
+    clientChallenge: "GBkaGxwdHh8gISIjJCUmJygpKissLS4v",
+    deviceId: "phone-📱:2",
+    sessionFeatures: [] as string[],
+  },
+];
+
+const sessionVectors = sessionInputs.map((input) => ({
+  ...input,
+  relayProofBase64: createRelayProof(
+    input.pairingSecret,
+    input.challenge,
+    input.clientChallenge,
+    input.sessionFeatures,
+    input.deviceId,
+  ),
+  sessionKeyBase64: Buffer.from(
+    deriveSessionKey(input.pairingSecret, input.challenge, input.clientChallenge, input.deviceId),
+  ).toString("base64"),
+}));
+
+// Each vector is the `index`-th message one side seals in a session, so the
+// counter in the nonce is exercised past zero.
+const sealInputs: Array<{ name: string; direction: SealDirection; index: number; message: RelayMessage }> = [
+  {
+    name: "relay-telemetry-first",
+    direction: "relay_to_phone",
+    index: 0,
+    message: {
+      v: 1,
+      kind: "telemetry",
+      ts: 1_800_000_000_100,
+      batteryPercent: 81,
+      batteryState: "charging",
+      memoryUsedBytes: 1024,
+      memoryTotalBytes: 4096,
+      storageUsedBytes: null,
+      storageTotalBytes: null,
+      cpuUsagePercent: 12.5,
+      cpuTemperatureCelsius: null,
+    },
+  },
+  {
+    name: "phone-transfer-third",
+    direction: "phone_to_relay",
+    index: 2,
+    message: {
+      v: 1,
+      kind: "transfer_progress",
+      transferId: "transfer-ü-1",
+      fileId: "file-1",
+      confirmedOffset: 65536,
+    },
+  },
+];
+
+const sessionKey = deriveSessionKey(
+  sessionInputs[0]!.pairingSecret,
+  sessionInputs[0]!.challenge,
+  sessionInputs[0]!.clientChallenge,
+  sessionInputs[0]!.deviceId,
+);
+const sealVectors = sealInputs.map((input) => {
+  const sealer = new SessionSealer(sessionKey, input.direction);
+  let sealed = sealer.seal(input.message);
+  for (let i = 0; i < input.index; i++) sealed = sealer.seal(input.message);
+  return {
+    name: input.name,
+    sessionKeyBase64: Buffer.from(sessionKey).toString("base64"),
+    direction: input.direction,
+    index: input.index,
+    plaintextJson: JSON.stringify(input.message),
+    sealed,
+  };
+});
+
 const outPath = new URL("crypto-fixtures.json", import.meta.url).pathname;
-await Bun.write(outPath, `${JSON.stringify({ payloadVectors, pairingProofVectors }, null, 2)}\n`);
+await Bun.write(
+  outPath,
+  `${JSON.stringify({ payloadVectors, pairingProofVectors, sessionVectors, sealVectors }, null, 2)}\n`,
+);
 console.log(`wrote ${outPath}`);

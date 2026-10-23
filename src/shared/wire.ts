@@ -122,14 +122,29 @@ export type RelayMessage =
       maxPayloadBytes: number;
       features?: RelayFeature[];
     }
+  /**
+   * `clientChallenge` asks the Relay to prove it holds the pairing secret too
+   * (ADR 0023); `features` names what the Device can do.
+   */
   | {
       v: 1;
       kind: "auth";
       deviceId: string;
       proof: string;
+      clientChallenge?: string;
       features?: string[];
     }
-  | { v: 1; kind: "auth_ok"; health?: RelayHealth }
+  /**
+   * `relayProof` answers a `clientChallenge`, and covers `features`: the
+   * session features both sides settled on.
+   */
+  | {
+      v: 1;
+      kind: "auth_ok";
+      health?: RelayHealth;
+      relayProof?: string;
+      features?: SessionFeature[];
+    }
   | { v: 1; kind: "health"; health: RelayHealth }
   | LaptopTelemetry
   /**
@@ -147,9 +162,21 @@ export type RelayMessage =
    * did not is subscribed for its whole session, as before the feature.
    */
   | { v: 1; kind: "telemetry_subscribe"; active: boolean }
+  | SealedMessage
   | { v: 1; kind: "error"; code: string; message: string };
 
-export type RelayFeature = "telemetry_subscribe";
+/** Any other message, AES-256-GCM sealed under the session key (ADR 0023). */
+export interface SealedMessage {
+  v: 1;
+  kind: "sealed";
+  nonce: string;
+  payload: string;
+}
+
+export type RelayFeature = "telemetry_subscribe" | "relay_proof" | SessionFeature;
+
+/** Features negotiated per session and covered by `relayProof`. */
+export type SessionFeature = "sealed_control";
 
 export function isPayloadFrame(value: unknown): value is PayloadFrame {
   if (!value || typeof value !== "object") return false;

@@ -72,5 +72,57 @@
       "deviceId": "phone-📱",
       "proofBase64": "oE7jApkGeT8r/MKmv6eJFF9AzhS8jlbdzzXYaaJcq30="
     }
+  ],
+  "sessionVectors": [
+    {
+      "name": "session-ascii",
+      "pairingSecret": "fixture-secret-1",
+      "challenge": "cmVsYXktY2hhbGxlbmdlLWJ5dGVzLTEyMzQ=",
+      "clientChallenge": "cGhvbmUtY2hhbGxlbmdlLWJ5dGVzLTU2Nzg=",
+      "deviceId": "phone",
+      "sessionFeatures": [
+        "sealed_control"
+      ],
+      "relayProofBase64": "UO1o9IuItiWLOPi77BSuXIcD1r/+NfN9eaqXiRcsVHg=",
+      "sessionKeyBase64": "x3S5/b8X9fFKZTa4nnXCi3zeeDXlZrFdMqFRFZpSMC0="
+    },
+    {
+      "name": "session-unicode-no-features",
+      "pairingSecret": "paîring-🔑-secret",
+      "challenge": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYX",
+      "clientChallenge": "GBkaGxwdHh8gISIjJCUmJygpKissLS4v",
+      "deviceId": "phone-📱:2",
+      "sessionFeatures": [],
+      "relayProofBase64": "f+5zbMM532sS3cHVzoavhfFBlcR3110I3t6nqgvl7U4=",
+      "sessionKeyBase64": "UGWV3+vqUrzSYa1dvZHSVZLNuY1TTxlcCRjS9QFZc3U="
+    }
+  ],
+  "sealVectors": [
+    {
+      "name": "relay-telemetry-first",
+      "sessionKeyBase64": "x3S5/b8X9fFKZTa4nnXCi3zeeDXlZrFdMqFRFZpSMC0=",
+      "direction": "relay_to_phone",
+      "index": 0,
+      "plaintextJson": "{\"v\":1,\"kind\":\"telemetry\",\"ts\":1800000000100,\"batteryPercent\":81,\"batteryState\":\"charging\",\"memoryUsedBytes\":1024,\"memoryTotalBytes\":4096,\"storageUsedBytes\":null,\"storageTotalBytes\":null,\"cpuUsagePercent\":12.5,\"cpuTemperatureCelsius\":null}",
+      "sealed": {
+        "v": 1,
+        "kind": "sealed",
+        "nonce": "AAAAAAAAAAAAAAAA",
+        "payload": "55HFH00pHJBsRSunfsLKAelaWdRTefHbvhAactTxqujytIRNRs0jpTE7z77EbhurtDseHtgNLOLx9Gbo397NkkFAJmjbukbTESzaAY/WE/Cdbipg2V5qh+VkZaMOsnMVMFcRB1j2HtKL4XH3yd7hFhk8PZZegDcv9Rv9LN/I5GNJtAMX5pn1wH+i0bPPHkBVff+0JCVXPQd9JN7BAeyTEAd9W1G/ypKTN3ycY1R5AhOY+H00tWSvQ+vWJ1zDeET1h+HCgog+YDwxAVnj4eQjEoB8n3RG+RDQ3M+SWWhfMQi+vK/BaHljdbxSQrcw6MstDxuR6jwYbZL2TyT0vK6d"
+      }
+    },
+    {
+      "name": "phone-transfer-third",
+      "sessionKeyBase64": "x3S5/b8X9fFKZTa4nnXCi3zeeDXlZrFdMqFRFZpSMC0=",
+      "direction": "phone_to_relay",
+      "index": 2,
+      "plaintextJson": "{\"v\":1,\"kind\":\"transfer_progress\",\"transferId\":\"transfer-ü-1\",\"fileId\":\"file-1\",\"confirmedOffset\":65536}",
+      "sealed": {
+        "v": 1,
+        "kind": "sealed",
+        "nonce": "AQAAAAAAAAAAAAAC",
+        "payload": "2xuVaXfbTyGcBjqcsxd46AVWj/z/MVrJY3j0E4Iy78YWev0ELAgU5Oozx5UzXcJ9JSlt5dCHRNXNX55B4FfZX9+sKk4YSJKczX0wwQp/u718lzalCusBDtui9yo+uk7eqFriq0iR4p3+NhraMfMXqyDntwdxQ2ZeQg=="
+      }
+    }
   ]
 }

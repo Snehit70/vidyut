@@ -33,6 +33,7 @@ typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
 typedef ServiceTransferReceiverFactory =
     PhoneTransferReceiver Function(AppSettings settings);
 typedef ServiceEmit = void Function(Map<String, Object?> message);
+typedef ServiceRelayVerifiedRecorder = Future<void> Function(String secret);
 typedef ServiceActivityRecorder = Future<void> Function(LastActivity activity);
 typedef ServiceNotificationUpdate =
     Future<void> Function(String title, String text);
@@ -101,6 +102,7 @@ class ServiceRelayController {
     this.clipboardAutoSendWatcher,
     this.autoSendPublish,
     this.transferReceiverFactory,
+    this.markRelayVerified,
     this.deviceId = 'phone',
     this.reconnectBackoff = defaultReconnectBackoff,
     this.syncStepTimeout = defaultSyncStepTimeout,
@@ -146,6 +148,10 @@ class ServiceRelayController {
   /// watcher is absent (tests, no plugin).
   final ServiceAutoSendPublish? autoSendPublish;
   final ServiceTransferReceiverFactory? transferReceiverFactory;
+
+  /// Pins a pairing whose laptop proved it holds the secret, so later
+  /// sessions refuse a relay that cannot (ADR 0023).
+  final ServiceRelayVerifiedRecorder? markRelayVerified;
 
   final String deviceId;
   final List<Duration> reconnectBackoff;
@@ -263,6 +269,18 @@ class ServiceRelayController {
     _syncing = false;
     _syncStartedAt = null;
     return true;
+  }
+
+  Future<void> _recordRelayVerified(String secret) async {
+    final record = markRelayVerified;
+    if (record == null) return;
+    try {
+      await record(secret);
+    } on Object catch (error) {
+      // Unpinned, the next session still verifies a relay that offers a
+      // proof; it just cannot yet refuse one that does not.
+      _log('Could not record the verified laptop: $error', isError: true);
+    }
   }
 
   Future<void> handleTaskData(Object? data) async {
@@ -526,6 +544,9 @@ class ServiceRelayController {
     _statusSubscription = connection.status.listen((status) {
       if (status == ConnectionStatus.connected) {
         _reconnectAttempt = 0;
+        if (connection.relayVerified && !pairing.relayVerified) {
+          unawaited(_recordRelayVerified(pairing.secret));
+        }
       }
       if (status == ConnectionStatus.offline) {
         _scheduleReconnect();

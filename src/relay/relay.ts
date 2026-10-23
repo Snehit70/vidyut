@@ -1,5 +1,12 @@
 import { verifyPairingProof } from "../shared/auth";
 import {
+  createRelayProof,
+  deriveSessionKey,
+  isClientChallenge,
+  SessionSealer,
+  travelsUnsealed,
+} from "../shared/session-seal";
+import {
   pairingSecretRef,
   type PairingSecretRef,
 } from "./config";
@@ -25,6 +32,7 @@ import {
   type LaptopTelemetry,
   type RelayFeature,
   type RelayMessage,
+  type SessionFeature,
   type TransferControlMessage,
 } from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
@@ -80,6 +88,8 @@ interface DeviceSocketData {
   lastSeen: number;
   telemetrySubscribed: boolean;
   authTimer?: ReturnType<typeof setTimeout>;
+  /** Set once `sealed_control` is negotiated; every later control message goes through it. */
+  sealer?: SessionSealer;
 }
 
 type RelaySocket = Bun.ServerWebSocket<DeviceSocketData>;
@@ -283,9 +293,34 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       },
       async message(socket, rawMessage) {
         socket.data.lastSeen = Date.now();
-        const message = parseMessage(rawMessage);
+        let message = parseMessage(rawMessage);
         if (!message) {
           sendError(logger, socket, "bad_message", "Message must be valid JSON.");
+          return;
+        }
+        const sealer = socket.data.sealer;
+        if (sealer && message.kind === "sealed") {
+          try {
+            message = sealer.open(message);
+          } catch (error) {
+            // The counters cannot resynchronise after a lost or forged
+            // message, so the session ends and the phone reconnects.
+            logger.warn("sealed_message_rejected", {
+              connId: socket.data.connId,
+              deviceId: socket.data.deviceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            socket.close(1008, "seal_failed");
+            return;
+          }
+        } else if (sealer && !travelsUnsealed(message)) {
+          logger.warn("sealed_message_rejected", {
+            connId: socket.data.connId,
+            deviceId: socket.data.deviceId,
+            kind: message.kind,
+            error: "unsealed control message on a sealed session",
+          });
+          socket.close(1008, "seal_required");
           return;
         }
 
@@ -474,7 +509,7 @@ export function websocketMessageLimit(maxPayloadBytes: number): number {
   return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
 }
 
-const relayFeatures: readonly RelayFeature[] = ["telemetry_subscribe"];
+const relayFeatures: readonly RelayFeature[] = ["telemetry_subscribe", "relay_proof", "sealed_control"];
 
 function isTelemetryRecipient(socket: RelaySocket): boolean {
   return socket.data.authenticated && socket.data.telemetrySubscribed;
@@ -548,12 +583,41 @@ async function authenticate(
     Array.isArray(message.features) &&
     message.features.includes("telemetry_subscribe")
   );
+  // A phone that sends a clientChallenge wants this Relay to prove it holds
+  // the secret too. Older phones send none and get the one-way handshake.
+  const clientChallenge = isClientChallenge(message.clientChallenge) ? message.clientChallenge : undefined;
+  const sessionFeatures: SessionFeature[] =
+    clientChallenge && Array.isArray(message.features) && message.features.includes("sealed_control")
+      ? ["sealed_control"]
+      : [];
   logger.info("auth_ok", {
     connId: socket.data.connId,
     deviceId: message.deviceId,
     msSinceConnect: Date.now() - socket.data.connectedAt,
+    relayProof: clientChallenge !== undefined,
+    sealed: sessionFeatures.includes("sealed_control"),
   });
-  send(socket, { v: 1, kind: "auth_ok", health });
+  send(socket, {
+    v: 1,
+    kind: "auth_ok",
+    health,
+    ...(clientChallenge && {
+      relayProof: createRelayProof(
+        pairingSecret,
+        socket.data.challenge,
+        clientChallenge,
+        sessionFeatures,
+        message.deviceId,
+      ),
+      features: sessionFeatures,
+    }),
+  });
+  if (clientChallenge && sessionFeatures.includes("sealed_control")) {
+    socket.data.sealer = new SessionSealer(
+      deriveSessionKey(pairingSecret, socket.data.challenge, clientChallenge, message.deviceId),
+      "relay_to_phone",
+    );
+  }
   if (currentPayload) {
     send(socket, { v: 1, kind: "payload", frame: currentPayload });
     logger.info("payload_broadcast", {
@@ -645,7 +709,8 @@ function transferIdOf(message: TransferControlMessage): string {
 }
 
 function send(socket: RelaySocket, message: RelayMessage): void {
-  socket.send(JSON.stringify(message));
+  const sealer = socket.data.sealer;
+  socket.send(JSON.stringify(sealer && !travelsUnsealed(message) ? sealer.seal(message) : message));
 }
 
 function sendError(logger: Logger, socket: RelaySocket, code: string, message: string): void {

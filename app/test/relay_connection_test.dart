@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/session_seal.dart';
 import 'package:vidyut/src/shared/wire.dart';
 
 void main() {
@@ -318,7 +319,7 @@ void main() {
       'features': ['telemetry_subscribe'],
     });
     await pumpEventQueue();
-    expect(sent.single['features'], ['telemetry_subscribe']);
+    expect(sent.single['features'], contains('telemetry_subscribe'));
 
     transport.receive({'v': 1, 'kind': 'auth_ok'});
     await pumpEventQueue();
@@ -404,6 +405,184 @@ void main() {
     });
 
     expect((await errorEvent).code, 'payload_too_large');
+  });
+
+  group('mutual auth', () {
+    const secret = 'pairing-secret';
+    const challenge = 'cmVsYXktY2hhbGxlbmdlLWJ5dGVz';
+
+    late FakeRelayTransport transport;
+    late List<Map<String, Object?>> sent;
+    late List<ConnectionStatus> statuses;
+    late List<RelayEvent> events;
+
+    RelayConnection connect({bool pinned = false}) {
+      transport = FakeRelayTransport();
+      sent = [];
+      statuses = [];
+      events = [];
+      transport.sent.listen(sent.add);
+      final connection = RelayConnection(
+        pairing: PairingCode(
+          host: '127.0.0.1',
+          port: 17321,
+          secret: secret,
+          relayVerified: pinned,
+        ),
+        deviceId: 'phone',
+        transport: transport,
+      );
+      connection.status.listen(statuses.add);
+      connection.events.listen(events.add);
+      return connection;
+    }
+
+    /// Plays the relay's side of the handshake; returns the relay's sealer
+    /// when the session is sealed.
+    Future<SessionSealer?> handshake({
+      List<String> features = const ['sealed_control'],
+      String proofSecret = secret,
+      bool sendProof = true,
+    }) async {
+      transport.receive({
+        'v': 1,
+        'kind': 'hello',
+        'challenge': challenge,
+        'maxPayloadBytes': 4096,
+        'features': ['telemetry_subscribe', 'relay_proof', 'sealed_control'],
+      });
+      await pumpEventQueue();
+      final auth = sent.single;
+      expect(auth['features'], contains('sealed_control'));
+      final clientChallenge = auth['clientChallenge'] as String;
+      transport.receive({
+        'v': 1,
+        'kind': 'auth_ok',
+        if (sendProof) ...{
+          'relayProof': await createRelayProof(
+            pairingSecret: proofSecret,
+            challenge: challenge,
+            clientChallenge: clientChallenge,
+            sessionFeatures: features,
+            deviceId: 'phone',
+          ),
+          'features': features,
+        },
+      });
+      await pumpEventQueue();
+      if (!features.contains('sealed_control')) return null;
+      return SessionSealer(
+        await deriveSessionKey(
+          pairingSecret: secret,
+          challenge: challenge,
+          clientChallenge: clientChallenge,
+          deviceId: 'phone',
+        ),
+        SealDirection.relayToPhone,
+      );
+    }
+
+    test('seals control both ways once the relay proves itself', () async {
+      final connection = connect();
+      final telemetry = <LaptopTelemetry>[];
+      connection.telemetry.listen(telemetry.add);
+      await connection.start();
+      final relay = (await handshake())!;
+
+      expect(statuses.last, ConnectionStatus.connected);
+      expect(connection.relayVerified, isTrue);
+
+      transport.receive(
+        await relay.seal({
+          'v': 1,
+          'kind': 'telemetry',
+          'ts': 1,
+          'batteryPercent': 50,
+        }),
+      );
+      await pumpEventQueue();
+      expect(telemetry, hasLength(1));
+
+      const control = {
+        'v': 1,
+        'kind': 'transfer_cancel',
+        'transferId': 'transfer-1',
+      };
+      connection.sendTransferControl(control);
+      await pumpEventQueue();
+      expect(sent.last['kind'], 'sealed');
+      expect(await relay.open(sent.last), control);
+    });
+
+    test('drops an unsealed control message on a sealed session', () async {
+      final connection = connect();
+      final telemetry = <LaptopTelemetry>[];
+      connection.telemetry.listen(telemetry.add);
+      await connection.start();
+      await handshake();
+
+      transport.receive({
+        'v': 1,
+        'kind': 'telemetry',
+        'ts': 1,
+        'batteryPercent': 50,
+      });
+      await pumpEventQueue();
+
+      expect(telemetry, isEmpty);
+      expect(statuses.last, ConnectionStatus.connected);
+    });
+
+    test('goes offline when a sealed message fails to open', () async {
+      final connection = connect();
+      await connection.start();
+      final relay = (await handshake())!;
+      final message = await relay.seal({'v': 1, 'kind': 'health'});
+
+      transport.receive(message);
+      transport.receive(message);
+      await pumpEventQueue();
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'seal_failed');
+    });
+
+    test('refuses a relay whose proof does not verify', () async {
+      final connection = connect();
+      await connection.start();
+      await handshake(proofSecret: 'someone-else');
+
+      expect(statuses, [ConnectionStatus.searching, ConnectionStatus.offline]);
+      expect(events.last.code, 'relay_unverified');
+      expect(connection.relayVerified, isFalse);
+    });
+
+    test('accepts an older relay until the pairing has seen a proof', () async {
+      final connection = connect();
+      await connection.start();
+      await handshake(sendProof: false);
+
+      expect(statuses.last, ConnectionStatus.connected);
+      expect(connection.relayVerified, isFalse);
+    });
+
+    test('refuses a missing proof once the pairing is pinned', () async {
+      final connection = connect(pinned: true);
+      await connection.start();
+      await handshake(sendProof: false);
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'relay_unverified');
+    });
+
+    test('refuses an unsealed session once the pairing is pinned', () async {
+      final connection = connect(pinned: true);
+      await connection.start();
+      await handshake(features: const []);
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'relay_unverified');
+    });
   });
 }
 

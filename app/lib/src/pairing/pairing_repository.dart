@@ -50,6 +50,7 @@ class PairingRepository {
   static const _hostKey = 'vidyut.pairing.host';
   static const _portKey = 'vidyut.pairing.port';
   static const _secretKey = 'vidyut.pairing.secret';
+  static const _relayVerifiedKey = 'vidyut.pairing.relayVerified';
 
   final PairingStorage _storage;
 
@@ -58,7 +59,12 @@ class PairingRepository {
     final port = await _storage.read(_portKey);
     final secret = await _storage.read(_secretKey);
     if (host == null || port == null || secret == null) return null;
-    return PairingCode.parseManual(host: host, port: port, secret: secret);
+    return PairingCode.parseManual(
+      host: host,
+      port: port,
+      secret: secret,
+      relayVerified: await _storage.read(_relayVerifiedKey) == 'true',
+    );
   }
 
   Future<void> save(PairingCode pairing) async {
@@ -66,7 +72,19 @@ class PairingRepository {
       _storage.write(_hostKey, pairing.host),
       _storage.write(_portKey, pairing.port.toString()),
       _storage.write(_secretKey, pairing.secret),
+      if (pairing.relayVerified)
+        _storage.write(_relayVerifiedKey, 'true')
+      else
+        _storage.delete(_relayVerifiedKey),
     ]);
+  }
+
+  /// Records that the laptop holding [secret] proved itself. Skipped when the
+  /// stored pairing has changed since that session started, so a re-pair is
+  /// never pinned on the old laptop's word.
+  Future<void> markRelayVerified(String secret) async {
+    if (await _storage.read(_secretKey) != secret) return;
+    await _storage.write(_relayVerifiedKey, 'true');
   }
 
   Future<void> reset() async {
@@ -74,6 +92,7 @@ class PairingRepository {
       _storage.delete(_hostKey),
       _storage.delete(_portKey),
       _storage.delete(_secretKey),
+      _storage.delete(_relayVerifiedKey),
     ]);
   }
 }

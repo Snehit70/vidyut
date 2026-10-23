@@ -18,6 +18,7 @@ import 'package:vidyut/src/share/share_payload.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/session_seal.dart';
 import 'package:vidyut/src/shared/transfer_crypto.dart';
 import 'package:vidyut/src/shared/wire.dart';
 import 'package:vidyut/src/transfer/phone_transfer_receiver.dart';
@@ -198,6 +199,58 @@ void main() {
     await _waitUntil(() => subscriptions(harness.transports.last).isNotEmpty);
 
     expect(subscriptions(harness.transports.last), [true]);
+    await harness.controller.stop();
+  });
+
+  test('pins the pairing once the laptop proves itself', () async {
+    final harness = _Harness(pairing: pairing);
+
+    await harness.controller.start();
+    final transport = harness.transports.single;
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'cmVsYXktY2hhbGxlbmdl',
+      'maxPayloadBytes': 4096,
+    });
+    await _waitUntil(() => transport.sent.isNotEmpty);
+    final clientChallenge = transport.sent.single['clientChallenge'] as String;
+    transport.receive({
+      'v': 1,
+      'kind': 'auth_ok',
+      'relayProof': await createRelayProof(
+        pairingSecret: pairing.secret,
+        challenge: 'cmVsYXktY2hhbGxlbmdl',
+        clientChallenge: clientChallenge,
+        sessionFeatures: const [],
+        deviceId: 'phone',
+      ),
+      'features': const <String>[],
+    });
+    await _waitUntil(() => harness.verifiedSecrets.isNotEmpty);
+
+    expect(harness.verifiedSecrets, [pairing.secret]);
+    await harness.controller.stop();
+  });
+
+  test('leaves the pairing unpinned for a relay without a proof', () async {
+    final harness = _Harness(pairing: pairing);
+
+    await harness.controller.start();
+    harness.transports.single
+      ..receive({
+        'v': 1,
+        'kind': 'hello',
+        'challenge': 'cmVsYXktY2hhbGxlbmdl',
+        'maxPayloadBytes': 4096,
+      })
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await _waitUntil(
+      () => harness.emitted.any((event) => event['status'] == 'connected'),
+    );
+    await pumpEventQueue();
+
+    expect(harness.verifiedSecrets, isEmpty);
     await harness.controller.stop();
   });
 
@@ -1421,6 +1474,8 @@ Future<PayloadFrame> _textFrame(
 }
 
 class _Harness {
+  final verifiedSecrets = <String>[];
+
   _Harness({
     required this.pairing,
     // Effectively "never" so tests without a reconnect stay deterministic.
@@ -1441,6 +1496,7 @@ class _Harness {
     ServiceTransferReceiverFactory? transferReceiverFactory,
   }) {
     controller = ServiceRelayController(
+      markRelayVerified: (secret) async => verifiedSecrets.add(secret),
       reconnectBackoff: reconnectBackoff,
       syncStepTimeout: syncStepTimeout,
       syncStallTimeout: syncStallTimeout,
