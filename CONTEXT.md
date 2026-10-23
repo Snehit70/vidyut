@@ -32,6 +32,14 @@ and hidden files and symlinks are never shown. A pull becomes an ordinary
 laptop → phone Transfer.
 _Avoid_: remote file system, network share, sync folder
 
+**Preview**:
+A picture of a laptop file drawn on the phone's browser: a small thumbnail on
+a row or tile, and a larger one on the file's preview screen (ADR 0027). The
+laptop makes it, from its own thumbnail cache or system tools, and the phone
+never downloads the file to draw it. Name search belongs to the same browser
+and matches names only.
+_Avoid_: thumbnail sync, remote preview
+
 **Link**:
 A Payload that is a single web address. The laptop writes it to the clipboard
 exactly as it would any text and additionally opens it in a browser, so the
