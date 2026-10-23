@@ -381,6 +381,22 @@ dd { margin: 0; overflow-wrap: anywhere; user-select: all; }
 .rows .icon.warn { color: var(--warning); }
 .rows .icon.bad { color: var(--error); }
 .rows .grow { flex: 1; min-width: 0; }
+.rows .row-title.path { overflow-wrap: anywhere; }
+.rows li .btn { flex: none; align-self: center; }
+.add-folder { display: flex; gap: 10px; margin-top: 12px; }
+.field {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height-compact);
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-page);
+  color: var(--text-body);
+  font: inherit;
+}
+.field[aria-invalid="true"] { border-color: var(--error); }
+.field-error { margin: 6px 0 0; color: var(--text-error); font-size: var(--type-label-sm-size); }
 .row-title { font-size: var(--type-label-lg-size); font-weight: var(--type-label-lg-weight); }
 .row-detail { color: var(--text-muted); font-size: var(--type-label-sm-size); }
 .row-fix { color: var(--text-error); font-size: var(--type-label-sm-size); margin-top: 2px; }

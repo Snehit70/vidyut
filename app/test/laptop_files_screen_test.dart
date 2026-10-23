@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/browse/laptop_file_browser.dart';
@@ -78,6 +81,79 @@ void main() {
     expect(find.text('2 selected'), findsNothing);
   });
 
+  testWidgets('tapping a file previews it and Download pulls it', (
+    tester,
+  ) async {
+    final files = await open(tester);
+    await tester.tap(find.text('Downloads'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Trip'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('a.jpg'));
+    await tester.pumpAndSettle();
+
+    expect(files.pulled, isEmpty, reason: 'a tap previews, it does not pull');
+    expect(files.thumbRequests, contains(('0', 'Trip/a.jpg', true)));
+    expect(find.byType(Image), findsWidgets);
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    expect(files.pulled.single.$1, '0');
+    expect(files.pulled.single.$2, ['Trip/a.jpg']);
+  });
+
+  testWidgets('asks for pictures only for files that can have one', (
+    tester,
+  ) async {
+    final files = await open(tester);
+    await tester.tap(find.text('Downloads'));
+    await tester.pumpAndSettle();
+
+    final asked = files.thumbRequests.map((request) => request.$2);
+    expect(asked, ['report.pdf']);
+  });
+
+  testWidgets('filters the open folder as you type', (tester) async {
+    await open(tester);
+    await tester.tap(find.text('Downloads'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Search'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'rep');
+    await tester.pumpAndSettle();
+
+    expect(find.text('report.pdf'), findsOneWidget);
+    expect(find.text('Trip'), findsNothing);
+    expect(find.text('Search all shared folders'), findsOneWidget);
+  });
+
+  testWidgets('searches every shared folder and opens a result folder', (
+    tester,
+  ) async {
+    final files = await open(tester);
+    await tester.tap(find.text('Downloads'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Search'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'beach');
+    await tester.pumpAndSettle();
+    expect(find.text('Nothing in this folder has that name.'), findsOneWidget);
+    await tester.tap(find.text('Search all shared folders'));
+    await tester.pumpAndSettle();
+
+    expect(files.searched.single, 'beach');
+    expect(find.text('1 result for "beach"'), findsOneWidget);
+    expect(find.text('beach.jpg'), findsOneWidget);
+    expect(find.textContaining('Downloads › Trip'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Download beach.jpg'));
+    await tester.pumpAndSettle();
+    expect(files.pulled.last.$1, '0');
+    expect(files.pulled.last.$2, ['Trip/beach.jpg']);
+  });
+
   testWidgets('shows a refusal and retries', (tester) async {
     final files = _FakeLaptopFiles()
       ..failure = const BrowseFailure(
@@ -107,6 +183,8 @@ class _FakeLaptopFiles implements LaptopFiles {
   final listed = <(String, String)>[];
   final pulled = <(String, List<String>)>[];
   bool closed = false;
+  final thumbRequests = <(String, String, bool)>[];
+  final searched = <String>[];
 
   final _folders = <String, List<BrowseEntry>>{
     '': [
@@ -143,6 +221,38 @@ class _FakeLaptopFiles implements LaptopFiles {
   }
 
   @override
+  Future<BrowseThumbnail?> thumbnail(
+    String root,
+    String path, {
+    bool large = false,
+  }) async {
+    thumbRequests.add((root, path, large));
+    return BrowseThumbnail(Uint8List.fromList(_onePixelPng));
+  }
+
+  @override
+  Future<BrowseSearchResult> search(
+    String query, {
+    String? root,
+    String? path,
+  }) async {
+    searched.add(query);
+    return BrowseSearchResult(
+      truncated: false,
+      matches: [
+        BrowseMatch(
+          name: 'beach.jpg',
+          isFolder: false,
+          size: 10,
+          modified: DateTime(2026, 10, 4),
+          root: '0',
+          path: 'Trip/beach.jpg',
+        ),
+      ],
+    );
+  }
+
+  @override
   Future<BrowseQueued> pull(String root, List<String> paths) async {
     pulled.add((root, paths));
     return const BrowseQueued(files: 12, bytes: 4096);
@@ -153,3 +263,8 @@ class _FakeLaptopFiles implements LaptopFiles {
     closed = true;
   }
 }
+
+final _onePixelPng = base64.decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA'
+  '60e6kgAAAABJRU5ErkJggg==',
+);

@@ -105,6 +105,9 @@ overrides:
       - python3
     recommends:
       - python3-nautilus
+      # Thumbnails in the phone's laptop browser (ADR 0027).
+      - ffmpegthumbnailer
+      - poppler-utils
   rpm:
     depends:
       - wl-clipboard
@@ -117,3 +120,6 @@ overrides:
       - python3
     recommends:
       - nautilus-python
+      # Thumbnails in the phone's laptop browser (ADR 0027).
+      - ffmpegthumbnailer
+      - poppler-utils

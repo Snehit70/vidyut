@@ -37,10 +37,15 @@ class SettingsScreen extends StatefulWidget {
     this.files,
     this.pairedDeviceName,
     this.pairedDeviceAddress,
+    this.onBrowseLaptop,
   });
 
   final AppSettings settings;
   final AppSettingsChanged onChanged;
+
+  /// Opens the laptop's shared folders (ADR 0026); the "Laptop folders" row is
+  /// hidden when null or when no laptop is paired.
+  final VoidCallback? onBrowseLaptop;
 
   /// Feeds the "Setup status" row and its summary chip (onboarding spec D8);
   /// the row is hidden when null (widget tests without platform channels).
@@ -498,6 +503,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _SettingsSection(
             title: 'Files',
             children: [
+              if (widget.paired && widget.onBrowseLaptop != null)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  title: const Text('Laptop folders'),
+                  subtitle: const Text(
+                    'Browse and download from the laptop\'s shared folders.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: widget.onBrowseLaptop,
+                ),
               SwitchListTile(
                 contentPadding: _rowPadding,
                 value: _settings.receiveFiles,

@@ -84,103 +84,6 @@ String _timeLabel(BuildContext context, int timestampMs) {
   );
 }
 
-class _SummaryStrip extends StatelessWidget {
-  const _SummaryStrip({required this.batches});
-
-  final List<PhoneTransferBatch> batches;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final statusColors = VidyutStatusColors.of(context);
-    final active = batches.where(_isActiveBatch).length;
-    final attention = batches.where(_needsAttention).length;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: _SummaryMetric(
-                icon: Icons.sync_outlined,
-                color: statusColors.active,
-                value: '$active',
-                label: 'active',
-              ),
-            ),
-            const _SummaryDivider(),
-            Expanded(
-              child: _SummaryMetric(
-                icon: Icons.file_upload_outlined,
-                color: scheme.primary,
-                value: '${batches.length}',
-                label: 'transfers',
-              ),
-            ),
-            const _SummaryDivider(),
-            Expanded(
-              child: _SummaryMetric(
-                icon: Icons.error_outline,
-                color: attention == 0 ? scheme.onSurfaceVariant : scheme.error,
-                value: '$attention',
-                label: 'need attention',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SummaryMetric extends StatelessWidget {
-  const _SummaryMetric({
-    required this.icon,
-    required this.color,
-    required this.value,
-    required this.label,
-  });
-
-  final IconData icon;
-  final Color color;
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: [
-      Icon(icon, color: color, size: 22),
-      const SizedBox(width: 6),
-      Flexible(
-        child: Text(
-          '$value $label',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.labelLarge,
-        ),
-      ),
-    ],
-  );
-}
-
-class _SummaryDivider extends StatelessWidget {
-  const _SummaryDivider();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 1,
-    height: 24,
-    color: Theme.of(context).colorScheme.outlineVariant,
-    margin: const EdgeInsets.symmetric(horizontal: 6),
-  );
-}
-
 class _FilterButton extends StatelessWidget {
   const _FilterButton({
     required this.label,
@@ -200,8 +103,8 @@ class _FilterButton extends StatelessWidget {
     return OutlinedButton(
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(0, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        minimumSize: const Size(0, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         backgroundColor: selected ? scheme.primaryContainer : null,
         foregroundColor: selected
             ? scheme.onPrimaryContainer
@@ -265,6 +168,7 @@ class _TransferRow extends StatelessWidget {
     this.onRetry,
     this.onCancel,
     this.onOpenSettings,
+    this.onDetails,
     this.onLongPress,
     this.selected = false,
     this.selectionMode = false,
@@ -273,6 +177,10 @@ class _TransferRow extends StatelessWidget {
   final PhoneTransferBatch batch;
   final VoidCallback onRemove;
   final VoidCallback onTap;
+
+  /// Set when a tap does something other than show the details, so the menu
+  /// keeps a way to them.
+  final VoidCallback? onDetails;
   final VoidCallback? onRetry;
   final VoidCallback? onCancel;
   final VoidCallback? onOpenSettings;
@@ -289,9 +197,9 @@ class _TransferRow extends StatelessWidget {
         : '${batch.files.length} files';
     final size = batch.files.fold<int>(0, (sum, file) => sum + file.size);
     final status = _statusVisual(context, batch.status);
-    final subtitle = batch.files.length == 1
-        ? '${_directionLabel(batch.direction)} · ${_timeLabel(context, batch.createdAtMs)}'
-        : '${_directionLabel(batch.direction)} · ${_bytes(size)} · ${_timeLabel(context, batch.createdAtMs)}';
+    final subtitle =
+        '${_directionLabel(batch.direction)} · ${_bytes(size)} · '
+        '${_timeLabel(context, batch.createdAtMs)}';
     final failure = batch.files
         .where((file) => file.status == PhoneTransferStatus.failed)
         .firstOrNull;
@@ -325,20 +233,14 @@ class _TransferRow extends StatelessWidget {
                   activeColor: scheme.primary,
                 )
               else
-                _FileTypeIcon(
-                  filename: first?.filename,
-                  mime: first?.mime,
-                  direction: batch.direction,
-                ),
+                _BatchLeading(batch: batch),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    MiddleEllipsisText(
                       title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 3),
@@ -364,31 +266,27 @@ class _TransferRow extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _bytes(size),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Icon(status.icon, color: status.color, size: 22),
-                ],
-              ),
+              // A finished transfer needs no badge; only the others say why.
+              if (batch.status != PhoneTransferStatus.completed) ...[
+                const SizedBox(width: 8),
+                Icon(status.icon, color: status.color, size: 22),
+              ],
               if (!selectionMode)
                 PopupMenuButton<String>(
                   tooltip: 'Transfer actions',
                   onSelected: (value) {
+                    if (value == 'details') onDetails?.call();
                     if (value == 'retry') onRetry?.call();
                     if (value == 'cancel') onCancel?.call();
                     if (value == 'remove') onRemove();
                     if (value == 'settings') onOpenSettings?.call();
                   },
                   itemBuilder: (_) => [
+                    if (onDetails != null)
+                      const PopupMenuItem(
+                        value: 'details',
+                        child: Text('Details'),
+                      ),
                     if (onRetry != null)
                       const PopupMenuItem(value: 'retry', child: Text('Retry')),
                     if (onCancel != null)
@@ -455,11 +353,7 @@ class _BatchDetailsSheet extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FileTypeIcon(
-                  filename: firstFile?.filename,
-                  mime: firstFile?.mime,
-                  direction: batch.direction,
-                ),
+                _BatchLeading(batch: batch),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -633,28 +527,56 @@ class _DetailAction extends StatelessWidget {
   }
 }
 
-class _FileTypeIcon extends StatelessWidget {
-  const _FileTypeIcon({
-    required this.filename,
-    required this.mime,
-    required this.direction,
-  });
+/// The picture on a transfer row: a thumbnail of a finished photo, else the
+/// icon for what the file is.
+class _BatchLeading extends StatelessWidget {
+  const _BatchLeading({required this.batch});
 
-  final String? filename;
-  final String? mime;
-  final PhoneTransferDirection direction;
+  final PhoneTransferBatch batch;
+
+  @override
+  Widget build(BuildContext context) {
+    final files = batch.files;
+    if (files.isEmpty) return const _FileTypeIcon(kind: FileKind.other);
+    final kinds = files.map((file) => fileKindOf(file.filename)).toSet();
+    if (files.length > 1 && kinds.length > 1) {
+      return const _FileTypeIcon(kind: null);
+    }
+    final kind = kinds.first;
+    final first = files.first;
+    final path =
+        files.length == 1 && first.status == PhoneTransferStatus.completed
+        ? _thumbnailPath(first)
+        : null;
+    return _FileTypeIcon(
+      kind: kind,
+      imagePath: kind == FileKind.image ? path : null,
+    );
+  }
+
+  /// A readable file path for [file], or null when it is only a content URI.
+  String? _thumbnailPath(PhoneTransferFile file) {
+    final path = transferFileActionTarget(file)['path'];
+    return path is String && path.isNotEmpty ? path : null;
+  }
+}
+
+class _FileTypeIcon extends StatelessWidget {
+  const _FileTypeIcon({required this.kind, this.imagePath});
+
+  /// Null stands for a mixed batch.
+  final FileKind? kind;
+  final String? imagePath;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final statusColors = VidyutStatusColors.of(context);
-    final visual = _fileVisual(
-      filename,
-      mime,
-      direction,
-      scheme.primary,
-      statusColors.success,
+    final icon = Icon(
+      kind?.icon ?? Icons.folder_copy_outlined,
+      color: scheme.primary,
+      size: 28,
     );
+    final path = imagePath;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surface,
@@ -664,44 +586,22 @@ class _FileTypeIcon extends StatelessWidget {
       child: SizedBox(
         width: 48,
         height: 48,
-        child: Icon(visual.icon, color: visual.color, size: 28),
+        child: path == null
+            ? icon
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: Image.file(
+                  File(path),
+                  fit: BoxFit.cover,
+                  cacheWidth: 144,
+                  gaplessPlayback: true,
+                  excludeFromSemantics: true,
+                  errorBuilder: (_, _, _) => icon,
+                ),
+              ),
       ),
     );
   }
-}
-
-({IconData icon, Color color}) _fileVisual(
-  String? filename,
-  String? mime,
-  PhoneTransferDirection direction,
-  Color primary,
-  Color success,
-) {
-  final normalizedFilename = filename?.toLowerCase() ?? '';
-  final normalizedMime = mime?.toLowerCase() ?? '';
-  if (normalizedMime == 'application/pdf' ||
-      normalizedFilename.endsWith('.pdf')) {
-    return (icon: Icons.picture_as_pdf_outlined, color: primary);
-  }
-  if (normalizedMime.startsWith('image/') ||
-      normalizedFilename.endsWith('.png') ||
-      normalizedFilename.endsWith('.jpg') ||
-      normalizedFilename.endsWith('.jpeg')) {
-    return (icon: Icons.image_outlined, color: primary);
-  }
-  if (normalizedMime == 'text/csv' || normalizedFilename.endsWith('.csv')) {
-    return (icon: Icons.table_chart_outlined, color: success);
-  }
-  if (normalizedFilename.endsWith('.apk') ||
-      normalizedMime == 'application/vnd.android.package-archive') {
-    return (icon: Icons.android_outlined, color: primary);
-  }
-  return (
-    icon: direction == PhoneTransferDirection.sent
-        ? Icons.file_upload_outlined
-        : Icons.file_download_outlined,
-    color: primary,
-  );
 }
 
 class _StatusVisual {
@@ -853,20 +753,18 @@ class _LiveTransferCard extends StatelessWidget {
             Row(
               children: [
                 _FileTypeIcon(
-                  filename: progress.currentFilename,
-                  mime: null,
-                  direction: PhoneTransferDirection.sent,
+                  kind: progress.currentFilename == null
+                      ? FileKind.other
+                      : fileKindOf(progress.currentFilename!),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      MiddleEllipsisText(
                         progress.currentFilename ??
                             'Getting the transfer ready',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 3),

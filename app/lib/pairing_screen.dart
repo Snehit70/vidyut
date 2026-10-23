@@ -729,6 +729,7 @@ class _PairingScreenState extends State<PairingScreen>
           onForgetPairing: _forgetPairing,
           updateChecker: GithubUpdateChecker(owner: 'Snehit70', repo: 'vidyut'),
           files: const VidyutFiles(),
+          onBrowseLaptop: () => unawaited(_openLaptopFiles()),
         ),
       ),
     );

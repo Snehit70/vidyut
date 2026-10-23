@@ -10,7 +10,11 @@ import {
   pairingSecretRef,
   type PairingSecretRef,
 } from "./config";
-import { handleControlRequest, isControlPath } from "./control-plane";
+import {
+  handleControlRequest,
+  isControlPath,
+  type SharedFolderControl,
+} from "./control-plane";
 import {
   isTrustedWebSocketOrigin,
   rejectUntrustedControlRequest,
@@ -25,6 +29,7 @@ import {
 } from "./setup-status";
 import {
   encodedPayloadBytes,
+  isBrowseKind,
   isBrowseRequest,
   isPayloadFrame,
   isTransferControlMessage,
@@ -58,6 +63,7 @@ interface RelayOptions {
   persistPairingSecret?: (secret: string) => Promise<void>;
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
+  sharedFolders?: SharedFolderControl;
   setupStatus?: SetupStatusReader;
   clipboardPause?: ClipboardPause;
   transferControl?: (
@@ -266,6 +272,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           ...(options.enqueueLaptopFiles && {
             enqueueLaptopFiles: options.enqueueLaptopFiles,
           }),
+          ...(options.sharedFolders && {
+            sharedFolders: options.sharedFolders,
+          }),
           ...(options.clipboardPause && {
             clipboardPause: options.clipboardPause,
           }),
@@ -363,7 +372,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
 
-        if (message.kind === "browse_list" || message.kind === "browse_pull") {
+        if (isBrowseKind(message.kind)) {
           await answerBrowse(logger, socket, message, options.browse);
           return;
         }

@@ -176,20 +176,29 @@ with SHA-256 before they become visible.
 
 ### Pull files from the laptop
 
-In **Files**, tap the laptop icon to browse the laptop's shared folders. Tap
-a folder to open it, and the download button on a row to pull that file or
-the whole folder. Long-press to pick several. The download button in the top
-bar pulls the folder you are in. Pulled files arrive like any laptop send, in
-`Downloads/Vidyut`, and a pulled folder keeps its subfolders.
+In **Files**, tap **Laptop** (or **Laptop folders** in Settings) to browse the
+laptop's shared folders. Tap a folder to open it, and the download button on a
+row to pull that file or the whole folder. Long-press to pick several. The
+download button in the top bar pulls the folder you are in. Pulled files
+arrive like any laptop send, in `Downloads/Vidyut`, and a pulled folder keeps
+its subfolders.
+
+Photos, videos and PDFs show a thumbnail, and a folder of mostly pictures
+opens as a grid; the toggle in the top bar switches between grid and list.
+Tap a file to preview it larger and download it from there. The search button
+filters the folder you are in as you type, and **Search all shared folders**
+looks for the name in every shared folder and shows where each match lives.
+Photos use ImageMagick, which Vidyut already needs. Install `ffmpegthumbnailer`
+for video and `poppler-utils` for PDFs if those show an icon; the `.rpm` and
+`.deb` recommend both (ADR 0027).
 
 The laptop shares Desktop, Documents, Downloads, Music, Pictures and Videos
 by default. Hidden files and symlinks are never shared. To change the list,
-edit `sharedFolders` in `~/.config/vidyut/relay.json` (absolute paths; `[]`
-turns browsing off) and restart the relay:
-
-```bash
-systemctl --user restart vidyut-relay
-```
+open the Vidyut desktop app, go to **Files**, and use **Shared with the
+phone**: type a folder path to share it, or press **Stop sharing** on a row.
+The phone sees the change at once, with no restart. The list is saved as
+`sharedFolders` in `~/.config/vidyut/relay.json`; an empty list shares
+nothing.
 
 One pull is at most 1000 files (ADR 0026).
 

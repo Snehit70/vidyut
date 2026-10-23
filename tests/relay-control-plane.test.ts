@@ -329,6 +329,60 @@ describe("relay loopback control plane", () => {
     expect(seen).toHaveLength(1);
   });
 
+  test("shared folders can be listed, added and removed on loopback only", async () => {
+    const calls: string[] = [];
+    const handle = await startRelay({
+      sharedFolders: {
+        list: async () => [{ path: "/home/a/Pictures", exists: true }],
+        add: async (path) => {
+          calls.push(`add ${path}`);
+          if (path === "nope") throw new Error("That folder does not exist.");
+          return [{ path, exists: true }];
+        },
+        remove: async (path) => {
+          calls.push(`remove ${path}`);
+          return [];
+        },
+      },
+    });
+    const post = (body: unknown, host = "127.0.0.1") =>
+      fetchPath(handle, host, "/control/v1/shared-folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const listed = await fetchPath(handle, "127.0.0.1", "/control/v1/shared-folders");
+    expect(await listed.json()).toEqual({
+      folders: [{ path: "/home/a/Pictures", exists: true }],
+    });
+    expect(await (await post({ add: "/home/a/Music" })).json()).toEqual({
+      folders: [{ path: "/home/a/Music", exists: true }],
+    });
+    expect(await (await post({ remove: "/home/a/Music" })).json()).toEqual({ folders: [] });
+    expect(calls).toEqual(["add /home/a/Music", "remove /home/a/Music"]);
+
+    const rejected = await post({ add: "nope" });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      code: "shared_folder_rejected",
+      message: "That folder does not exist.",
+    });
+    for (const body of [{}, { add: "a", remove: "b" }, { add: "" }, { add: 3 }]) {
+      expect((await post(body)).status).toBe(400);
+    }
+    const plain = await fetchPath(handle, "127.0.0.1", "/control/v1/shared-folders", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(plain.status).toBe(415);
+
+    const remote = await post({ add: "/etc" }, lanClientHost());
+    expect(remote.status).toBe(404);
+    expect(calls).toHaveLength(3);
+  });
+
   test("POST /control/v1/clipboard/pause and resume drive the pause and report it", async () => {
     const pause = new ClipboardPause({ now: () => 1_800_000_000_000 });
     const handle = await startRelay({

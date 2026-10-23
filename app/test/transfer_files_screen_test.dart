@@ -13,35 +13,86 @@ import 'package:vidyut_files/vidyut_files.dart';
 
 void main() {
   group('TransferFilesScreen', () {
-    testWidgets('renders the transfer summary and date-grouped history', (
+    testWidgets(
+      'counts transfers in the filter chips and groups history by date',
+      (tester) async {
+        final history = MemoryTransferHistoryStorage();
+        await _seed(history, [
+          _batch(
+            filename: 'today.pdf',
+            status: PhoneTransferStatus.completed,
+            createdAtMs: DateTime.now().millisecondsSinceEpoch,
+          ),
+          _batch(
+            filename: 'yesterday.csv',
+            status: PhoneTransferStatus.completed,
+            createdAtMs: DateTime.now()
+                .subtract(const Duration(days: 1))
+                .millisecondsSinceEpoch,
+          ),
+        ]);
+
+        await tester.pumpWidget(_screen(history));
+        await tester.pumpAndSettle();
+
+        expect(find.text('All · 2'), findsOneWidget);
+        expect(find.text('Active · 0'), findsOneWidget);
+        expect(find.text('Needs attention · 0'), findsOneWidget);
+        expect(find.text('Today'), findsOneWidget);
+        expect(find.text('Yesterday'), findsOneWidget);
+        expect(find.text('today.pdf'), findsOneWidget);
+        expect(find.text('yesterday.csv'), findsOneWidget);
+      },
+    );
+
+    testWidgets('shows a type icon, the size, and no badge on finished rows', (
       tester,
     ) async {
       final history = MemoryTransferHistoryStorage();
       await _seed(history, [
         _batch(
-          filename: 'today.pdf',
+          filename: 'clip.mp4',
           status: PhoneTransferStatus.completed,
           createdAtMs: DateTime.now().millisecondsSinceEpoch,
         ),
         _batch(
-          filename: 'yesterday.csv',
-          status: PhoneTransferStatus.completed,
-          createdAtMs: DateTime.now()
-              .subtract(const Duration(days: 1))
-              .millisecondsSinceEpoch,
+          filename: 'broken.zip',
+          status: PhoneTransferStatus.failed,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch - 1,
         ),
       ]);
 
       await tester.pumpWidget(_screen(history));
       await tester.pumpAndSettle();
 
-      expect(find.text('0 active'), findsOneWidget);
-      expect(find.text('2 transfers'), findsOneWidget);
-      expect(find.text('0 need attention'), findsOneWidget);
-      expect(find.text('Today'), findsOneWidget);
-      expect(find.text('Yesterday'), findsOneWidget);
-      expect(find.text('today.pdf'), findsOneWidget);
-      expect(find.text('yesterday.csv'), findsOneWidget);
+      expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.folder_zip_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_outline), findsNothing);
+      expect(find.byIcon(Icons.error_outline), findsWidgets);
+      expect(find.textContaining('1.0 KB'), findsWidgets);
+      expect(find.text('Needs attention · 1'), findsOneWidget);
+    });
+
+    testWidgets('keeps a long filename readable with its extension', (
+      tester,
+    ) async {
+      final history = MemoryTransferHistoryStorage();
+      const name =
+          'Screenshot_20261022_184512_a_very_long_name_for_a_phone_screen.png';
+      await _seed(history, [
+        _batch(
+          filename: name,
+          status: PhoneTransferStatus.completed,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      ]);
+
+      await tester.pumpWidget(_screen(history));
+      await tester.pumpAndSettle();
+
+      expect(find.text(name), findsNothing);
+      expect(find.textContaining('…'), findsOneWidget);
+      expect(find.textContaining('.png'), findsOneWidget);
     });
 
     testWidgets('offers to browse the laptop when it can', (tester) async {
@@ -50,13 +101,13 @@ void main() {
 
       await tester.pumpWidget(_screen(storage));
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Browse laptop'), findsNothing);
+      expect(find.text('Laptop'), findsNothing);
 
       await tester.pumpWidget(
         _screen(storage, onBrowseLaptop: () => browsed += 1),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Browse laptop'));
+      await tester.tap(find.text('Laptop'));
 
       expect(browsed, 1);
     });
@@ -80,7 +131,7 @@ void main() {
 
       await tester.pumpWidget(_screen(history));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Active'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Active · 1'));
       await tester.pumpAndSettle();
 
       expect(find.text('sending.zip'), findsOneWidget);
@@ -293,6 +344,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('report.pdf'));
       await tester.pumpAndSettle();
+      expect(opened.single.filename, 'report.pdf', reason: 'a tap opens it');
+      opened.clear();
+
+      await tester.tap(find.byTooltip('Transfer actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Details'));
+      await tester.pumpAndSettle();
 
       expect(find.text('Saved on your laptop'), findsOneWidget);
       expect(find.text('Open'), findsOneWidget);
@@ -393,6 +451,16 @@ void main() {
         );
         await tester.pumpAndSettle();
         await tester.tap(find.text('broken.pdf'));
+        await tester.pumpAndSettle();
+        expect(find.text("Couldn't open that file."), findsOneWidget);
+        ScaffoldMessenger.of(
+          tester.element(find.byType(Scaffold).first),
+        ).clearSnackBars();
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('Transfer actions'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Details'));
         await tester.pumpAndSettle();
         await tester.tap(find.text('Open'));
         await tester.pumpAndSettle();
@@ -561,7 +629,7 @@ void main() {
       expect(find.text('older.pdf'), findsOneWidget);
       expect(find.text('Sending to your laptop'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Filter'));
+      await tester.tap(find.byTooltip('Filter by direction or date'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.text('Earlier').last,
@@ -622,7 +690,7 @@ void main() {
 
       await tester.pumpWidget(_screen(history));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Filter'));
+      await tester.tap(find.byTooltip('Filter by direction or date'));
       await tester.pumpAndSettle();
 
       expect(find.text('Today'), findsWidgets);

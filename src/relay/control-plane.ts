@@ -45,6 +45,20 @@ export interface ControlState {
   pool: ControlPoolMeta | null;
 }
 
+/** One folder the phone may browse (ADR 0026), as the desktop shell shows it. */
+export interface SharedFolderInfo {
+  path: string;
+  /** False when the folder was moved or unmounted since it was shared. */
+  exists: boolean;
+}
+
+/** Backs the shell's "Shared with the phone" list. Rejections carry a user-facing message. */
+export interface SharedFolderControl {
+  list(): Promise<SharedFolderInfo[]>;
+  add(path: string): Promise<SharedFolderInfo[]>;
+  remove(path: string): Promise<SharedFolderInfo[]>;
+}
+
 export interface ControlPlaneContext {
   pairingSecret: PairingSecretRef;
   pairingHost: string;
@@ -57,6 +71,7 @@ export interface ControlPlaneContext {
   kickDevices?: () => void;
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
+  sharedFolders?: SharedFolderControl;
   setupStatus?: SetupStatusReader;
   clipboardPause?: ClipboardPause;
 }
@@ -111,6 +126,10 @@ export async function handleControlRequest(
   }
   if (request.method === "POST" && path === "/control/v1/transfers/enqueue") {
     return enqueueTransfers(request, context);
+  }
+  if (path === "/control/v1/shared-folders") {
+    if (request.method === "GET") return listSharedFolders(context);
+    if (request.method === "POST") return changeSharedFolders(request, context);
   }
   if (request.method === "GET" && path === "/control/v1/setup") {
     // Probing shells out to several processes, so the default read is cached.
@@ -201,6 +220,54 @@ async function rotatePairingSecret(
   }
   context.kickDevices?.();
   return Response.json(controlState(context));
+}
+
+async function listSharedFolders(context: ControlPlaneContext): Promise<Response> {
+  if (!context.sharedFolders) {
+    return Response.json({ code: "shared_folders_unavailable" }, { status: 503 });
+  }
+  return Response.json({ folders: await context.sharedFolders.list() });
+}
+
+async function changeSharedFolders(
+  request: Request,
+  context: ControlPlaneContext,
+): Promise<Response> {
+  if (!context.sharedFolders) {
+    return Response.json({ code: "shared_folders_unavailable" }, { status: 503 });
+  }
+  if (!isJsonRequest(request)) {
+    return Response.json({ code: "unsupported_media_type" }, { status: 415 });
+  }
+  let body: { add?: unknown; remove?: unknown } | null;
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return Response.json({ code: "invalid_json" }, { status: 400 });
+  }
+  const add = body?.add;
+  const remove = body?.remove;
+  if (
+    (typeof add === "string") === (typeof remove === "string") ||
+    (add ?? remove) === ""
+  ) {
+    return Response.json({ code: "invalid_request" }, { status: 400 });
+  }
+  try {
+    const folders =
+      typeof add === "string"
+        ? await context.sharedFolders.add(add)
+        : await context.sharedFolders.remove(remove as string);
+    return Response.json({ folders });
+  } catch (error) {
+    return Response.json(
+      {
+        code: "shared_folder_rejected",
+        message: error instanceof Error ? error.message : String(error),
+      },
+      { status: 400 },
+    );
+  }
 }
 
 async function enqueueTransfers(

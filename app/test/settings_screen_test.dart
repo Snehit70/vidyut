@@ -118,6 +118,42 @@ void main() {
     expect(find.text('Troubleshooting'), findsOneWidget);
   });
 
+  testWidgets('Laptop folders row opens the browser when paired', (
+    tester,
+  ) async {
+    var opened = 0;
+    Future<void> pump({required bool paired}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: SettingsScreen(
+            settings: const AppSettings(),
+            onChanged: (_) async {},
+            debugLog: DebugLog(),
+            paired: paired,
+            onBrowseLaptop: () => opened += 1,
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    await pump(paired: false);
+    expect(find.text('Laptop folders', skipOffstage: false), findsNothing);
+
+    await pump(paired: true);
+    await tester.scrollUntilVisible(
+      find.text('Laptop folders'),
+      500,
+      scrollable: find.byType(Scrollable),
+    );
+    await tester.ensureVisible(find.text('Laptop folders'));
+    await tester.pump();
+    await tester.tap(find.text('Laptop folders'));
+    await tester.pump();
+    expect(opened, 1);
+  });
+
   testWidgets('shared entrance and press motion respect reduced motion', (
     tester,
   ) async {
@@ -257,7 +293,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Vidyut 1.13.0'), findsOneWidget);
-    expect(find.text('fix(shell): keep the brand mark by @snehit'), findsOneWidget);
+    expect(
+      find.text('fix(shell): keep the brand mark by @snehit'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('about hides what\'s new when the release carried no notes', (

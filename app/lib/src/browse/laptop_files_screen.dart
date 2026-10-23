@@ -2,8 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../shared/file_kind.dart';
 import '../shared/format.dart';
 import 'laptop_file_browser.dart';
+import 'laptop_file_preview.dart';
+import 'laptop_thumbnails.dart';
+
+/// The shortest search the laptop accepts (`minSearchQueryLength` in the wire
+/// protocol).
+const _minSearchLength = 2;
 
 /// Browses the laptop's shared folders and pulls files or whole folders to
 /// the phone (ADR 0026). The screen owns [files] and closes it when it goes.
@@ -25,9 +32,20 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
   bool _loading = true;
   bool _pulling = false;
   final _selected = <String>{};
+  late final _loader = LaptopThumbnailLoader(widget.files);
+
+  // Null picks by what the folder holds; the toggle overrides it.
+  bool? _gridChoice;
+
+  bool _searching = false;
+  final _searchField = TextEditingController();
+  BrowseSearchResult? _everywhere;
+  String _everywhereFor = '';
+  bool _searchingAll = false;
 
   // A slow listing must not land after the user has moved on.
   int _generation = 0;
+  int _searchGeneration = 0;
 
   @override
   void initState() {
@@ -37,8 +55,80 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
 
   @override
   void dispose() {
+    _searchField.dispose();
     unawaited(widget.files.close());
     super.dispose();
+  }
+
+  String get _query => _searchField.text.trim();
+
+  List<String> get _words => _query.toLowerCase().split(RegExp(r'\s+'));
+
+  bool _matches(String name) {
+    if (_query.isEmpty) return true;
+    final lower = name.toLowerCase();
+    return _words.every(lower.contains);
+  }
+
+  bool _useGrid(BrowseListing listing) {
+    final choice = _gridChoice;
+    if (choice != null) return choice;
+    final files = listing.entries.where((entry) => !entry.isFolder).toList();
+    final pictures = files
+        .where(
+          (entry) => switch (fileKindOf(entry.name)) {
+            FileKind.image || FileKind.video => true,
+            _ => false,
+          },
+        )
+        .length;
+    return files.length >= 4 && pictures * 2 >= files.length;
+  }
+
+  void _openSearch() => setState(() => _searching = true);
+
+  void _closeSearch() {
+    _searchGeneration++;
+    setState(() {
+      _searching = false;
+      _searchField.clear();
+      _everywhere = null;
+      _searchingAll = false;
+    });
+  }
+
+  void _onQueryChanged(String _) {
+    // Results belong to the words they were found for.
+    setState(() {
+      if (_query != _everywhereFor) _everywhere = null;
+    });
+  }
+
+  Future<void> _searchEverywhere() async {
+    final query = _query;
+    if (query.length < _minSearchLength) return;
+    final generation = ++_searchGeneration;
+    setState(() {
+      _searchingAll = true;
+      _everywhere = null;
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await widget.files.search(query);
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _everywhere = result;
+        _everywhereFor = query;
+      });
+    } on BrowseFailure catch (failure) {
+      if (mounted && generation == _searchGeneration) {
+        messenger.showSnackBar(SnackBar(content: Text(failure.message)));
+      }
+    } finally {
+      if (mounted && generation == _searchGeneration) {
+        setState(() => _searchingAll = false);
+      }
+    }
   }
 
   String get _pathString => _path.join('/');
@@ -100,16 +190,23 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
 
   Future<void> _pull(List<String> names) async {
     final root = _root;
-    if (root == null || _pulling) return;
-    final paths = names.isEmpty
-        ? [_pathString]
-        : [
-            for (final name in names) [..._path, name].join('/'),
-          ];
+    if (root == null) return;
+    await _pullFrom(
+      root.id,
+      names.isEmpty
+          ? [_pathString]
+          : [
+              for (final name in names) [..._path, name].join('/'),
+            ],
+    );
+  }
+
+  Future<void> _pullFrom(String rootId, List<String> paths) async {
+    if (_pulling) return;
     setState(() => _pulling = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final queued = await widget.files.pull(root.id, paths);
+      final queued = await widget.files.pull(rootId, paths);
       if (!mounted) return;
       setState(_selected.clear);
       final files = queued.files == 1 ? '1 file' : '${queued.files} files';
@@ -136,15 +233,88 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
     });
   }
 
+  void _preview({
+    required String root,
+    required String path,
+    required BrowseEntry entry,
+    String? location,
+  }) {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => LaptopFilePreview(
+            loader: _loader,
+            root: root,
+            path: path,
+            name: entry.name,
+            size: entry.size,
+            modified: entry.modified,
+            location: location,
+            onDownload: () => _pullFrom(root, [path]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _onEntryTap(BrowseEntry entry) {
+    if (_selected.isNotEmpty) return _toggle(entry.name);
+    if (entry.isFolder) return _openFolder(entry.name);
+    _preview(
+      root: _root!.id,
+      path: [..._path, entry.name].join('/'),
+      entry: entry,
+    );
+  }
+
+  String _rootName(String id) {
+    for (final root in _roots ?? const <BrowseRoot>[]) {
+      if (root.id == id) return root.name;
+    }
+    return 'Laptop';
+  }
+
+  /// Where a search hit lives, as "Documents › Taxes".
+  String _location(BrowseMatch match) {
+    final parent = match.parent;
+    return [
+      _rootName(match.root),
+      if (parent.isNotEmpty) ...parent.split('/'),
+    ].join(' › ');
+  }
+
+  void _onMatchTap(BrowseMatch match) {
+    if (!match.isFolder) {
+      return _preview(
+        root: match.root,
+        path: match.path,
+        entry: match,
+        location: _location(match),
+      );
+    }
+    BrowseRoot? root;
+    for (final candidate in _roots ?? const <BrowseRoot>[]) {
+      if (candidate.id == match.root) root = candidate;
+    }
+    if (root == null) return;
+    _closeSearch();
+    _root = root;
+    _path = match.path.split('/');
+    _listing = null;
+    unawaited(_load());
+  }
+
   @override
   Widget build(BuildContext context) {
     final inRoot = _root != null;
     return PopScope(
-      canPop: !inRoot && _selected.isEmpty,
+      canPop: !inRoot && _selected.isEmpty && !_searching,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         if (_selected.isNotEmpty) {
           setState(_selected.clear);
+        } else if (_searching) {
+          _closeSearch();
         } else {
           _goUp();
         }
@@ -155,7 +325,7 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (inRoot) _buildBreadcrumb(),
+            if (inRoot && !_searching) _buildBreadcrumb(),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             Expanded(
               child: RefreshIndicator(onRefresh: _load, child: _buildBody()),
@@ -177,14 +347,65 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
         title: Text('${_selected.length} selected'),
       );
     }
+    if (_searching) {
+      return AppBar(
+        leading: IconButton(
+          tooltip: 'Close search',
+          onPressed: _closeSearch,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: TextField(
+          controller: _searchField,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          onChanged: _onQueryChanged,
+          onSubmitted: (_) => unawaited(_searchEverywhere()),
+          decoration: InputDecoration(
+            hintText: _root == null ? 'Search shared folders' : 'Search names',
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            filled: false,
+          ),
+        ),
+        actions: [
+          if (_query.isNotEmpty)
+            IconButton(
+              tooltip: 'Clear search',
+              onPressed: () => setState(() {
+                _searchField.clear();
+                _everywhere = null;
+              }),
+              icon: const Icon(Icons.close),
+            ),
+        ],
+      );
+    }
     final root = _root;
     final listing = _listing;
+    final hasEntries =
+        root != null && listing != null && listing.entries.isNotEmpty;
     return AppBar(
       title: Text(
         root == null ? 'Laptop' : (_path.isEmpty ? root.name : _path.last),
       ),
       actions: [
-        if (root != null && listing != null && listing.entries.isNotEmpty)
+        IconButton(
+          tooltip: 'Search',
+          onPressed: _openSearch,
+          icon: const Icon(Icons.search),
+        ),
+        if (hasEntries)
+          IconButton(
+            tooltip: _useGrid(listing) ? 'Show as list' : 'Show as grid',
+            onPressed: () => setState(() => _gridChoice = !_useGrid(listing)),
+            icon: Icon(
+              _useGrid(listing)
+                  ? Icons.view_list_outlined
+                  : Icons.grid_view_outlined,
+            ),
+          ),
+        if (hasEntries)
           IconButton(
             tooltip: 'Download this folder',
             onPressed: _pulling ? null : () => _pull(const []),
@@ -237,6 +458,8 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
     );
   }
 
+  static const _listPadding = EdgeInsets.fromLTRB(16, 8, 16, 24);
+
   Widget _buildBody() {
     final failure = _failure;
     if (failure != null) {
@@ -248,6 +471,8 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
         action: OutlinedButton(onPressed: _load, child: const Text('Retry')),
       );
     }
+    final everywhere = _everywhere;
+    if (_searching && everywhere != null) return _buildEverywhere(everywhere);
     if (_root == null) {
       final roots = _roots;
       if (roots == null) return const _Scrollable();
@@ -256,25 +481,36 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
           icon: Icons.folder_off_outlined,
           title: 'No shared folders',
           body:
-              "The laptop shares none of its folders right now. Add them to "
-              'sharedFolders in its Vidyut config.',
+              'The laptop shares none of its folders right now. Choose some '
+              'in the Vidyut desktop app, under Files.',
         );
       }
-      return ListView.separated(
+      final shown = roots.where((root) => _matches(root.name)).toList();
+      return CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        itemCount: roots.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (context, index) {
-          final root = roots[index];
-          return _EntryRow(
-            icon: Icons.folder_shared_outlined,
-            title: root.name,
-            subtitle: 'Shared folder',
-            onTap: () => _openRoot(root),
-            trailing: const Icon(Icons.chevron_right),
-          );
-        },
+        slivers: [
+          ..._searchHeader(hasLocalMatches: shown.isNotEmpty),
+          SliverPadding(
+            padding: _listPadding,
+            sliver: SliverList.separated(
+              itemCount: shown.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final root = shown[index];
+                return _EntryRow(
+                  leading: const _IconChip(Icons.folder_shared_outlined),
+                  title: root.name,
+                  subtitle: 'Shared folder',
+                  onTap: () {
+                    if (_searching) _closeSearch();
+                    _openRoot(root);
+                  },
+                  trailing: const Icon(Icons.chevron_right),
+                );
+              },
+            ),
+          ),
+        ],
       );
     }
     final listing = _listing;
@@ -286,59 +522,254 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
         body: "This folder is empty. Hidden files aren't shared.",
       );
     }
+    final entries = listing.entries
+        .where((entry) => _matches(entry.name))
+        .toList();
     final localizations = MaterialLocalizations.of(context);
-    return ListView.separated(
+    final grid = _useGrid(listing);
+    return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      itemCount: listing.entries.length + (listing.truncated ? 1 : 0),
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index == listing.entries.length) {
-          return Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text(
-              'Only the first ${listing.entries.length} items are shown.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+      slivers: [
+        ..._searchHeader(hasLocalMatches: entries.isNotEmpty),
+        if (grid)
+          SliverPadding(
+            padding: _listPadding,
+            sliver: SliverGrid.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 140,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 0.82,
+              ),
+              itemCount: entries.length,
+              itemBuilder: (context, index) => _entryTile(entries[index]),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: _listPadding,
+            sliver: SliverList.separated(
+              itemCount: entries.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, index) =>
+                  _entryRow(entries[index], localizations),
+            ),
+          ),
+        if (listing.truncated)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Text(
+                'Only the first ${listing.entries.length} items are shown.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-          );
-        }
-        final entry = listing.entries[index];
-        final date = localizations.formatMediumDate(entry.modified);
-        final selecting = _selected.isNotEmpty;
-        final selected = _selected.contains(entry.name);
-        return _EntryRow(
-          icon: entry.isFolder ? Icons.folder_outlined : _fileIcon(entry.name),
-          title: entry.name,
-          subtitle: entry.isFolder
-              ? 'Folder · $date'
-              : '${formatBytes(entry.size ?? 0)} · $date',
-          selected: selected,
-          selecting: selecting,
-          onTap: selecting
-              ? () => _toggle(entry.name)
-              : entry.isFolder
-              ? () => _openFolder(entry.name)
-              : () => _pull([entry.name]),
-          onLongPress: () => _toggle(entry.name),
-          trailing: selecting
-              ? null
-              : IconButton(
-                  tooltip: 'Download ${entry.name}',
-                  onPressed: _pulling ? null : () => _pull([entry.name]),
+          ),
+      ],
+    );
+  }
+
+  /// What sits above the list while searching: the offer to look in every
+  /// shared folder, and a note when the open folder has no match.
+  List<Widget> _searchHeader({required bool hasLocalMatches}) {
+    if (!_searching || _query.isEmpty) return const [];
+    final scheme = Theme.of(context).colorScheme;
+    final canSearchAll = _query.length >= _minSearchLength;
+    return [
+      if (canSearchAll)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _EntryRow(
+              leading: _searchingAll
+                  ? const SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      ),
+                    )
+                  : const _IconChip(Icons.travel_explore_outlined),
+              title: 'Search all shared folders',
+              subtitle: 'For "$_query"',
+              onTap: _searchingAll ? () {} : () => _searchEverywhere(),
+            ),
+          ),
+        ),
+      if (!hasLocalMatches)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Text(
+              _root == null
+                  ? 'No shared folder has that name.'
+                  : 'Nothing in this folder has that name.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+        ),
+    ];
+  }
+
+  Widget _buildEverywhere(BrowseSearchResult result) {
+    final scheme = Theme.of(context).colorScheme;
+    final localizations = MaterialLocalizations.of(context);
+    final textTheme = Theme.of(context).textTheme;
+    final count = result.matches.length;
+    final headline = count == 0
+        ? 'Nothing found for "$_everywhereFor"'
+        : '${result.truncated ? 'First ' : ''}'
+              '$count ${count == 1 ? 'result' : 'results'} '
+              'for "$_everywhereFor"';
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: Text(
+              headline,
+              style: textTheme.labelLarge?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: _listPadding,
+          sliver: SliverList.separated(
+            itemCount: count,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final match = result.matches[index];
+              final date = localizations.formatMediumDate(match.modified);
+              return _EntryRow(
+                leading: _leadingFor(match, root: match.root, path: match.path),
+                title: match.name,
+                subtitle:
+                    '${match.isFolder ? 'Folder' : formatBytes(match.size ?? 0)}'
+                    ' · $date\n${_location(match)}',
+                onTap: () => _onMatchTap(match),
+                trailing: IconButton(
+                  tooltip: 'Download ${match.name}',
+                  onPressed: _pulling
+                      ? null
+                      : () => _pullFrom(match.root, [match.path]),
                   icon: const Icon(Icons.download_outlined),
                 ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _leadingFor(
+    BrowseEntry entry, {
+    required String root,
+    required String path,
+  }) => entry.isFolder
+      ? const _IconChip(Icons.folder_outlined)
+      : LaptopThumb(
+          loader: _loader,
+          root: root,
+          path: path,
+          name: entry.name,
+          size: 48,
         );
-      },
+
+  Widget _entryRow(BrowseEntry entry, MaterialLocalizations localizations) {
+    final date = localizations.formatMediumDate(entry.modified);
+    final selecting = _selected.isNotEmpty;
+    return _EntryRow(
+      leading: _leadingFor(
+        entry,
+        root: _root!.id,
+        path: [..._path, entry.name].join('/'),
+      ),
+      title: entry.name,
+      subtitle: entry.isFolder
+          ? 'Folder · $date'
+          : '${formatBytes(entry.size ?? 0)} · $date',
+      selected: _selected.contains(entry.name),
+      selecting: selecting,
+      onTap: () => _onEntryTap(entry),
+      onLongPress: () => _toggle(entry.name),
+      trailing: selecting
+          ? null
+          : IconButton(
+              tooltip: 'Download ${entry.name}',
+              onPressed: _pulling ? null : () => _pull([entry.name]),
+              icon: const Icon(Icons.download_outlined),
+            ),
+    );
+  }
+
+  Widget _entryTile(BrowseEntry entry) {
+    final scheme = Theme.of(context).colorScheme;
+    return _GridTile(
+      title: entry.name,
+      selected: _selected.contains(entry.name),
+      selecting: _selected.isNotEmpty,
+      onTap: () => _onEntryTap(entry),
+      onLongPress: () => _toggle(entry.name),
+      picture: entry.isFolder
+          ? ColoredBox(
+              color: scheme.surfaceContainerHighest,
+              child: Icon(
+                Icons.folder_outlined,
+                color: scheme.primary,
+                size: 44,
+              ),
+            )
+          : LaptopThumb(
+              loader: _loader,
+              root: _root!.id,
+              path: [..._path, entry.name].join('/'),
+              name: entry.name,
+              radius: 0,
+              bordered: false,
+            ),
+    );
+  }
+}
+
+class _IconChip extends StatelessWidget {
+  const _IconChip(this.icon);
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: Icon(icon, color: scheme.primary, size: 26),
+      ),
     );
   }
 }
 
 class _EntryRow extends StatelessWidget {
   const _EntryRow({
-    required this.icon,
+    required this.leading,
     required this.title,
     required this.subtitle,
     required this.onTap,
@@ -348,7 +779,7 @@ class _EntryRow extends StatelessWidget {
     this.selecting = false,
   });
 
-  final IconData icon;
+  final Widget leading;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
@@ -379,21 +810,11 @@ class _EntryRow extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(8, 10, 4, 10),
           child: Row(
             children: [
-              if (selecting)
-                Checkbox(value: selected, onChanged: (_) => onTap())
-              else
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: Icon(icon, color: scheme.primary, size: 26),
-                  ),
-                ),
+              if (selecting) ...[
+                Checkbox(value: selected, onChanged: (_) => onTap()),
+                const SizedBox(width: 4),
+              ],
+              leading,
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -408,7 +829,7 @@ class _EntryRow extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
@@ -420,6 +841,82 @@ class _EntryRow extends StatelessWidget {
               ?trailing,
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GridTile extends StatelessWidget {
+  const _GridTile({
+    required this.picture,
+    required this.title,
+    required this.onTap,
+    required this.onLongPress,
+    required this.selected,
+    required this.selecting,
+  });
+
+  final Widget picture;
+  final String title;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final bool selected;
+  final bool selecting;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(16);
+    return Material(
+      color: selected ? scheme.secondaryContainer : scheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(
+          color: selected ? scheme.primary : scheme.outlineVariant,
+          width: selected ? 1.6 : 1,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  picture,
+                  if (selecting)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: scheme.surface,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          selected ? Icons.check_circle : Icons.circle_outlined,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -493,36 +990,4 @@ class _Scrollable extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       ListView(physics: const AlwaysScrollableScrollPhysics());
-}
-
-IconData _fileIcon(String name) {
-  final dot = name.lastIndexOf('.');
-  final extension = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
-  return switch (extension) {
-    'pdf' => Icons.picture_as_pdf_outlined,
-    'png' ||
-    'jpg' ||
-    'jpeg' ||
-    'gif' ||
-    'webp' ||
-    'heic' ||
-    'svg' => Icons.image_outlined,
-    'mp4' || 'mkv' || 'mov' || 'webm' || 'avi' => Icons.movie_outlined,
-    'mp3' ||
-    'flac' ||
-    'wav' ||
-    'ogg' ||
-    'm4a' ||
-    'opus' => Icons.audiotrack_outlined,
-    'zip' ||
-    'tar' ||
-    'gz' ||
-    'xz' ||
-    'zst' ||
-    '7z' ||
-    'rar' => Icons.folder_zip_outlined,
-    'apk' => Icons.android_outlined,
-    'csv' || 'xlsx' || 'ods' => Icons.table_chart_outlined,
-    _ => Icons.insert_drive_file_outlined,
-  };
 }

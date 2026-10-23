@@ -10,8 +10,8 @@ a single file or a whole folder.
 
 - The laptop shares a list of folders, `sharedFolders` in `relay.json`. The
   default is Desktop, Documents, Downloads, Music, Pictures and Videos under
-  the home folder. An empty list turns browsing off, and the relay then stops
-  advertising `browse_files` in its hello.
+  the home folder. An empty list shares nothing (ADR 0027 changed this: the
+  relay used to stop advertising `browse_files` for an empty list).
 - The phone asks over the paired WebSocket: `browse_list` with no root returns
   the shared folders, with a root and path it returns that folder's entries,
   and `browse_pull` asks for files and folders under one root. Every answer is
@@ -42,8 +42,8 @@ a single file or a whole folder.
 
 - Browsing is read-only. The phone cannot delete, rename or write on the
   laptop.
-- Shared folders are set in `relay.json` only, and the relay reads them at
-  start. There is no picker in the desktop shell yet.
+- Shared folders are kept in `relay.json`. ADR 0027 adds a list in the desktop
+  shell to change them while the relay runs.
 - If **Receive files** is off on the phone, a pull queues and then waits,
   like any laptop send.
 - An older phone never sends browse messages; an older laptop never

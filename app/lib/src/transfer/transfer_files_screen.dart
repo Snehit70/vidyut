@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 
 import '../debug/debug_log.dart';
 import '../design/palette.dart';
+import '../shared/file_kind.dart';
+import '../shared/middle_ellipsis_text.dart';
 import 'phone_transfer_sender.dart';
+import 'transfer_file_actions.dart';
 import 'transfer_history.dart';
 
 part 'transfer_files_widgets.dart';
@@ -277,12 +281,6 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 sliver: SliverToBoxAdapter(
-                  child: _SummaryStrip(batches: _batches),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                sliver: SliverToBoxAdapter(
                   child: TextField(
                     controller: _search,
                     decoration: const InputDecoration(
@@ -351,6 +349,7 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                       itemBuilder: (_, index) {
                         final batch = entry.value[index];
                         final canSelect = _canRemoveFromHistory(batch);
+                        final openable = _openable(batch);
                         return Padding(
                           padding: EdgeInsets.only(
                             bottom: index == entry.value.length - 1 ? 0 : 10,
@@ -363,6 +362,11 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                             onOpenSettings: widget.onOpenSettings,
                             onTap: selectionMode && canSelect
                                 ? () => _toggleSelection(batch)
+                                : openable != null
+                                ? () => unawaited(_open(openable))
+                                : () => _showBatchDetails(batch),
+                            onDetails: openable == null
+                                ? null
                                 : () => _showBatchDetails(batch),
                             onLongPress: canSelect
                                 ? () => _toggleSelection(batch)
@@ -433,49 +437,52 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
 
   Widget _buildFilters() {
     final scheme = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _FilterButton(
-            label: 'All',
-            selected: _filter == _FilesFilter.all,
-            onTap: () => setState(() => _filter = _FilesFilter.all),
-          ),
-          const SizedBox(width: 10),
-          _FilterButton(
-            label: 'Active',
-            selected: _filter == _FilesFilter.active,
-            dotColor: VidyutStatusColors.of(context).active,
-            onTap: () => setState(() => _filter = _FilesFilter.active),
-          ),
-          const SizedBox(width: 10),
-          _FilterButton(
-            label: 'Needs attention',
-            selected: _filter == _FilesFilter.needsAttention,
-            dotColor: scheme.error,
-            onTap: () => setState(() => _filter = _FilesFilter.needsAttention),
-          ),
-          const SizedBox(width: 10),
-          OutlinedButton.icon(
-            onPressed: _showDirectionFilter,
-            icon: const Icon(Icons.tune_outlined, size: 18),
-            label: Text(
-              _direction == null
-                  ? 'Filter'
-                  : _direction == PhoneTransferDirection.sent
-                  ? 'Sent'
-                  : 'Received',
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 48),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              side: BorderSide(color: scheme.outlineVariant),
-              foregroundColor: scheme.onSurface,
+    final active = _batches.where(_isActiveBatch).length;
+    final attention = _batches.where(_needsAttention).length;
+    final narrowed = _direction != null || _dateFilter != _DateFilter.all;
+    return Row(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _FilterButton(
+                  label: 'All · ${_batches.length}',
+                  selected: _filter == _FilesFilter.all,
+                  onTap: () => setState(() => _filter = _FilesFilter.all),
+                ),
+                const SizedBox(width: 8),
+                _FilterButton(
+                  label: 'Active · $active',
+                  selected: _filter == _FilesFilter.active,
+                  dotColor: VidyutStatusColors.of(context).active,
+                  onTap: () => setState(() => _filter = _FilesFilter.active),
+                ),
+                const SizedBox(width: 8),
+                _FilterButton(
+                  label: 'Needs attention · $attention',
+                  selected: _filter == _FilesFilter.needsAttention,
+                  dotColor: scheme.error,
+                  onTap: () =>
+                      setState(() => _filter = _FilesFilter.needsAttention),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+        ),
+        // Pinned so it is never scrolled out of reach.
+        IconButton(
+          tooltip: 'Filter by direction or date',
+          onPressed: _showDirectionFilter,
+          isSelected: narrowed,
+          icon: Badge(
+            isLabelVisible: narrowed,
+            smallSize: 8,
+            child: const Icon(Icons.tune_outlined),
+          ),
+        ),
+      ],
     );
   }
 
@@ -637,16 +644,20 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
       title: const Text('Files'),
       actions: [
         if (widget.onBrowseLaptop != null)
-          IconButton(
-            tooltip: 'Browse laptop',
+          TextButton.icon(
             onPressed: widget.onBrowseLaptop,
             icon: const Icon(Icons.laptop_outlined),
+            label: const Text('Laptop'),
           ),
         if (_batches.isNotEmpty)
-          IconButton(
-            tooltip: 'Clear history',
-            onPressed: _clear,
-            icon: const Icon(Icons.delete_sweep_outlined),
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            onSelected: (value) {
+              if (value == 'clear') unawaited(_clear());
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'clear', child: Text('Clear history')),
+            ],
           ),
       ],
     );
@@ -707,6 +718,27 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     }
     _selectedTransferIds.clear();
     await _load();
+  }
+
+  /// The one finished file a tap on [batch] opens. Anything else (several
+  /// files, a failure, a file that is gone) shows the details instead.
+  PhoneTransferFile? _openable(PhoneTransferBatch batch) {
+    if (widget.onOpenFile == null || batch.files.length != 1) return null;
+    final file = batch.files.single;
+    if (file.status != PhoneTransferStatus.completed) return null;
+    if (!(widget.canUseFileAction?.call(file) ?? true)) return null;
+    return file;
+  }
+
+  Future<void> _open(PhoneTransferFile file) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await widget.onOpenFile!(file);
+    } on Object catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text("Couldn't open that file.")),
+      );
+    }
   }
 
   Future<void> _showBatchDetails(PhoneTransferBatch batch) async {
