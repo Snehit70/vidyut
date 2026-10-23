@@ -292,6 +292,67 @@
     list.innerHTML = html;
   }
 
+  function renderSharedFolders(folders) {
+    var list = $("shared-folders");
+    if (!folders.length) {
+      list.innerHTML = '<li class="empty">Nothing is shared, so the phone has nothing to browse.</li>';
+      return;
+    }
+    list.innerHTML = folders.map(function (folder) {
+      return '<li><svg class="icon' + (folder.exists ? "" : " warn") + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-folderOpen"/></svg>' +
+        '<div class="grow"><div class="row-title path">' + escapeHtml(folder.path) + '</div>' +
+        (folder.exists ? "" : '<div class="row-fix">This folder is missing, so the phone cannot see it.</div>') +
+        '</div><button type="button" class="btn outlined" data-unshare="' + escapeHtml(folder.path) + '">Stop sharing</button></li>';
+    }).join("");
+  }
+
+  function showShareError(text) {
+    $("share-error").textContent = text || "";
+    $("share-error").hidden = !text;
+    $("share-path").setAttribute("aria-invalid", String(Boolean(text)));
+  }
+
+  async function changeSharedFolders(body) {
+    var response = await fetch("/control/v1/shared-folders", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    var answer = await response.json().catch(function () { return {}; });
+    if (!response.ok) throw new Error(answer.message || "The Relay did not accept that.");
+    renderSharedFolders(answer.folders || []);
+  }
+
+  async function shareFolder() {
+    var input = $("share-path");
+    var path = input.value.trim();
+    if (!path) { showShareError("Type the folder to share."); return; }
+    try {
+      await changeSharedFolders({ add: path });
+      input.value = "";
+      showShareError("");
+      snack("Shared. The phone sees it now.");
+    } catch (err) {
+      showShareError(err.message);
+    }
+  }
+
+  $("share-add").addEventListener("click", shareFolder);
+  $("share-path").addEventListener("keydown", function (event) {
+    if (event.key === "Enter") { event.preventDefault(); shareFolder(); }
+  });
+  $("share-path").addEventListener("input", function () { showShareError(""); });
+  $("shared-folders").addEventListener("click", async function (event) {
+    var button = event.target.closest("[data-unshare]");
+    if (!button) return;
+    try {
+      await changeSharedFolders({ remove: button.getAttribute("data-unshare") });
+      snack("Stopped sharing.");
+    } catch (err) {
+      snack("That folder was not unshared.");
+    }
+  });
+
   function renderSetup(snapshot, checkedAt) {
     var list = $("setup");
     var summary = $("setup-summary");
@@ -371,6 +432,8 @@
       if (isPaired !== wasPaired) selectPane(defaultPane(), false);
       try { renderTransfers(await getJson("/control/v1/transfers"), lastGoodAt); }
       catch (err) { /* keep the last transfer history */ }
+      try { renderSharedFolders((await getJson("/control/v1/shared-folders")).folders || []); }
+      catch (err) { /* keep the last shared folder list */ }
       try {
         var probed = await getJson("/control/v1/setup");
         renderSetup(probed, probed.checkedAtMs);

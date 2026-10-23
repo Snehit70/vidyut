@@ -481,8 +481,8 @@ class _LaptopFilesScreenState extends State<LaptopFilesScreen> {
           icon: Icons.folder_off_outlined,
           title: 'No shared folders',
           body:
-              "The laptop shares none of its folders right now. Add them to "
-              'sharedFolders in its Vidyut config.',
+              'The laptop shares none of its folders right now. Choose some '
+              'in the Vidyut desktop app, under Files.',
         );
       }
       final shown = roots.where((root) => _matches(root.name)).toList();

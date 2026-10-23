@@ -328,8 +328,7 @@ class LaptopFileBrowser implements LaptopFiles {
       if (!connection.canBrowse) {
         throw const BrowseFailure(
           'browse_unavailable',
-          'The laptop is not sharing folders. Update Vidyut there, or add '
-              'folders to sharedFolders in its config.',
+          'This laptop is too old to share folders. Update Vidyut on it.',
         );
       }
       _connection = connection;

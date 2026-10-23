@@ -180,6 +180,18 @@ export function desktopShellHtml(state: DesktopShellState): string {
             <li class="empty">No transfers yet.</li>
           </ul>
         </section>
+        <section class="block">
+          <h3>Shared with the phone</h3>
+          <p>The phone can browse and download from these folders. Hidden files and links are never shown.</p>
+          <ul class="rows" id="shared-folders">
+            <li class="empty">Loading…</li>
+          </ul>
+          <div class="add-folder">
+            <input type="text" id="share-path" class="field" placeholder="/home/you/Pictures or ~/Pictures" aria-label="Folder to share" aria-describedby="share-error" autocomplete="off" spellcheck="false"/>
+            <button type="button" class="btn outlined" id="share-add">Share folder</button>
+          </div>
+          <p class="field-error" id="share-error" role="alert" hidden></p>
+        </section>
       </main>
 
       <main class="pane" id="pane-setup" role="tabpanel" aria-labelledby="tab-setup" tabindex="0" hidden>

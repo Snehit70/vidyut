@@ -178,6 +178,23 @@ describe("laptop browser", () => {
   });
 });
 
+describe("laptop browser folder changes", () => {
+  test("shares a folder added while running and stops sharing one removed", async () => {
+    const browser = new LaptopBrowser({ folders: [downloads] });
+    expect((await browser.roots()).map((root) => root.name)).toEqual(["Downloads"]);
+
+    browser.setFolders([downloads, outside]);
+    expect((await browser.roots()).map((root) => root.name)).toEqual(["Downloads", "outside"]);
+    expect((await browser.list("1", "")).entries.map((entry) => entry.name)).toEqual([
+      "private.txt",
+    ]);
+
+    browser.setFolders([]);
+    expect(await browser.roots()).toEqual([]);
+    expect(await code(browser.list("0", ""))).toBe("root_not_found");
+  });
+});
+
 describe("laptop browser search and thumbnails", () => {
   const request = (fields: Record<string, unknown>) =>
     ({ v: 1, requestId: "browse-request-0009", ...fields }) as never;

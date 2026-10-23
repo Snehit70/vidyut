@@ -51,8 +51,10 @@ export class LaptopBrowser {
   private readonly maxSearchVisited: number;
   private readonly searchTimeoutMs: number;
   private readonly thumbnailer: LaptopThumbnailer;
+  private folders: readonly string[];
 
   constructor(private readonly options: LaptopBrowserOptions) {
+    this.folders = [...options.folders];
     this.maxEntries = options.maxEntries ?? defaultMaxEntries;
     this.maxPullFiles = options.maxPullFiles ?? defaultMaxPullFiles;
     this.maxSearchMatches = options.maxSearchMatches ?? defaultMaxSearchMatches;
@@ -61,11 +63,19 @@ export class LaptopBrowser {
     this.thumbnailer = options.thumbnailer ?? new LaptopThumbnailer();
   }
 
+  /**
+   * Replaces the shared folders while running. Ids are positions, so a phone
+   * that is mid-browse should list the roots again after a change.
+   */
+  setFolders(folders: readonly string[]): void {
+    this.folders = [...folders];
+  }
+
   /** Shared folders that exist right now. Ids are stable while the config is. */
   async roots(): Promise<BrowseRoot[]> {
     const roots: BrowseRoot[] = [];
     const names = new Set<string>();
-    for (const [index, folder] of this.options.folders.entries()) {
+    for (const [index, folder] of this.folders.entries()) {
       const info = await stat(folder).catch(() => undefined);
       if (!info?.isDirectory()) continue;
       let name = basename(folder) || folder;
@@ -266,7 +276,7 @@ export class LaptopBrowser {
     path: string,
   ): Promise<{ target: string; name: string }> {
     const folder = /^\d+$/.test(rootId)
-      ? this.options.folders[Number(rootId)]
+      ? this.folders[Number(rootId)]
       : undefined;
     if (folder === undefined) {
       throw new BrowseError("root_not_found", "That shared folder is gone.");
