@@ -45,8 +45,8 @@ const videoTypes = new Set([
 /**
  * Pictures of laptop files for the phone's browser (ADR 0027). It reuses the
  * thumbnails the desktop's file manager already cached, and otherwise asks the
- * system's own thumbnailers (gdk-pixbuf for images, ffmpegthumbnailer for
- * video, pdftoppm for PDFs). A missing tool just means no picture.
+ * system's own tools (ImageMagick for images, ffmpegthumbnailer for video,
+ * pdftoppm for PDFs). A missing tool just means no picture.
  *
  * Nothing is written to the desktop's cache: made thumbnails live in memory
  * for this process, within a fixed budget.
@@ -150,7 +150,10 @@ export class LaptopThumbnailer {
       const output = join(work, kind === "video" ? "out.jpg" : "out.png");
       switch (kind) {
         case "image":
-          await this.run("gdk-pixbuf-thumbnailer", ["-s", String(pixels), file, output]);
+          // [0] is the first frame of an animation. The relay already needs magick.
+          await this.run("magick", [
+            `${file}[0]`, "-auto-orient", "-thumbnail", `${pixels}x${pixels}`, "-strip", output,
+          ]);
           break;
         case "video":
           await this.run("ffmpegthumbnailer", ["-i", file, "-o", output, "-s", String(pixels), "-q", "8"]);

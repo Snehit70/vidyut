@@ -81,7 +81,7 @@ describe("laptop thumbnails", () => {
     const thumb = await thumbnailer.thumbnail(photo, "small");
 
     expect(thumb?.mime).toBe("image/jpeg");
-    expect(calls.map(([command]) => command)).toEqual(["gdk-pixbuf-thumbnailer"]);
+    expect(calls.map(([command]) => command)).toEqual(["magick"]);
   });
 
   test("makes one with the system tool for the file's type, then remembers it", async () => {
@@ -96,12 +96,13 @@ describe("laptop thumbnails", () => {
     await thumbnailer.thumbnail(join(dir, "doc.pdf"), "small");
 
     expect(calls.map(([command]) => command)).toEqual([
-      "gdk-pixbuf-thumbnailer",
+      "magick",
       "ffmpegthumbnailer",
       "pdftoppm",
     ]);
-    expect(calls[0]![1].slice(0, 2)).toEqual(["-s", "256"]);
-    expect(calls[0]![1]).toContain(photo);
+    expect(calls[0]![1]).toEqual([
+      `${photo}[0]`, "-auto-orient", "-thumbnail", "256x256", "-strip", calls[0]![1].at(-1)!,
+    ]);
   });
 
   test("has no picture for other types, or when the tool is missing, and does not retry", async () => {
@@ -133,7 +134,7 @@ describe("laptop thumbnails", () => {
     const sizes: number[] = [];
     const run: RunTool = async (command, args) => {
       calls.push([command, args]);
-      const pixels = Number(args[1]);
+      const pixels = Number(args[args.indexOf("-thumbnail") + 1]!.split("x")[0]);
       sizes.push(pixels);
       await writeFile(args.at(-1)!, pixels > 700 ? Buffer.concat([png, Buffer.alloc(500)]) : png);
     };
