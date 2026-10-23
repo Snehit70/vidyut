@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../activity/last_activity.dart';
 import '../design/motion.dart';
 import '../design/palette.dart';
+import '../settings/clipboard_pause.dart';
 import '../shared/relay_connection.dart';
 import '../shared/wire.dart';
 
@@ -15,6 +16,7 @@ class HomeScreen extends StatelessWidget {
     this.relayHealth,
     this.laptopTelemetry,
     this.lastActivity,
+    this.clipboardPause = const PhoneClipboardPause.off(),
     required this.onOpenFiles,
     required this.onOpenSettings,
     required this.onOpenRecentActivity,
@@ -28,6 +30,7 @@ class HomeScreen extends StatelessWidget {
   final RelayHealth? relayHealth;
   final LaptopTelemetry? laptopTelemetry;
   final LastActivity? lastActivity;
+  final PhoneClipboardPause clipboardPause;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenRecentActivity;
@@ -42,6 +45,10 @@ class HomeScreen extends StatelessWidget {
     final state = _HomeSyncState.from(
       connectionStatus: connectionStatus,
       relayHealth: relayHealth,
+      clipboardPause: clipboardPause,
+      formatTime: (time) => MaterialLocalizations.of(
+        context,
+      ).formatTimeOfDay(TimeOfDay.fromDateTime(time)),
       scheme: Theme.of(context).colorScheme,
       statusColors: VidyutStatusColors.of(context),
     );
@@ -634,6 +641,8 @@ class _HomeSyncState {
   factory _HomeSyncState.from({
     required ConnectionStatus connectionStatus,
     required RelayHealth? relayHealth,
+    required PhoneClipboardPause clipboardPause,
+    required String Function(DateTime time) formatTime,
     required ColorScheme scheme,
     required VidyutStatusColors statusColors,
   }) {
@@ -654,6 +663,26 @@ class _HomeSyncState {
           description:
               'Connected, but automatic clipboard sync needs recovery.',
           icon: Icons.sync_problem_outlined,
+          color: statusColors.warning,
+          containerColor: statusColors.warningContainer,
+          searching: false,
+        );
+      }
+      // Degraded outranks paused: recovery needs doing either way.
+      final phonePaused = clipboardPause.activeAt(DateTime.now());
+      if (phonePaused || relayHealth.clipboardPaused) {
+        final until = phonePaused
+            ? clipboardPause.until
+            : relayHealth.clipboardPausedUntil;
+        final where = phonePaused ? 'this phone' : 'the laptop';
+        return _HomeSyncState(
+          label: 'Sync paused',
+          description: until == null
+              ? 'Clipboard sync is paused on $where until you resume it. '
+                    'Files still move.'
+              : 'Clipboard sync is paused on $where until '
+                    '${formatTime(until)}. Files still move.',
+          icon: Icons.pause_circle_outline,
           color: statusColors.warning,
           containerColor: statusColors.warningContainer,
           searching: false,

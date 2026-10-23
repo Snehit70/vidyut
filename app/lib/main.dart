@@ -21,7 +21,7 @@ import 'src/foreground/foreground_service_coordinator.dart';
 import 'src/foreground/vidyut_foreground_service.dart';
 import 'src/foreground/send_clipboard_screen.dart';
 import 'src/foreground/service_relay_controller.dart'
-    show serviceTelemetryCommand;
+    show serviceClipboardPauseCommand, serviceTelemetryCommand;
 import 'src/home/home_screen.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';
@@ -40,6 +40,7 @@ import 'src/share/share_payload.dart';
 import 'src/share/share_publisher.dart';
 import 'src/settings/app_settings.dart';
 import 'src/settings/app_settings_repository.dart';
+import 'src/settings/clipboard_pause.dart';
 import 'src/settings/settings_screen.dart';
 import 'src/share/share_source.dart';
 import 'src/shared/payload_crypto.dart';
@@ -307,6 +308,7 @@ class _PairingScreenState extends State<PairingScreen>
   Timer? _relativeTimeTimer;
   SetupStatus? _setupStatus;
   RelayHealth? _relayHealth;
+  PhoneClipboardPause _clipboardPause = const PhoneClipboardPause.off();
   LaptopTelemetry? _laptopTelemetry;
   bool _appVisible = true;
   bool _homeCovered = false;
@@ -348,6 +350,20 @@ class _PairingScreenState extends State<PairingScreen>
       unawaited(tapHandler.init());
     }
     _loadPairing();
+    unawaited(_loadClipboardPause());
+  }
+
+  Future<void> _loadClipboardPause() async {
+    final pause = await widget.appSettingsRepository.loadClipboardPause();
+    if (mounted) setState(() => _clipboardPause = pause);
+  }
+
+  Future<void> _setClipboardPause(PhoneClipboardPause pause) async {
+    setState(() => _clipboardPause = pause);
+    await widget.appSettingsRepository.saveClipboardPause(pause);
+    await widget.foregroundServiceClient.sendToTask(
+      serviceClipboardPauseCommand,
+    );
   }
 
   /// Recompute the D6 snapshot on resume so the home banner tracks external
@@ -451,8 +467,18 @@ class _PairingScreenState extends State<PairingScreen>
               relayName: relayName,
               clipboardStatus: data['clipboardStatus'] as String?,
               clipboardError: data['clipboardError'] as String?,
+              clipboardPaused: data['clipboardPaused'] == true,
+              clipboardPausedUntil: switch (data['clipboardPausedUntilMs']) {
+                final int ms => DateTime.fromMillisecondsSinceEpoch(ms),
+                _ => null,
+              },
             );
           });
+        }
+      case 'clipboardPause':
+        final pause = data['pause'];
+        if (pause is String) {
+          setState(() => _clipboardPause = PhoneClipboardPause.decode(pause));
         }
       case 'telemetry':
         final telemetry = LaptopTelemetry.fromJson(data);
@@ -1006,6 +1032,7 @@ class _PairingScreenState extends State<PairingScreen>
         relayHealth: _relayHealth,
         laptopTelemetry: _laptopTelemetry,
         lastActivity: _lastActivity,
+        clipboardPause: _clipboardPause,
         onOpenFiles: () => unawaited(_openFiles()),
         onOpenSettings: () => unawaited(_openSettings()),
         onOpenRecentActivity: () => unawaited(_openRecentActivity()),
@@ -1112,8 +1139,11 @@ class _PairingScreenState extends State<PairingScreen>
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      // The pause controls make this taller than the default sheet cap on a
+      // small phone, so it sizes to its content and scrolls past that.
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1159,6 +1189,15 @@ class _PairingScreenState extends State<PairingScreen>
                 icon: const Icon(Icons.refresh),
                 label: const Text('Retry now'),
               ),
+              const SizedBox(height: 20),
+              _ClipboardPauseControls(
+                pause: _clipboardPause,
+                laptopPaused: _relayHealth?.clipboardPaused == true,
+                onChanged: (pause) {
+                  Navigator.of(context).pop();
+                  unawaited(_setClipboardPause(pause));
+                },
+              ),
               const SizedBox(height: 8),
               TextButton(
                 onPressed: () {
@@ -1171,6 +1210,78 @@ class _PairingScreenState extends State<PairingScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Pause and resume for this phone's side of clipboard sync. The laptop's
+/// pause is its own and is lifted from the laptop.
+class _ClipboardPauseControls extends StatelessWidget {
+  const _ClipboardPauseControls({
+    required this.pause,
+    required this.laptopPaused,
+    required this.onChanged,
+  });
+
+  final PhoneClipboardPause pause;
+  final bool laptopPaused;
+  final ValueChanged<PhoneClipboardPause> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final paused = pause.activeAt(DateTime.now());
+    PhoneClipboardPause after(Duration duration) =>
+        PhoneClipboardPause.until(DateTime.now().add(duration));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Clipboard sync', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          paused
+              ? 'Paused on this phone. Laptop copies are not written here, '
+                    'and screenshots and copied text are not sent. Sharing '
+                    'and files still work.'
+              : 'Pause to keep this phone’s clipboard to itself for a while. '
+                    'Sharing and files still work.',
+          style: theme.textTheme.bodyMedium,
+        ),
+        if (laptopPaused) ...[
+          const SizedBox(height: 4),
+          Text(
+            'The laptop has paused sync too. Resume it from the laptop.',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+        const SizedBox(height: 8),
+        if (paused)
+          OutlinedButton.icon(
+            onPressed: () => onChanged(const PhoneClipboardPause.off()),
+            icon: const Icon(Icons.play_arrow_outlined),
+            label: const Text('Resume sync'),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                onPressed: () => onChanged(after(const Duration(minutes: 15))),
+                child: const Text('15 min'),
+              ),
+              OutlinedButton(
+                onPressed: () => onChanged(after(const Duration(hours: 1))),
+                child: const Text('1 hour'),
+              ),
+              OutlinedButton(
+                onPressed: () =>
+                    onChanged(const PhoneClipboardPause.untilResumed()),
+                child: const Text('Until I resume'),
+              ),
+            ],
+          ),
+      ],
     );
   }
 }

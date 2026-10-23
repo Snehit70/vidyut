@@ -217,8 +217,10 @@ _Avoid_: Needs attention, offline, failed
 
 **Sync paused**:
 The state in which the user has chosen to stop automatic clipboard
-synchronization for a while (15 minutes, an hour, or until resumed). On the
-laptop, copies are not published and incoming payloads are not written. File
-transfers are unaffected. A degraded watcher still reports Sync needs
-attention, because resuming would not fix it.
+synchronization for a while (15 minutes, an hour, or until resumed). Each
+device has its own pause. On the laptop, copies are not published and incoming
+payloads are not written. On the phone, incoming payloads are not written, and
+screenshots and auto-read text are not sent; a deliberate send (share sheet,
+**Send clipboard**) still goes. File transfers are unaffected. A degraded
+watcher still reports Sync needs attention, because resuming would not fix it.
 _Avoid_: disabled, off, offline

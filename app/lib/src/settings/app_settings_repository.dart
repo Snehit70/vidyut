@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'app_settings.dart';
+import 'clipboard_pause.dart';
 
 abstract interface class AppSettingsStorage {
   Future<String?> read(String key);
@@ -155,6 +156,18 @@ class AppSettingsRepository {
 
   Future<void> markOnboardingComplete() {
     return _storage.write(_onboardingCompleteKey, 'true');
+  }
+
+  static const _clipboardPauseKey = 'vidyut.settings.clipboardPause';
+
+  /// The phone's clipboard pause. Kept out of [AppSettings]: it is a passing
+  /// state, toggled from Home, and must not clobber a concurrent [save].
+  Future<PhoneClipboardPause> loadClipboardPause() async {
+    return PhoneClipboardPause.decode(await _storage.read(_clipboardPauseKey));
+  }
+
+  Future<void> saveClipboardPause(PhoneClipboardPause pause) {
+    return _storage.write(_clipboardPauseKey, pause.encode());
   }
 
   static String _miuiFlagKey(MiuiSetupFlag flag) =>

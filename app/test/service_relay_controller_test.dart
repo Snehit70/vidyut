@@ -14,6 +14,7 @@ import 'package:vidyut/src/receive/payload_receiver.dart';
 import 'package:vidyut/src/receive/received_image_repository.dart';
 import 'package:vidyut/src/receive/received_text_repository.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
+import 'package:vidyut/src/settings/clipboard_pause.dart';
 import 'package:vidyut/src/share/share_payload.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
@@ -521,6 +522,121 @@ void main() {
   test('default backoff caps at 32 seconds', () {
     expect(defaultReconnectBackoff.last, const Duration(seconds: 32));
     expect(defaultReconnectBackoff.map((d) => d.inSeconds), [2, 4, 8, 16, 32]);
+  });
+
+  group('clipboard pause', () {
+    bool logged(_Harness harness, String message) => harness.emitted.any(
+      (event) => event['kind'] == 'log' && event['message'] == message,
+    );
+
+    test('leaves laptop copies off the phone until resumed', () async {
+      final harness = _Harness(
+        pairing: pairing,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      final transport = harness.transports.single;
+      transport.receive({'v': 1, 'kind': 'auth_ok'});
+      final held = await _textFrame('during pause', origin: 'laptop', ts: 7);
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': held.toJson()});
+      await _waitUntil(
+        () => logged(
+          harness,
+          'Clipboard sync paused: left a laptop copy off this phone.',
+        ),
+      );
+
+      harness.clipboardPause = const PhoneClipboardPause.off();
+      await harness.controller.handleTaskData(serviceClipboardPauseCommand);
+      expect(harness.emitted.last, {'kind': 'clipboardPause', 'pause': ''});
+
+      // The relay's re-send of the copy made during the pause stays dropped.
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': held.toJson()});
+      final fresh = await _textFrame('after pause', origin: 'laptop', ts: 8);
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': fresh.toJson()});
+      await _waitUntil(() => harness.clipboard.texts.isNotEmpty);
+
+      expect(harness.clipboard.texts, ['after pause']);
+    });
+
+    test('holds automatic sends but not a deliberate one', () async {
+      final screenshots = _FakeScreenshotWatcher();
+      final autoSend = _FakeAutoSendWatcher(granted: true);
+      final pushController = ScreenshotPushController(
+        readImage: screenshots.readImage,
+        crypto: PayloadCrypto(),
+        emit: (_) {},
+      );
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(enableClipboardAutoSend: true),
+        screenshotWatcher: screenshots,
+        autoSendWatcher: autoSend,
+        pushController: pushController,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      final transport = harness.transports.single;
+      transport.receive({'v': 1, 'kind': 'auth_ok'});
+      await _drain();
+
+      screenshots.emitEvent(_screenshotEvent(id: 42));
+      autoSend.emitText('copied on phone');
+      autoSend.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'sent on purpose',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+
+      expect(harness.autoSendPublished, ['sent on purpose']);
+      expect(
+        logged(harness, 'Clipboard sync paused: screenshot not sent.'),
+        isTrue,
+      );
+      expect(
+        logged(harness, 'Clipboard sync paused: auto-read text not sent.'),
+        isTrue,
+      );
+      expect(
+        transport.sent.where((message) => message['kind'] == 'publish'),
+        isEmpty,
+      );
+    });
+
+    test('says so in the notification and lifts at the deadline', () async {
+      final harness = _Harness(
+        pairing: pairing,
+        clipboardPause: PhoneClipboardPause.until(
+          DateTime.now().add(const Duration(milliseconds: 300)),
+        ),
+      );
+
+      await harness.controller.start();
+      harness.transports.single.receive({'v': 1, 'kind': 'auth_ok'});
+      await _waitUntil(
+        () => harness.notifications.any(
+          (n) => n.text == 'Connected to laptop. Clipboard sync paused.',
+        ),
+      );
+
+      await _waitUntil(
+        () => logged(harness, 'Clipboard sync resumed: the pause ran out.'),
+      );
+      await _drain();
+      expect(
+        harness.notifications.last.text,
+        'Syncing clipboard & screenshots',
+      );
+      expect(harness.emitted.lastWhere((e) => e['kind'] == 'clipboardPause'), {
+        'kind': 'clipboardPause',
+        'pause': '',
+      });
+    });
   });
 
   group('screen-on trigger', () {
@@ -1492,11 +1608,13 @@ class _Harness {
     bool provideAutoSendPublish = true,
     Completer<SharePublishResult>? autoSendGate,
     this.autoSendError,
+    this.clipboardPause = const PhoneClipboardPause.off(),
     Future<AppSettings> Function()? loadSettings,
     ServiceTransferReceiverFactory? transferReceiverFactory,
   }) {
     controller = ServiceRelayController(
       markRelayVerified: (secret) async => verifiedSecrets.add(secret),
+      loadClipboardPause: () async => clipboardPause,
       reconnectBackoff: reconnectBackoff,
       syncStepTimeout: syncStepTimeout,
       syncStallTimeout: syncStallTimeout,
@@ -1554,6 +1672,9 @@ class _Harness {
 
   PairingCode? pairing;
   AppSettings settings;
+
+  /// What storage holds; send [serviceClipboardPauseCommand] after a change.
+  PhoneClipboardPause clipboardPause;
 
   /// Simulates a process freeze that drops a platform-channel reply, leaving a
   /// future that never completes. Mutable so the sync pass can finish first.

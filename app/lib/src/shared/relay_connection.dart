@@ -31,12 +31,21 @@ class RelayHealth {
     required this.relayName,
     required this.clipboardStatus,
     this.clipboardError,
+    this.clipboardPaused = false,
+    this.clipboardPausedUntil,
   });
 
   final String status;
   final String relayName;
   final String? clipboardStatus;
   final String? clipboardError;
+
+  /// Clipboard sync is paused on the laptop. Files still move.
+  final bool clipboardPaused;
+
+  /// When the laptop's pause lifts, on the laptop's clock; null while paused
+  /// until resumed there.
+  final DateTime? clipboardPausedUntil;
 
   bool get degraded => status == 'degraded' || clipboardStatus == 'degraded';
 
@@ -49,11 +58,17 @@ class RelayHealth {
     final clipboard = json['clipboard'];
     final clipboardStatus = clipboard is Map ? clipboard['status'] : null;
     final clipboardError = clipboard is Map ? clipboard['error'] : null;
+    final paused = clipboard is Map && clipboard['paused'] == true;
+    final pausedUntil = clipboard is Map ? clipboard['pausedUntil'] : null;
     return RelayHealth(
       status: status,
       relayName: relayName,
       clipboardStatus: clipboardStatus is String ? clipboardStatus : null,
       clipboardError: clipboardError is String ? clipboardError : null,
+      clipboardPaused: paused,
+      clipboardPausedUntil: paused && pausedUntil is int
+          ? DateTime.fromMillisecondsSinceEpoch(pausedUntil)
+          : null,
     );
   }
 }

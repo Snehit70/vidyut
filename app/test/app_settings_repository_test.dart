@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
 import 'package:vidyut/src/settings/app_settings_repository.dart';
+import 'package:vidyut/src/settings/clipboard_pause.dart';
 
 void main() {
   test('loads the default notification settings on first run', () async {
@@ -58,5 +59,33 @@ void main() {
       await AppSettingsRepository(storage).miuiClipboardHintShown(),
       isTrue,
     );
+  });
+
+  test('round-trips the clipboard pause', () async {
+    final storage = MemoryAppSettingsStorage();
+    final repository = AppSettingsRepository(storage);
+    final until = DateTime.fromMillisecondsSinceEpoch(1700000000000);
+
+    expect(
+      await repository.loadClipboardPause(),
+      const PhoneClipboardPause.off(),
+    );
+    for (final pause in [
+      PhoneClipboardPause.until(until),
+      const PhoneClipboardPause.untilResumed(),
+      const PhoneClipboardPause.off(),
+    ]) {
+      await repository.saveClipboardPause(pause);
+      expect(await AppSettingsRepository(storage).loadClipboardPause(), pause);
+    }
+  });
+
+  test('a timed clipboard pause is over at its deadline', () {
+    final until = DateTime(2026, 10, 23, 14, 30);
+    final pause = PhoneClipboardPause.until(until);
+
+    expect(pause.activeAt(until.subtract(const Duration(seconds: 1))), isTrue);
+    expect(pause.activeAt(until), isFalse);
+    expect(const PhoneClipboardPause.untilResumed().activeAt(until), isTrue);
   });
 }

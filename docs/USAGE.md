@@ -113,6 +113,15 @@ The status reads **Sync paused**, and **Resume** is one click from the banner
 or the tray. A timed pause lifts by itself. A pause also ends when the relay
 restarts, so a reboot never leaves sync quietly off.
 
+The phone has its own pause. Tap the status at the top of Home and pick
+**15 min**, **1 hour** or **Until I resume** under **Clipboard sync**. While
+it is paused, laptop copies are not written to the phone, and screenshots and
+auto-read text are not sent. Sharing to Vidyut and **Send clipboard** still
+send, because you asked for those. A copy the laptop made during the pause is
+not applied when it lifts. Unlike the laptop's, the phone's pause survives a
+restart until it runs out or you resume it. Home reads **Sync paused** when
+either side is paused, and says which.
+
 ---
 
 ## When something's off

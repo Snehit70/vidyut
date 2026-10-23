@@ -9,6 +9,7 @@ import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
 import '../receive/payload_receiver.dart';
 import '../settings/app_settings.dart';
+import '../settings/clipboard_pause.dart';
 import '../share/link_payload.dart';
 import '../share/share_payload.dart';
 import '../share/share_publisher.dart';
@@ -25,8 +26,12 @@ Map<String, Object?> serviceTelemetryCommand({required bool active}) => {
   'active': active,
 };
 
+/// Tells the service the phone's clipboard pause changed in storage.
+const serviceClipboardPauseCommand = {'kind': 'clipboardPause'};
+
 typedef ServicePairingLoader = Future<PairingCode?> Function();
 typedef ServiceSettingsLoader = Future<AppSettings> Function();
+typedef ServiceClipboardPauseLoader = Future<PhoneClipboardPause> Function();
 typedef ServiceConnectionFactory =
     RelayConnection Function(PairingCode pairing);
 typedef ServiceReceiverFactory = PayloadReceiver Function(AppSettings settings);
@@ -103,6 +108,7 @@ class ServiceRelayController {
     this.autoSendPublish,
     this.transferReceiverFactory,
     this.markRelayVerified,
+    this.loadClipboardPause,
     this.deviceId = 'phone',
     this.reconnectBackoff = defaultReconnectBackoff,
     this.syncStepTimeout = defaultSyncStepTimeout,
@@ -153,6 +159,10 @@ class ServiceRelayController {
   /// sessions refuse a relay that cannot (ADR 0023).
   final ServiceRelayVerifiedRecorder? markRelayVerified;
 
+  /// Reads the phone's clipboard pause on every [_sync] and on
+  /// [serviceClipboardPauseCommand]. Absent means never paused.
+  final ServiceClipboardPauseLoader? loadClipboardPause;
+
   final String deviceId;
   final List<Duration> reconnectBackoff;
   final Duration syncStepTimeout;
@@ -180,6 +190,8 @@ class ServiceRelayController {
   bool _autoSendWatching = false;
   bool _autoSendInertLogged = false;
   bool _manualSendInFlight = false;
+  PhoneClipboardPause _clipboardPause = const PhoneClipboardPause.off();
+  Timer? _clipboardPauseTimer;
   Timer? _reconnectTimer;
   int _reconnectAttempt = 0;
   bool _stopped = false;
@@ -294,7 +306,59 @@ class ServiceRelayController {
         _telemetryWanted = data['active'] == true;
         _connection?.telemetryWanted = _telemetryWanted;
         return;
+      case 'clipboardPause':
+        await _reloadClipboardPause();
+        return;
     }
+  }
+
+  bool get _clipboardPaused => _clipboardPause.activeAt(DateTime.now());
+
+  Future<void> _reloadClipboardPause() async {
+    final load = loadClipboardPause;
+    if (load == null) return;
+    final PhoneClipboardPause pause;
+    try {
+      pause = await _bounded(load(), 'load clipboard pause');
+    } on Object catch (error) {
+      _log('Could not read the clipboard pause: $error', isError: true);
+      return;
+    }
+    if (_stopped) return;
+    final wasPaused = _clipboardPaused;
+    _clipboardPause = pause;
+    _clipboardPauseTimer?.cancel();
+    _clipboardPauseTimer = null;
+    final until = pause.until;
+    if (pause.paused && until != null) {
+      final remaining = until.difference(DateTime.now());
+      if (remaining > Duration.zero) {
+        _clipboardPauseTimer = Timer(remaining, _onClipboardPauseExpired);
+      }
+    }
+    if (_clipboardPaused == wasPaused) return;
+    _log(
+      _clipboardPaused ? 'Clipboard sync paused.' : 'Clipboard sync resumed.',
+    );
+    _emitClipboardPause();
+    final (title, text) = _notificationCopy(_lastStatus);
+    await _notify(title, text, 'clipboard pause');
+  }
+
+  void _onClipboardPauseExpired() {
+    _clipboardPauseTimer = null;
+    if (_stopped) return;
+    _clipboardPause = const PhoneClipboardPause.off();
+    _log('Clipboard sync resumed: the pause ran out.');
+    _emitClipboardPause();
+    unawaited(_publishStatus(_lastStatus));
+  }
+
+  void _emitClipboardPause() {
+    emit({
+      'kind': 'clipboardPause',
+      'pause': _clipboardPaused ? _clipboardPause.encode() : '',
+    });
   }
 
   Future<void> _onManualClipboardResult(
@@ -425,6 +489,8 @@ class ServiceRelayController {
     _stopped = true;
     _watchdogTimer?.cancel();
     _watchdogTimer = null;
+    _clipboardPauseTimer?.cancel();
+    _clipboardPauseTimer = null;
     await _screenOnSubscription?.cancel();
     _screenOnSubscription = null;
     await _manualReadSubscription?.cancel();
@@ -516,6 +582,7 @@ class ServiceRelayController {
     // the pairing check — it must keep watching even while unpaired/offline.
     final settings = await _bounded(loadSettings(), 'load settings');
     if (generation != _syncGeneration) return;
+    await _reloadClipboardPause();
     await _bounded(_reconcileScreenshotWatcher(settings), 'screenshot watcher');
     await _bounded(
       _reconcileClipboardAutoSendWatcher(settings),
@@ -565,6 +632,9 @@ class ServiceRelayController {
         'relayName': health.relayName,
         'clipboardStatus': health.clipboardStatus,
         'clipboardError': health.clipboardError,
+        'clipboardPaused': health.clipboardPaused,
+        'clipboardPausedUntilMs':
+            health.clipboardPausedUntil?.millisecondsSinceEpoch,
       });
       if (health.degraded) {
         _log(
@@ -647,6 +717,12 @@ class ServiceRelayController {
       return false;
     }
     _lastHandledFrame = (origin: frame.origin, ts: frame.ts);
+    // Recorded as handled first, so the pool re-send after a reconnect does
+    // not bring a copy made during the pause back once it lifts.
+    if (_clipboardPaused) {
+      _log('Clipboard sync paused: left a laptop copy off this phone.');
+      return false;
+    }
     return true;
   }
 
@@ -730,6 +806,10 @@ class ServiceRelayController {
       'Screenshot emitted: id=${event.id} name=${event.displayName} '
       'size=${event.sizeBytes} detectedAt=${event.detectedAtEpochMillis}',
     );
+    if (_clipboardPaused) {
+      _log('Clipboard sync paused: screenshot not sent.');
+      return;
+    }
     pushController?.handleEvent(event);
   }
 
@@ -813,6 +893,10 @@ class ServiceRelayController {
       _log(
         'Clipboard auto-send: echo guard dropped a received-payload re-read.',
       );
+      return;
+    }
+    if (_clipboardPaused) {
+      _log('Clipboard sync paused: auto-read text not sent.');
       return;
     }
     final publish = autoSendPublish;
@@ -938,6 +1022,14 @@ class ServiceRelayController {
       ConnectionStatus.searching => 'Vidyut connecting',
       ConnectionStatus.offline => 'Vidyut offline',
     };
+    if (_clipboardPaused) {
+      final base = switch (status) {
+        ConnectionStatus.connected => 'Connected to laptop.',
+        ConnectionStatus.searching => 'Looking for the laptop relay...',
+        ConnectionStatus.offline => 'Relay unreachable.',
+      };
+      return (title, '$base Clipboard sync paused.');
+    }
     if (_screenshotPaused) {
       // The paused state is persistent and recovery-worthy (§5), so it
       // overrides the connection copy (#33 decision 3).

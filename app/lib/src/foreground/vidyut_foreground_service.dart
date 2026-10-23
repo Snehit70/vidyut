@@ -83,6 +83,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
     controller = ServiceRelayController(
       loadPairing: pairingRepository.load,
       loadSettings: settingsRepository.load,
+      loadClipboardPause: settingsRepository.loadClipboardPause,
       screenshotWatcher: screenshotWatcher,
       pushController: ScreenshotPushController(
         readImage: screenshotWatcher.readImage,

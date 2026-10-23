@@ -108,6 +108,33 @@ void main() {
     expect(health, isNotNull);
     expect(health!.clipboardStatus, isNull);
     expect(health.clipboardError, isNull);
+    expect(health.clipboardPaused, isFalse);
+  });
+
+  test('reads a laptop clipboard pause and its deadline', () {
+    final timed = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {
+        'status': 'healthy',
+        'paused': true,
+        'pausedUntil': 1700000000000,
+      },
+    })!;
+    final open = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {'status': 'healthy', 'paused': true},
+    })!;
+
+    expect(timed.clipboardPaused, isTrue);
+    expect(
+      timed.clipboardPausedUntil,
+      DateTime.fromMillisecondsSinceEpoch(1700000000000),
+    );
+    expect(open.clipboardPaused, isTrue);
+    expect(open.clipboardPausedUntil, isNull);
+    expect(timed.degraded, isFalse);
   });
 
   test('emits incoming payload frames', () async {
