@@ -461,14 +461,22 @@ class PhoneTransferSender {
           'File transfers are disabled on this metered network.',
         );
       }
-      if (sources.any(_isPersistedDocumentSource)) {
-        // Authentication and relay setup do not depend on the source digest.
-        // Keep the offer itself behind the preparation barrier.
+      final pairingForSetup = await pairingFuture;
+      if (pairingForSetup != null) {
+        // Hello features decide whether we can skip the pre-offer hash, so
+        // the session is opened before source hashing. The offer still waits
+        // until every file is prepared.
         setupFuture = _prepareRelaySession(
           pairingFuture,
           onError: (error) => setupError = error,
         );
+        handedOffSession = await setupFuture;
+        if (setupError case final error?) {
+          Error.throwWithStackTrace(error.error, error.stackTrace);
+        }
       }
+      final deferHash =
+          handedOffSession?.connection.supportsDeferredFileHash ?? false;
       final fileIndexes = batch.files
           .asMap()
           .entries
@@ -497,6 +505,7 @@ class PhoneTransferSender {
             sources[sourceIndex],
             maximum,
             token: token,
+            deferHash: deferHash,
             onPhase: (phase, bytes, total) async {
               batch = await _updatePreparationProgress(
                 batch,
@@ -595,18 +604,16 @@ class PhoneTransferSender {
         updatedAtMs: DateTime.now().millisecondsSinceEpoch,
       );
       await history.upsert(batch);
-      final pairing = await pairingFuture;
+      final pairing = pairingForSetup ?? await pairingFuture;
       if (pairing == null) {
         throw StateError('Pair with a laptop before sending files.');
       }
-      final preparedSession = setupFuture == null ? null : await setupFuture;
       if (setupError case final error?) {
         Error.throwWithStackTrace(error.error, error.stackTrace);
       }
-      handedOffSession = preparedSession;
       final predecessor = _sendPredecessors[initial.transferId];
       if (predecessor != null) await predecessor;
-      await _send(pairing, batch, preparedSession: preparedSession);
+      await _send(pairing, batch, preparedSession: handedOffSession);
     } on PreparationCancelled {
       final latest = (await history.load())
           .where((item) => item.transferId == batch.transferId)
@@ -726,6 +733,7 @@ class PhoneTransferSender {
     PhoneTransferSource source,
     int maxBytes, {
     required _PreparationToken token,
+    required bool deferHash,
     required Future<void> Function(
       PhoneTransferPreparationPhase phase,
       int bytes,
@@ -750,6 +758,17 @@ class PhoneTransferSender {
       if (info.size > maxBytes) {
         throw FormatException(
           '${source.filename} exceeds the configured maximum file size.',
+        );
+      }
+      if (deferHash) {
+        return (
+          size: info.size,
+          lastModifiedMs: info.modified.millisecondsSinceEpoch,
+          lastModifiedKnown: true,
+          filename: source.filename,
+          mime: source.mime,
+          sha256: _unknownSha256,
+          reference: null,
         );
       }
       await onPhase(PhoneTransferPreparationPhase.hashing, 0, info.size);
@@ -840,6 +859,19 @@ class PhoneTransferSender {
     if (probe.size > maxBytes) {
       throw FormatException(
         '${source.filename} exceeds the configured maximum file size.',
+      );
+    }
+    if (deferHash) {
+      return (
+        size: probe.size,
+        lastModifiedMs: source.lastModifiedMs ?? 0,
+        lastModifiedKnown: source.lastModifiedMs != null,
+        filename: probe.filename ?? source.filename,
+        mime: probe.mime ?? source.mime,
+        sha256: _unknownSha256,
+        reference: source.kind == PhoneTransferSourceKind.managedStage
+            ? source.reference
+            : null,
       );
     }
     await onPhase(PhoneTransferPreparationPhase.hashing, 0, probe.size);
@@ -1313,36 +1345,84 @@ class PhoneTransferSender {
           final source = sourceUri != null || sourcePath == null
               ? null
               : await File(sourcePath).open();
+          final transferId = batch.transferId;
+          final fileId = transferFile.fileId;
+          final fileSize = transferFile.size;
+          Future<_PreparedChunk> prepareChunk(int at, int count) async {
+            if (source != null) await source.setPosition(at);
+            final plaintext = count == 0
+                ? <int>[]
+                : sourceUri != null
+                ? await sourceReader.readAt(
+                    sourceUri,
+                    offset: at,
+                    length: count,
+                  )
+                : await source!.read(count);
+            if (plaintext.length != count) {
+              throw StateError('Source file changed during transfer.');
+            }
+            final encrypted = await crypto.encrypt(
+              metadata: TransferChunkMetadata(
+                transferId: transferId,
+                fileId: fileId,
+                offset: at,
+                plaintextBytes: count,
+              ),
+              plaintext: plaintext,
+              pairingSecret: pairing.secret,
+            );
+            return _PreparedChunk(encrypted: encrypted, plaintext: plaintext);
+          }
+
+          // The next chunk is read and encrypted while the current one is on
+          // the wire, so the network is not idle during disk and crypto work.
+          Future<_PreparedChunk>? nextChunk;
+          final deferredHash = transferFile.sha256 == _unknownSha256;
+          final hasher = deferredHash ? _RunningSha256() : null;
+          var nextOffset = -1;
+          var nextCount = -1;
+          Future<void> dropNextChunk() async {
+            final pending = nextChunk;
+            nextChunk = null;
+            if (pending != null) {
+              await pending.then<void>((_) {}, onError: (Object _) {});
+            }
+          }
+
           try {
             while (!accepted.complete &&
                 (offset < transferFile.size || transferFile.size == 0)) {
-              if (source != null) await source.setPosition(offset);
               final remaining = transferFile.size - offset;
               final count = transferFile.size == 0
                   ? 0
                   : min(effectiveChunkBytes, remaining);
-              final plaintext = count == 0
-                  ? <int>[]
-                  : sourceUri != null
-                  ? await sourceReader.readAt(
-                      sourceUri,
-                      offset: offset,
-                      length: count,
-                    )
-                  : await source!.read(count);
-              if (plaintext.length != count) {
-                throw StateError('Source file changed during transfer.');
+              final EncryptedTransferChunk encrypted;
+              final List<int> plaintext;
+              final pending = nextChunk;
+              if (pending != null &&
+                  nextOffset == offset &&
+                  nextCount == count) {
+                nextChunk = null;
+                final prepared = await pending;
+                encrypted = prepared.encrypted;
+                plaintext = prepared.plaintext;
+              } else {
+                await dropNextChunk();
+                final prepared = await prepareChunk(offset, count);
+                encrypted = prepared.encrypted;
+                plaintext = prepared.plaintext;
               }
-              final encrypted = await crypto.encrypt(
-                metadata: TransferChunkMetadata(
-                  transferId: batch.transferId,
-                  fileId: transferFile.fileId,
-                  offset: offset,
-                  plaintextBytes: plaintext.length,
-                ),
-                plaintext: plaintext,
-                pairingSecret: pairing.secret,
-              );
+              final plaintextLength = encrypted.plaintextBytes;
+              final following = offset + plaintextLength;
+              if (following < fileSize) {
+                nextOffset = following;
+                nextCount = min(effectiveChunkBytes, fileSize - following);
+                final prefetch = prepareChunk(nextOffset, nextCount);
+                // Errors surface when the chunk is used; a dropped one is moot.
+                unawaited(prefetch.then<void>((_) {}, onError: (Object _) {}));
+                nextChunk = prefetch;
+              }
               if (!firstPayloadMarked) {
                 batch = await _markTiming(
                   batch,
@@ -1351,7 +1431,7 @@ class PhoneTransferSender {
                 );
                 firstPayloadMarked = true;
               }
-              if (offset + plaintext.length == transferFile.size &&
+              if (offset + plaintextLength == transferFile.size &&
                   !lastPayloadMarked) {
                 batch = await _markTiming(
                   batch,
@@ -1361,11 +1441,26 @@ class PhoneTransferSender {
                 lastPayloadMarked = true;
               }
               _ChunkResult result;
+              String? digest;
               try {
+                if (hasher != null) {
+                  await _ensureHashedThrough(
+                    hasher: hasher,
+                    offset: offset,
+                    source: source,
+                    sourceUri: sourceUri,
+                    chunkBytes: effectiveChunkBytes,
+                  );
+                  hasher.add(plaintext);
+                  if (offset + plaintextLength == fileSize) {
+                    digest = hasher.close();
+                  }
+                }
                 result = await _putChunk(
                   pairing: pairing,
                   chunk: encrypted,
                   client: activeSession.client,
+                  sha256: digest,
                 );
               } catch (error) {
                 if (error case _TransferOffsetConflict(
@@ -1488,7 +1583,7 @@ class PhoneTransferSender {
                 );
               }
               if (result.confirmedOffset > transferFile.size ||
-                  result.confirmedOffset > offset + plaintext.length ||
+                  result.confirmedOffset > offset + plaintextLength ||
                   (result.complete &&
                       result.confirmedOffset != transferFile.size)) {
                 throw StateError('Laptop returned invalid transfer progress.');
@@ -1498,7 +1593,10 @@ class PhoneTransferSender {
               }
               offset = result.confirmedOffset;
               remainingPutRetries = reconnectBackoff.length;
-              transferFile = transferFile.copyWith(confirmedOffset: offset);
+              transferFile = transferFile.copyWith(
+                confirmedOffset: offset,
+                sha256: digest ?? transferFile.sha256,
+              );
               final shouldPersist =
                   result.complete ||
                   offset == transferFile.size ||
@@ -1520,9 +1618,17 @@ class PhoneTransferSender {
               if (result.complete) break;
             }
           } finally {
+            await dropNextChunk();
             await source?.close();
           }
         } else {
+          final completedDigest = accepted.sha256;
+          if (completedDigest != null &&
+              (transferFile.sha256 == _unknownSha256 ||
+                  transferFile.sha256 == completedDigest)) {
+            transferFile = transferFile.copyWith(sha256: completedDigest);
+            batch = await _replaceFile(batch, index, transferFile);
+          }
           batch = await _markTiming(
             batch,
             index,
@@ -1806,7 +1912,16 @@ class PhoneTransferSender {
       );
     }
     if (accepted['kind'] == 'transfer_file_complete') {
-      if (accepted['sha256'] != transferFile.sha256) {
+      final digest = accepted['sha256'];
+      if (digest is! String ||
+          digest.length != 64 ||
+          digest.contains(RegExp(r'[^a-f0-9]'))) {
+        throw const FormatException(
+          'Laptop returned an invalid completion digest.',
+        );
+      }
+      if (transferFile.sha256 != _unknownSha256 &&
+          digest != transferFile.sha256) {
         throw const FormatException(
           'Laptop returned an invalid completion digest.',
         );
@@ -1815,6 +1930,7 @@ class PhoneTransferSender {
         confirmedOffset: transferFile.size,
         maxChunkBytes: null,
         complete: true,
+        sha256: digest,
       );
     }
     final rawOffset = accepted['confirmedOffset'];
@@ -1832,6 +1948,7 @@ class PhoneTransferSender {
     required PairingCode pairing,
     required EncryptedTransferChunk chunk,
     required HttpClient client,
+    String? sha256,
   }) async {
     final path =
         '/transfer/v1/${chunk.transferId}/${chunk.fileId}?offset=${chunk.offset}';
@@ -1847,6 +1964,9 @@ class PhoneTransferSender {
       ..set('x-vidyut-nonce', chunk.nonce)
       ..set('x-vidyut-plaintext-bytes', chunk.plaintextBytes.toString())
       ..contentLength = chunk.ciphertext.length;
+    if (sha256 != null) {
+      request.headers.set('x-vidyut-sha256', sha256);
+    }
     request.add(chunk.ciphertext);
     final response = await request.close().timeout(const Duration(seconds: 30));
     final body = await utf8.decodeStream(
@@ -2059,6 +2179,45 @@ class PhoneTransferSender {
         )
         .toList(),
   };
+
+  Future<void> _ensureHashedThrough({
+    required _RunningSha256 hasher,
+    required int offset,
+    required RandomAccessFile? source,
+    required String? sourceUri,
+    required int chunkBytes,
+  }) async {
+    if (hasher.hashedThrough == offset && !hasher.closed) return;
+    hasher.reset();
+    if (offset == 0) return;
+    if (source != null) {
+      await source.setPosition(0);
+      var remaining = offset;
+      while (remaining > 0) {
+        final chunk = await source.read(min(chunkBytes, remaining));
+        if (chunk.isEmpty) {
+          throw StateError('Source file changed during transfer.');
+        }
+        hasher.add(chunk);
+        remaining -= chunk.length;
+      }
+      return;
+    }
+    var at = 0;
+    while (at < offset) {
+      final count = min(chunkBytes, offset - at);
+      final chunk = await sourceReader.readAt(
+        sourceUri!,
+        offset: at,
+        length: count,
+      );
+      if (chunk.length != count) {
+        throw StateError('Source file changed during transfer.');
+      }
+      hasher.add(chunk);
+      at += count;
+    }
+  }
 
   Future<String> _hashFile(
     File file, {

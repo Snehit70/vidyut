@@ -84,7 +84,11 @@ file type are valid.
   that generated secret rather than accepting a user-chosen password.
 - Every chunk is independently authenticated and bound to transfer ID, file ID,
   chunk offset, and declared metadata.
-- Verify a final whole-file hash before finalization.
+- Verify a final whole-file hash before finalization. A current laptop
+  advertises `deferred_file_hash` so the phone can compute that hash while
+  sending instead of reading the file twice (ADR 0029). Chunks overlap on the
+  wire, and a usable network coming back reconnects without waiting out
+  backoff.
 - Sanitize sender filenames, discard path components, reject traversal, and
   safely rename reserved names.
 - The relay routes encrypted streams and never keeps completed file contents.

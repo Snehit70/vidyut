@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/pairing/pairing_repository.dart';
@@ -88,9 +89,11 @@ void main() {
 
     expect(result.status, PhoneTransferStatus.completed);
     expect(result.files.single.confirmedOffset, 3);
+    expect(result.files.single.sha256, sha256.convert([1, 2, 3]).toString());
     expect((await history.load()).single.status, PhoneTransferStatus.completed);
     expect(requests, hasLength(1));
     expect(requests.single.method, 'PUT');
+    expect(requests.single.headers.value('x-vidyut-sha256'), isNull);
     expect(
       requests.single.headers.value('authorization'),
       startsWith('Vidyut '),
@@ -126,6 +129,76 @@ void main() {
     await serving.cancel();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'skips pre-offer hashing when the laptop advertises deferred_file_hash',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requests = <HttpRequest>[];
+      final serving = server.listen((request) async {
+        requests.add(request);
+        await request.drain<void>();
+        request.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({'confirmedOffset': 3, 'complete': true}));
+        await request.response.close();
+      });
+      final directory = await Directory.systemTemp.createTemp(
+        'vidyut-phone-deferred-hash-',
+      );
+      final source = File('${directory.path}/report.bin');
+      await source.writeAsBytes([1, 2, 3]);
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        PairingCode(
+          host: '127.0.0.1',
+          port: server.port,
+          secret: 'pairing-secret',
+        ),
+      );
+      final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+      final transports = <_DeferredHashTransferTransport>[];
+      final sender = PhoneTransferSender(
+        pairingRepository: pairingRepository,
+        connectionFactory: (pairing) {
+          final transport = _DeferredHashTransferTransport();
+          transports.add(transport);
+          return RelayConnection(
+            pairing: pairing,
+            deviceId: 'phone',
+            transport: transport,
+          );
+        },
+        history: history,
+        chunkBytes: 4,
+      );
+
+      final result = await _enqueueAndWait(sender, [
+        PhoneTransferSource(
+          path: source.path,
+          filename: 'report.bin',
+          mime: 'application/octet-stream',
+        ),
+      ]);
+
+      final digest = sha256.convert([1, 2, 3]).toString();
+      expect(result.status, PhoneTransferStatus.completed);
+      expect(result.files.single.sha256, digest);
+      final offer = transports.single.sent.firstWhere(
+        (message) => message['kind'] == 'transfer_offer',
+      );
+      final offeredFile =
+          (((offer['offer']! as Map)['files']! as List).first as Map)
+              .cast<String, Object?>();
+      expect(offeredFile['sha256'], List.filled(64, '0').join());
+      expect(requests, hasLength(1));
+      expect(requests.single.headers.value('x-vidyut-sha256'), digest);
+      await server.close(force: true);
+      await serving.cancel();
+      await directory.delete(recursive: true);
+    },
+  );
 
   test(
     'accepts verified completion without re-uploading an empty file',
@@ -892,6 +965,57 @@ class _ScriptedTransferTransport implements RelayTransport {
         if (maxChunkBytes != null) 'maxChunkBytes': maxChunkBytes,
       });
     });
+  }
+
+  @override
+  Future<void> close() => _incoming.close();
+}
+
+class _DeferredHashTransferTransport implements RelayTransport {
+  _DeferredHashTransferTransport() {
+    scheduleMicrotask(
+      () => _incoming.add({
+        'v': 1,
+        'kind': 'hello',
+        'challenge': 'challenge-bytes',
+        'maxPayloadBytes': 4096,
+        'features': ['deferred_file_hash'],
+      }),
+    );
+  }
+
+  final _incoming = StreamController<Object?>();
+  final sent = <Map<String, Object?>>[];
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
+
+  @override
+  Stream<Object?> get messages => _incoming.stream;
+
+  @override
+  void send(Map<String, Object?> message) {
+    sent.add(message);
+    if (message['kind'] == 'auth') {
+      scheduleMicrotask(() => _incoming.add({'v': 1, 'kind': 'auth_ok'}));
+      return;
+    }
+    if (message['kind'] != 'transfer_offer') return;
+    final offer = (message['offer']! as Map).cast<String, Object?>();
+    final file = ((offer['files']! as List).first as Map)
+        .cast<String, Object?>();
+    scheduleMicrotask(
+      () => _incoming.add({
+        'v': 1,
+        'kind': 'transfer_accept',
+        'transferId': offer['transferId'],
+        'fileId': file['fileId'],
+        'confirmedOffset': 0,
+      }),
+    );
   }
 
   @override

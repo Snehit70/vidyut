@@ -533,7 +533,12 @@ export function websocketMessageLimit(maxPayloadBytes: number): number {
   return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
 }
 
-const relayFeatures: readonly RelayFeature[] = ["telemetry_subscribe", "relay_proof", "sealed_control"];
+const relayFeatures: readonly RelayFeature[] = [
+  "telemetry_subscribe",
+  "relay_proof",
+  "sealed_control",
+  "deferred_file_hash",
+];
 
 function isTelemetryRecipient(socket: RelaySocket): boolean {
   return socket.data.authenticated && socket.data.telemetrySubscribed;

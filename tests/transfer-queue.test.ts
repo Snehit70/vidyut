@@ -7,7 +7,7 @@ import {
   TransferQueue,
   type EnqueueTransferFile,
 } from "../src/transfer/transfer-queue";
-import type { TransferOffer } from "../src/shared/wire";
+import { unknownTransferSha256, type TransferOffer } from "../src/shared/wire";
 import { partialPathFor } from "../src/transfer/transfer-paths";
 
 const file = (
@@ -82,6 +82,27 @@ describe("durable transfer queue", () => {
       fileRecord.sha256,
     );
 
+    expect(queue.snapshot().batches[0]!.status).toBe("completed");
+  });
+
+  test("stores a verified digest when the offer left it unknown", async () => {
+    const queue = await memoryQueue();
+    const batch = await queue.enqueue({
+      direction: "phone_to_laptop",
+      origin: "phone",
+      files: [{ ...file("alpha.bin"), sha256: unknownTransferSha256 }],
+    });
+    const fileRecord = batch.files[0]!;
+    await queue.claimNext();
+    await queue.confirmProgress(batch.transferId, fileRecord.fileId, 10);
+    const digest = "c".repeat(64);
+
+    await expect(
+      queue.complete(batch.transferId, fileRecord.fileId, unknownTransferSha256),
+    ).rejects.toThrow(/hash/);
+    await queue.complete(batch.transferId, fileRecord.fileId, digest);
+
+    expect(queue.snapshot().batches[0]!.files[0]!.sha256).toBe(digest);
     expect(queue.snapshot().batches[0]!.status).toBe("completed");
   });
 

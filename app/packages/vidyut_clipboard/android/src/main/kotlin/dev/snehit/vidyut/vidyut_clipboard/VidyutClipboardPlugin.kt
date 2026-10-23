@@ -9,7 +9,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -35,9 +39,11 @@ class VidyutClipboardPlugin :
     private lateinit var channel: MethodChannel
     private lateinit var screenOnChannel: EventChannel
     private lateinit var notificationsChannel: EventChannel
+    private lateinit var networkChannel: EventChannel
     private lateinit var context: Context
     private var screenOnListener: (() -> Unit)? = null
     private var notificationListener: ((Map<String, String>) -> Unit)? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -57,19 +63,62 @@ class VidyutClipboardPlugin :
                 stopNotificationEvents()
             }
         })
+        networkChannel = EventChannel(binding.binaryMessenger, "vidyut/network_available")
+        networkChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                startNetworkEvents(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                stopNetworkEvents()
+            }
+        })
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         screenOnChannel.setStreamHandler(null)
         notificationsChannel.setStreamHandler(null)
+        networkChannel.setStreamHandler(null)
         onCancel(null)
         stopNotificationEvents()
+        stopNetworkEvents()
     }
 
     private fun stopNotificationEvents() {
         notificationListener?.let { PostedNotifications.removeListener(it) }
         notificationListener = null
+    }
+
+    // A default network becoming usable, so the relay can reconnect at once
+    // instead of waiting out its backoff. Android calls back on its own
+    // thread; EventChannel sinks must be called on the main one.
+    private fun startNetworkEvents(events: EventChannel.EventSink) {
+        stopNetworkEvents()
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val main = Handler(Looper.getMainLooper())
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                main.post { events.success(null) }
+            }
+        }
+        try {
+            manager.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (_: RuntimeException) {
+            // Too many callbacks registered, or no permission: keep the backoff.
+        }
+    }
+
+    private fun stopNetworkEvents() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            context.getSystemService(ConnectivityManager::class.java)
+                ?.unregisterNetworkCallback(callback)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered.
+        }
     }
 
     // Screen-on events (keepalive spec D5). Each engine's listen adds one

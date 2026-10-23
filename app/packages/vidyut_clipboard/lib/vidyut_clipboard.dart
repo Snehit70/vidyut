@@ -71,8 +71,21 @@ class ScreenOnEvents {
 
   final EventChannel _channel;
 
-  Stream<void> get events =>
-      _channel.receiveBroadcastStream().map((_) {});
+  Stream<void> get events => _channel.receiveBroadcastStream().map((_) {});
+}
+
+/// An event each time Android has a usable default network again, such as
+/// Wi-Fi coming back. Android also reports the current network as soon as
+/// something subscribes. The foreground-service isolate is the consumer.
+class NetworkAvailableEvents {
+  NetworkAvailableEvents({EventChannel? channel})
+    : _channel = channel ?? defaultChannel;
+
+  static const defaultChannel = EventChannel('vidyut/network_available');
+
+  final EventChannel _channel;
+
+  Stream<void> get events => _channel.receiveBroadcastStream().map((_) {});
 }
 
 /// One notification another app posted, as the native listener saw it. Only

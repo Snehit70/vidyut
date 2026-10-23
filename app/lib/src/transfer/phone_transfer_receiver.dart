@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as hashes;
 import 'package:path_provider/path_provider.dart';
@@ -203,24 +204,45 @@ class PhoneTransferReceiver {
 
       try {
         var lastOffset = offset;
+        var lastCheckpointOffset = offset;
+        var lastCheckpoint = DateTime.now();
         final sink = await partial.open(mode: FileMode.writeOnlyAppend);
+        // The next chunk is requested while this one is decrypted and
+        // written, so the network is not idle during disk and crypto work.
+        Future<_DownloadChunk>? nextChunk;
+        var nextOffset = -1;
+        Future<_DownloadChunk> fetch(int at) {
+          final request = _getChunk(
+            pairing: pairing,
+            transferId: offer.transferId,
+            fileId: offeredFile.fileId,
+            offset: at,
+          );
+          // Errors surface when the chunk is used; a dropped one is moot.
+          unawaited(request.then<void>((_) {}, onError: (Object _) {}));
+          return request;
+        }
+
         try {
           while (offset < offeredFile.size || offeredFile.size == 0) {
             _throwIfDisposed();
-            final response = await _getChunk(
-              pairing: pairing,
-              transferId: offer.transferId,
-              fileId: offeredFile.fileId,
-              offset: offset,
-            );
+            final pending = nextChunk;
+            nextChunk = null;
+            final response = pending != null && nextOffset == offset
+                ? await pending
+                : await fetch(offset);
             _throwIfDisposed();
+            final following = offset + response.chunk.plaintextBytes;
+            if (!response.eof && following < offeredFile.size) {
+              nextOffset = following;
+              nextChunk = fetch(following);
+            }
             final plaintext = await crypto.decrypt(
               chunk: response.chunk,
               pairingSecret: pairing.secret,
             );
             _throwIfDisposed();
             await sink.writeFrom(plaintext);
-            await sink.flush();
             _throwIfDisposed();
             offset += plaintext.length;
             if (offset <= lastOffset && !response.eof) {
@@ -228,7 +250,25 @@ class PhoneTransferReceiver {
             }
             lastOffset = offset;
             record = record.copyWith(confirmedOffset: offset);
-            batch = await _replaceFile(batch, index, record);
+            // Resume reads the partial file's length, so the record and the
+            // disk only need a checkpoint now and then, not every chunk.
+            final now = DateTime.now();
+            final checkpoint =
+                response.eof ||
+                offset == offeredFile.size ||
+                offset - lastCheckpointOffset >= _checkpointBytes ||
+                now.difference(lastCheckpoint) >= _checkpointInterval;
+            if (checkpoint) {
+              await sink.flush();
+              lastCheckpointOffset = offset;
+              lastCheckpoint = now;
+            }
+            batch = await _replaceFile(
+              batch,
+              index,
+              record,
+              persist: checkpoint,
+            );
             _throwIfDisposed();
             connection.sendTransferControl({
               'v': 1,
@@ -240,6 +280,10 @@ class PhoneTransferReceiver {
             if (response.eof) break;
           }
         } finally {
+          final pending = nextChunk;
+          if (pending != null) {
+            await pending.then<void>((_) {}, onError: (Object _) {});
+          }
           await sink.close();
         }
         _throwIfDisposed();
@@ -386,7 +430,11 @@ class PhoneTransferReceiver {
     }
     final ciphertext = await response
         .timeout(const Duration(seconds: 30))
-        .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
+        .fold<BytesBuilder>(
+          BytesBuilder(copy: false),
+          (bytes, chunk) => bytes..add(chunk),
+        )
+        .then((bytes) => bytes.takeBytes());
     return _DownloadChunk(
       chunk: EncryptedTransferChunk(
         transferId: transferId,
@@ -436,15 +484,16 @@ class PhoneTransferReceiver {
   Future<PhoneTransferBatch> _replaceFile(
     PhoneTransferBatch batch,
     int index,
-    PhoneTransferFile file,
-  ) async {
+    PhoneTransferFile file, {
+    bool persist = true,
+  }) async {
     final files = [...batch.files]..[index] = file;
     final updated = batch.copyWith(
       files: files,
       status: PhoneTransferStatus.active,
       updatedAtMs: DateTime.now().millisecondsSinceEpoch,
     );
-    await history.upsert(updated);
+    if (persist) await history.upsert(updated);
     return updated;
   }
 
@@ -559,6 +608,10 @@ class AndroidReceivedFilePublisher implements ReceivedFilePublisher {
     );
   }
 }
+
+/// How often a download writes its progress to disk and to history.
+const _checkpointBytes = 4 * 1024 * 1024;
+const _checkpointInterval = Duration(seconds: 1);
 
 class _DownloadChunk {
   const _DownloadChunk({required this.chunk, required this.eof});

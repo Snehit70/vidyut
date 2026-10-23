@@ -11,7 +11,11 @@ This file is a live gap map against `docs/PRD.md`. It is not a replacement for t
   clipboard payload type (ADR 0007).
 - TypeScript and Dart share validated transfer-offer metadata: stable
   transfer/batch/file identities, direction, safe basenames, MIME, size,
-  modified time, and whole-file SHA-256.
+  modified time, and whole-file SHA-256. A laptop that advertises
+  `deferred_file_hash` lets the phone skip the pre-offer hash and send the
+  digest on the last PUT (ADR 0029). Phone chunks overlap on the wire, history
+  checkpoints are throttled, ciphertext uses flat byte buffers, and Wi-Fi
+  coming back reconnects immediately.
 - The authenticated relay routes typed transfer control between the phone and a
   local laptop transfer adapter without logging filenames.
 - TypeScript and Dart implement a dedicated file-transfer key derivation and

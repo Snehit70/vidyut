@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
@@ -71,7 +72,7 @@ class TransferCrypto {
       offset: metadata.offset,
       plaintextBytes: metadata.plaintextBytes,
       nonce: nonceBase64,
-      ciphertext: [...box.cipherText, ...box.mac.bytes],
+      ciphertext: _joinCiphertext(box.cipherText, box.mac.bytes),
     );
   }
 
@@ -83,11 +84,14 @@ class TransferCrypto {
       throw const FormatException('Transfer ciphertext is too short.');
     }
     final macOffset = chunk.ciphertext.length - 16;
+    final ciphertext = chunk.ciphertext;
     final plaintext = await _algorithm.decrypt(
       SecretBox(
-        chunk.ciphertext.sublist(0, macOffset),
+        ciphertext is Uint8List
+            ? Uint8List.sublistView(ciphertext, 0, macOffset)
+            : ciphertext.sublist(0, macOffset),
         nonce: base64Decode(chunk.nonce),
-        mac: Mac(chunk.ciphertext.sublist(macOffset)),
+        mac: Mac(ciphertext.sublist(macOffset)),
       ),
       secretKey: await _deriveKey(pairingSecret, chunk.transferId),
       aad: _associatedData(chunk, chunk.nonce),
@@ -128,6 +132,13 @@ class TransferCrypto {
         'nonce': nonce,
       }),
     );
+  }
+
+  /// One flat byte buffer; a spread list would hold each byte as a boxed int.
+  static Uint8List _joinCiphertext(List<int> cipherText, List<int> mac) {
+    return Uint8List(cipherText.length + mac.length)
+      ..setRange(0, cipherText.length, cipherText)
+      ..setRange(cipherText.length, cipherText.length + mac.length, mac);
   }
 
   List<int> _randomBytes(int length) {

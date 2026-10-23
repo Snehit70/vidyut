@@ -395,6 +395,7 @@ describe("relay protocol", () => {
     const hello = await phone.next();
     if (hello.kind !== "hello") throw new Error("expected hello");
     expect(hello.features).toContain("telemetry_subscribe");
+    expect(hello.features).toContain("deferred_file_hash");
     phone.send({
       ...(await createAuthMessage(secret, hello.challenge, "phone")),
       features: ["telemetry_subscribe"],
