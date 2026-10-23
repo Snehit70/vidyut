@@ -106,6 +106,7 @@ class ServiceRelayController {
     this.screenshotWatcher,
     this.pushController,
     this.screenOnEvents,
+    this.networkAvailableEvents,
     this.clipboardAutoSendWatcher,
     this.autoSendPublish,
     this.transferReceiverFactory,
@@ -146,6 +147,11 @@ class ServiceRelayController {
   /// A no-op while connected. Subscribed for the controller's whole lifetime;
   /// only [stop] cancels it.
   final Stream<void>? screenOnEvents;
+
+  /// An event each time the phone has a usable network again, such as Wi-Fi
+  /// coming back. Like [screenOnEvents], an event while disconnected resets
+  /// the backoff and reconnects now instead of after up to 32s.
+  final Stream<void>? networkAvailableEvents;
 
   /// Opt-in READ_LOGS auto-text watcher (read-logs-auto-text D2). When present,
   /// [_sync] starts it while [AppSettings.enableClipboardAutoSend] is on **and**
@@ -191,6 +197,7 @@ class ServiceRelayController {
   StreamSubscription<ScreenshotEvent>? _screenshotEventsSubscription;
   StreamSubscription<String>? _screenshotDiagnosticsSubscription;
   StreamSubscription<void>? _screenOnSubscription;
+  StreamSubscription<void>? _networkAvailableSubscription;
   StreamSubscription<ManualClipboardReadResult>? _manualReadSubscription;
   StreamSubscription<String>? _autoSendTextsSubscription;
   StreamSubscription<String>? _autoSendDiagnosticsSubscription;
@@ -233,6 +240,9 @@ class ServiceRelayController {
 
   Future<void> start() {
     _screenOnSubscription ??= screenOnEvents?.listen((_) => _onScreenOn());
+    _networkAvailableSubscription ??= networkAvailableEvents?.listen(
+      (_) => _onNetworkAvailable(),
+    );
     _manualReadSubscription ??= clipboardAutoSendWatcher?.manualResults.listen(
       (result) => unawaited(_onManualClipboardResult(result)),
     );
@@ -251,6 +261,20 @@ class ServiceRelayController {
     if (_lastStatus == ConnectionStatus.connected) return;
     _log('Screen on while disconnected; reconnecting now.');
     _reconnectAttempt = 0;
+    unawaited(_sync());
+  }
+
+  /// Network-back trigger: like [_onScreenOn], but only while offline, and a
+  /// pass already in flight is left to finish. Android reports the current
+  /// network on subscribe, which would otherwise start a second connection
+  /// beside the first one still waiting for auth_ok.
+  void _onNetworkAvailable() {
+    if (_stopped) return;
+    _abandonStalledSync();
+    if (_lastStatus != ConnectionStatus.offline) return;
+    _reconnectAttempt = 0;
+    if (_syncing) return;
+    _log('Network back while disconnected; reconnecting now.');
     unawaited(_sync());
   }
 
@@ -505,6 +529,8 @@ class ServiceRelayController {
     _clipboardPauseTimer = null;
     await _screenOnSubscription?.cancel();
     _screenOnSubscription = null;
+    await _networkAvailableSubscription?.cancel();
+    _networkAvailableSubscription = null;
     await _manualReadSubscription?.cancel();
     _manualReadSubscription = null;
     await _stopScreenshotWatcher();

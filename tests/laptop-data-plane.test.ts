@@ -8,6 +8,7 @@ import {
   sha256Hex,
 } from "../src/shared/transfer-crypto";
 import { createTransferHttpAuth } from "../src/shared/transfer-http-auth";
+import { unknownTransferSha256 } from "../src/shared/wire";
 import { LaptopTransferDataPlane } from "../src/transfer/laptop-data-plane";
 import {
   JsonTransferQueueStorage,
@@ -193,6 +194,115 @@ describe("laptop transfer data plane", () => {
       { kind: "transfer_progress", confirmedOffset: 6 },
       { kind: "transfer_file_complete" },
     ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("accepts a digest sent on the last PUT when the offer left it unknown", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-deferred-hash-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const digest = await sha256Hex(bytes);
+    const queue = await emptyQueue();
+    const offer = {
+      transferId: "transfer_deferred_1234",
+      batchId: "batch_deferred_123456",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_deferred_123456",
+          filename: "report.bin",
+          mime: "application/octet-stream",
+          size: bytes.byteLength,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: unknownTransferSha256,
+        },
+      ],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const plane = new LaptopTransferDataPlane(secret, queue, 4);
+
+    const first = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+      bytes.slice(0, 4),
+    );
+    expect(first.status).toBe(200);
+
+    const missing = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      4,
+      bytes.slice(4),
+    );
+    expect(missing.status).toBe(409);
+    await expect(missing.json()).resolves.toEqual({ code: "digest_missing" });
+
+    const complete = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      4,
+      bytes.slice(4),
+      digest,
+    );
+    expect(complete.status).toBe(200);
+    await expect(complete.json()).resolves.toEqual({
+      confirmedOffset: 6,
+      complete: true,
+    });
+    expect(queue.snapshot().batches[0]!.files[0]!.sha256).toBe(digest);
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("completed");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("rejects a deferred digest that does not match the received bytes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-laptop-deferred-mismatch-"));
+    const destination = join(dir, "report.bin");
+    const bytes = new Uint8Array([9, 8, 7]);
+    const queue = await emptyQueue();
+    const offer = {
+      transferId: "transfer_deferred_bad_12",
+      batchId: "batch_deferred_bad_123",
+      origin: "phone",
+      direction: "phone_to_laptop" as const,
+      createdAtMs: 1_753_689_600_000,
+      files: [
+        {
+          fileId: "file_deferred_bad_123",
+          filename: "report.bin",
+          mime: "application/octet-stream",
+          size: bytes.byteLength,
+          lastModifiedMs: 1_753_689_500_000,
+          sha256: unknownTransferSha256,
+        },
+      ],
+    };
+    await queue.acceptOffer(
+      offer,
+      new Map([[offer.files[0]!.fileId, destination]]),
+    );
+    await queue.claimNext();
+    const plane = new LaptopTransferDataPlane(secret, queue, 4);
+    const response = await putChunk(
+      plane,
+      offer.transferId,
+      offer.files[0]!.fileId,
+      0,
+      bytes,
+      "a".repeat(64),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ code: "hash_mismatch" });
+    expect(queue.snapshot().batches[0]!.files[0]!.status).toBe("failed");
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -861,6 +971,7 @@ async function putChunk(
   fileId: string,
   offset: number,
   plaintext: Uint8Array,
+  sha256?: string,
 ): Promise<Response> {
   const path = `/transfer/v1/${transferId}/${fileId}?offset=${offset}`;
   const encrypted = await encryptTransferChunk(
@@ -881,6 +992,7 @@ async function putChunk(
         authorization: auth.authorization,
         "x-vidyut-nonce": encrypted.nonce,
         "x-vidyut-plaintext-bytes": String(plaintext.length),
+        ...(sha256 === undefined ? {} : { "x-vidyut-sha256": sha256 }),
       },
       body: exactArrayBuffer(encrypted.ciphertext),
     }),

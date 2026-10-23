@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
@@ -162,8 +164,10 @@ void main() {
 
       await _waitUntil(() async {
         final batches = await history.load();
+        // The activity hook runs just after the batch is saved as complete.
         return batches.isNotEmpty &&
-            batches.single.status == PhoneTransferStatus.completed;
+            batches.single.status == PhoneTransferStatus.completed &&
+            errors.any((error) => error.contains('activity storage failure'));
       });
 
       expect(await File('${root.path}/report.bin').readAsBytes(), bytes);
@@ -194,6 +198,98 @@ void main() {
       await root.delete(recursive: true);
     },
   );
+
+  test('downloads a file in several chunks', () async {
+    final bytes = List<int>.generate(10, (index) => index + 1);
+    final crypto = TransferCrypto(random: Random(9));
+    final requestedOffsets = <int>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final serving = server.listen((request) async {
+      final segments = request.uri.pathSegments;
+      final offset = int.parse(request.uri.queryParameters['offset']!);
+      requestedOffsets.add(offset);
+      final slice = bytes.sublist(offset, min(offset + 4, bytes.length));
+      final encrypted = await crypto.encrypt(
+        metadata: TransferChunkMetadata(
+          transferId: segments[2],
+          fileId: segments[3],
+          offset: offset,
+          plaintextBytes: slice.length,
+        ),
+        plaintext: slice,
+        pairingSecret: 'pairing-secret',
+      );
+      request.response.headers
+        ..set('x-vidyut-nonce', encrypted.nonce)
+        ..set('x-vidyut-offset', '$offset')
+        ..set('x-vidyut-plaintext-bytes', '${slice.length}')
+        ..set('x-vidyut-eof', '${offset + slice.length == bytes.length}');
+      request.response.add(encrypted.ciphertext);
+      await request.response.close();
+    });
+    final root = await Directory.systemTemp.createTemp('vidyut-phone-chunks-');
+    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+    final transport = _ReceiverTransport();
+    final pairing = PairingCode(
+      host: '127.0.0.1',
+      port: server.port,
+      secret: 'pairing-secret',
+    );
+    final connection = RelayConnection(
+      pairing: pairing,
+      deviceId: 'phone',
+      transport: transport,
+    );
+    final receiver = PhoneTransferReceiver(
+      history: history,
+      crypto: crypto,
+      chunkBytes: 4,
+      rootDirectory: () async => root,
+    );
+    receiver.start(connection, pairing);
+    await connection.start();
+    transport.receive({
+      'v': 1,
+      'kind': 'transfer_offer',
+      'offer': {
+        'transferId': 'transfer_1234567890',
+        'batchId': 'batch_123456789012',
+        'origin': 'laptop',
+        'direction': 'laptop_to_phone',
+        'createdAtMs': 1753689600000,
+        'files': [
+          {
+            'fileId': 'file_1234567890123',
+            'filename': 'counting.bin',
+            'mime': 'application/octet-stream',
+            'size': bytes.length,
+            'lastModifiedMs': 1753689500000,
+            'sha256': sha256.convert(bytes).toString(),
+          },
+        ],
+      },
+    });
+
+    await _waitUntil(() async {
+      final batches = await history.load();
+      return batches.isNotEmpty &&
+          batches.single.status == PhoneTransferStatus.completed;
+    });
+
+    expect(await File('${root.path}/counting.bin').readAsBytes(), bytes);
+    expect(requestedOffsets, [0, 4, 8]);
+    expect(
+      transport.sent
+          .where((message) => message['kind'] == 'transfer_progress')
+          .map((message) => message['confirmedOffset']),
+      [4, 8, 10],
+    );
+    await receiver.dispose();
+    await connection.close();
+    await server.close(force: true);
+    await serving.cancel();
+    await root.delete(recursive: true);
+  });
 }
 
 Map<String, Object?> _offer({required int size}) {

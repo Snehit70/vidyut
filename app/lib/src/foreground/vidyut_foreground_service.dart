@@ -96,6 +96,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
         },
       ),
       screenOnEvents: ScreenOnEvents().events,
+      networkAvailableEvents: NetworkAvailableEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
       autoSendPublish: sharePublisher.publish,
       postedNotifications: PostedNotifications(),

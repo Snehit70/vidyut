@@ -270,7 +270,13 @@ export interface SealedMessage {
   payload: string;
 }
 
-export type RelayFeature = "telemetry_subscribe" | "relay_proof" | "browse_files" | SessionFeature;
+export type RelayFeature =
+  | "telemetry_subscribe"
+  | "relay_proof"
+  | "browse_files"
+  /** Phone may offer an unknown digest and send the real one on the last PUT. */
+  | "deferred_file_hash"
+  | SessionFeature;
 
 /** Features negotiated per session and covered by `relayProof`. */
 export type SessionFeature = "sealed_control";
@@ -304,6 +310,13 @@ export function encodedPayloadBytes(frame: PayloadFrame): number {
 
 const idPattern = /^[A-Za-z0-9_-]{16,128}$/;
 const sha256Pattern = /^[a-f0-9]{64}$/;
+
+/** Placeholder in a phone→laptop offer when the digest will arrive on the last PUT. */
+export const unknownTransferSha256 = "0".repeat(64);
+
+export function isSha256Hex(value: unknown): value is string {
+  return typeof value === "string" && sha256Pattern.test(value);
+}
 
 export function isTransferOffer(value: unknown): value is TransferOffer {
   if (!value || typeof value !== "object") return false;
@@ -417,8 +430,7 @@ export function isTransferControlMessage(
       return (
         isId(message.transferId) &&
         isId(message.fileId) &&
-        typeof message.sha256 === "string" &&
-        sha256Pattern.test(message.sha256)
+        isSha256Hex(message.sha256)
       );
     case "transfer_file_failed":
       return (
@@ -451,10 +463,9 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
     isNonNegativeSafeInteger(file.lastModifiedMs) &&
     (file.lastModifiedKnown === undefined ||
       typeof file.lastModifiedKnown === "boolean") &&
-    typeof file.sha256 === "string" &&
+    isSha256Hex(file.sha256) &&
     (file.senderTiming === undefined || isTransferTiming(file.senderTiming)) &&
-    (file.folder === undefined || isRelativeFolder(file.folder)) &&
-    sha256Pattern.test(file.sha256)
+    (file.folder === undefined || isRelativeFolder(file.folder))
   );
 }
 

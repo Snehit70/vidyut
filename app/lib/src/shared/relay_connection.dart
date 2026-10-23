@@ -145,6 +145,10 @@ const telemetrySubscribeFeature = 'telemetry_subscribe';
 /// The laptop shares folders the phone can browse and pull from (ADR 0026).
 const browseFilesFeature = 'browse_files';
 
+/// The laptop will accept an unknown offer digest and check the real one
+/// on the last PUT (ADR 0029).
+const deferredFileHashFeature = 'deferred_file_hash';
+
 class RelayConnection implements RelaySession {
   RelayConnection({
     required this.pairing,
@@ -217,6 +221,11 @@ class RelayConnection implements RelaySession {
   /// shares some, and the session is sealed, since listings carry filenames.
   bool get canBrowse =>
       _sealer != null && _relayFeatures.contains(browseFilesFeature);
+
+  /// True when this Relay's hello listed [deferredFileHashFeature], so a
+  /// send can skip the pre-offer whole-file hash.
+  bool get supportsDeferredFileHash =>
+      _relayFeatures.contains(deferredFileHashFeature);
 
   /// The cap advertised by the relay hello, measured on the decoded
   /// ciphertext (plaintext + 16-byte GCM tag); [defaultMaxPayloadBytes]

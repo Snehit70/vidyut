@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
   package="dev.snehit.vidyut.vidyut_clipboard">
+    <!-- Network-available events for reconnecting when Wi-Fi returns. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Package-visibility carve-out so resolveActivity can see the MIUI
          permission editor on Android 11+. -->
     <queries>

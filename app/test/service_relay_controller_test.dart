@@ -189,9 +189,7 @@ void main() {
       'kind': 'telemetry',
       'active': true,
     });
-    await _waitUntil(
-      () => subscriptions(harness.transports.single).isNotEmpty,
-    );
+    await _waitUntil(() => subscriptions(harness.transports.single).isNotEmpty);
     expect(subscriptions(harness.transports.single), [true]);
 
     await harness.controller.handleTaskData(const {'kind': 'sync'});
@@ -720,6 +718,57 @@ void main() {
     });
   });
 
+  group('network-available trigger', () {
+    test('reconnects at once while disconnected', () async {
+      final harness = _Harness(pairing: pairing);
+
+      await harness.controller.start();
+      final transport = harness.transports.single;
+      transport.receive({'v': 1, 'kind': 'auth_ok'});
+      await _drain();
+
+      await transport.drop();
+      await _drain();
+      expect(harness.transports, hasLength(1));
+
+      harness.networkAvailable.add(null);
+      await _waitUntil(() => harness.transports.length == 2);
+
+      expect(
+        harness.emitted,
+        contains(
+          equals({
+            'kind': 'log',
+            'message': 'Network back while disconnected; reconnecting now.',
+            'error': false,
+          }),
+        ),
+      );
+    });
+
+    test(
+      'leaves a connect in flight alone and is a no-op when connected',
+      () async {
+        final harness = _Harness(pairing: pairing);
+
+        await harness.controller.start();
+        // Android reports the current network on subscribe, while the first
+        // connect is still waiting for auth_ok.
+        harness.networkAvailable.add(null);
+        await _drain();
+        expect(harness.transports, hasLength(1));
+
+        harness.transports.single.receive({'v': 1, 'kind': 'auth_ok'});
+        await _drain();
+        harness.networkAvailable.add(null);
+        await _drain();
+
+        expect(harness.transports, hasLength(1));
+        expect(harness.transports.single.closed, isFalse);
+      },
+    );
+  });
+
   group('wedge recovery (#35)', () {
     test(
       'sync proceeds past a transport whose close never completes',
@@ -1238,7 +1287,8 @@ void main() {
             (notification) => notification.title == 'Vidyut is already sending',
           ),
           isEmpty,
-          reason: 'a wedged notification must not be reported as a real conflict',
+          reason:
+              'a wedged notification must not be reported as a real conflict',
         );
       },
     );
@@ -1756,6 +1806,7 @@ class _Harness {
             }
           : null,
       screenOnEvents: screenOn.stream,
+      networkAvailableEvents: networkAvailable.stream,
       loadPairing: () async => pairing,
       loadSettings: loadSettings ?? () async => settings,
       connectionFactory: (pairing) {
@@ -1805,6 +1856,7 @@ class _Harness {
   bool hangNotifications = false;
 
   final screenOn = StreamController<void>.broadcast();
+  final networkAvailable = StreamController<void>.broadcast();
   final _FakeScreenshotWatcher? screenshotWatcher;
   final _FakeAutoSendWatcher? autoSendWatcher;
   late final ServiceRelayController controller;

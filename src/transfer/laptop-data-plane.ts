@@ -19,6 +19,7 @@ import {
   type PairingSecretRef,
 } from "../relay/config";
 import type { TransferControlMessage } from "../shared/wire";
+import { isSha256Hex, unknownTransferSha256 } from "../shared/wire";
 import type { TransferFileRecord } from "./transfer-queue";
 import { TransferQueue, transferTimingStage } from "./transfer-queue";
 import { TransferHttpDataPlane } from "./http-data-plane";
@@ -423,6 +424,7 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
       return Response.json({ code: "transfer_not_active" }, { status: 409 });
     }
     const nonce = request.headers.get("x-vidyut-nonce");
+    const claimedSha256 = request.headers.get("x-vidyut-sha256");
     const plaintextBytes = parseNonNegativeInteger(
       request.headers.get("x-vidyut-plaintext-bytes"),
     );
@@ -571,6 +573,23 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
 
     const publishDue =
       checkpointDue || progress.shouldPublish(now);
+    const deferred = record.sha256 === unknownTransferSha256;
+    if (confirmedOffset === record.size) {
+      if (
+        deferred &&
+        (!isSha256Hex(claimedSha256) ||
+          claimedSha256 === unknownTransferSha256)
+      ) {
+        return Response.json({ code: "digest_missing" }, { status: 409 });
+      }
+      if (
+        !deferred &&
+        claimedSha256 !== null &&
+        claimedSha256 !== record.sha256
+      ) {
+        return Response.json({ code: "hash_mismatch" }, { status: 409 });
+      }
+    }
     if (confirmedOffset === record.size) {
       await this.queue.beginVerification(
         transferId,
@@ -596,10 +615,11 @@ export class LaptopTransferDataPlane extends TransferHttpDataPlane {
     }
 
     if (confirmedOffset === record.size) {
+      const expectedSha256 = deferred ? claimedSha256 : record.sha256;
       let verifiedSha256: string;
       try {
         verifiedSha256 = await hashFile(partialPath);
-        if (verifiedSha256 !== record.sha256) {
+        if (verifiedSha256 !== expectedSha256) {
           await unlink(partialPath).catch(() => undefined);
           await this.queue.fail(transferId, fileId, "hash_mismatch");
           this.publishControl({

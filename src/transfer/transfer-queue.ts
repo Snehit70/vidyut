@@ -13,7 +13,11 @@ import type {
   TransferOffer,
   TransferTimingSummary,
 } from "../shared/wire";
-import { isTransferOffer } from "../shared/wire";
+import {
+  isSha256Hex,
+  isTransferOffer,
+  unknownTransferSha256,
+} from "../shared/wire";
 import { partialPathFor } from "./transfer-paths";
 
 export type TransferFileStatus =
@@ -333,7 +337,15 @@ export class TransferQueue {
     if (file.confirmedOffset !== file.size) {
       throw new Error("A file cannot complete before every byte is confirmed.");
     }
-    if (verifiedSha256 !== file.sha256) {
+    if (file.sha256 === unknownTransferSha256) {
+      if (
+        verifiedSha256 === unknownTransferSha256 ||
+        !isSha256Hex(verifiedSha256)
+      ) {
+        throw new Error("Whole-file hash does not match the offer.");
+      }
+      file.sha256 = verifiedSha256;
+    } else if (verifiedSha256 !== file.sha256) {
       throw new Error("Whole-file hash does not match the offer.");
     }
     if (file.finalizingPath) {

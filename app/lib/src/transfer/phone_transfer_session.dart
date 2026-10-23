@@ -15,11 +15,49 @@ class _AcceptedTransfer {
     required this.confirmedOffset,
     required this.maxChunkBytes,
     required this.complete,
+    this.sha256,
   });
 
   final int confirmedOffset;
   final Object? maxChunkBytes;
   final bool complete;
+  final String? sha256;
+}
+
+class _PreparedChunk {
+  const _PreparedChunk({required this.encrypted, required this.plaintext});
+
+  final EncryptedTransferChunk encrypted;
+  final List<int> plaintext;
+}
+
+class _RunningSha256 {
+  _RunningSha256() {
+    reset();
+  }
+
+  late AccumulatorSink<hashes.Digest> _sink;
+  late ByteConversionSink _digest;
+  int hashedThrough = 0;
+  bool closed = false;
+
+  void reset() {
+    _sink = AccumulatorSink<hashes.Digest>();
+    _digest = hashes.sha256.startChunkedConversion(_sink);
+    hashedThrough = 0;
+    closed = false;
+  }
+
+  void add(List<int> bytes) {
+    _digest.add(bytes);
+    hashedThrough += bytes.length;
+  }
+
+  String close() {
+    _digest.close();
+    closed = true;
+    return _sink.events.single.toString();
+  }
 }
 
 class _AcceptedSession {
