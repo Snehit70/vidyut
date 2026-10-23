@@ -142,6 +142,9 @@ class WebSocketRelayTransport implements RelayTransport {
 /// Relay protocol feature: telemetry flows only after the phone asks for it.
 const telemetrySubscribeFeature = 'telemetry_subscribe';
 
+/// The laptop shares folders the phone can browse and pull from (ADR 0026).
+const browseFilesFeature = 'browse_files';
+
 class RelayConnection implements RelaySession {
   RelayConnection({
     required this.pairing,
@@ -179,6 +182,7 @@ class RelayConnection implements RelaySession {
   final _health = StreamController<RelayHealth>.broadcast();
   final _telemetry = StreamController<LaptopTelemetry>.broadcast();
   final _transferControls = StreamController<Map<String, Object?>>.broadcast();
+  final _browseResults = StreamController<Map<String, Object?>>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
   Set<String> _relayFeatures = const {};
@@ -207,6 +211,12 @@ class RelayConnection implements RelaySession {
   Stream<RelayHealth> get health => _health.stream;
   Stream<LaptopTelemetry> get telemetry => _telemetry.stream;
   Stream<Map<String, Object?>> get transferControls => _transferControls.stream;
+  Stream<Map<String, Object?>> get browseResults => _browseResults.stream;
+
+  /// Whether this session can browse the laptop's shared folders: the relay
+  /// shares some, and the session is sealed, since listings carry filenames.
+  bool get canBrowse =>
+      _sealer != null && _relayFeatures.contains(browseFilesFeature);
 
   /// The cap advertised by the relay hello, measured on the decoded
   /// ciphertext (plaintext + 16-byte GCM tag); [defaultMaxPayloadBytes]
@@ -286,6 +296,19 @@ class RelayConnection implements RelaySession {
     _send(message);
   }
 
+  /// Sends a `browse_list` or `browse_pull` request. Only on a sealed session
+  /// whose relay advertised [browseFilesFeature]; see [canBrowse].
+  void sendBrowse(Map<String, Object?> message) {
+    final kind = message['kind'];
+    if (message['v'] != 1 || kind is! String || !kind.startsWith('browse_')) {
+      throw const FormatException('Invalid browse message.');
+    }
+    if (!canBrowse) {
+      throw StateError('This session cannot browse the laptop.');
+    }
+    _send(message);
+  }
+
   /// Sends [message], sealed when the session negotiated sealed control and
   /// the message is not a payload frame.
   void _send(Map<String, Object?> message) {
@@ -328,6 +351,7 @@ class RelayConnection implements RelaySession {
     await _guardedClose(_health.close());
     await _guardedClose(_telemetry.close());
     await _guardedClose(_transferControls.close());
+    await _guardedClose(_browseResults.close());
   }
 
   Future<void> _guardedClose(Future<void>? step) async {
@@ -424,6 +448,8 @@ class RelayConnection implements RelaySession {
         if (ts is int) _acks.add(ts);
       case String kind when kind.startsWith('transfer_'):
         _transferControls.add(message);
+      case 'browse_result':
+        _browseResults.add(message);
       case 'error':
         final code = message['code'];
         final detail = message['message'];

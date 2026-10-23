@@ -495,13 +495,18 @@ void main() {
       List<String> features = const ['sealed_control'],
       String proofSecret = secret,
       bool sendProof = true,
+      List<String> relayFeatures = const [
+        'telemetry_subscribe',
+        'relay_proof',
+        'sealed_control',
+      ],
     }) async {
       transport.receive({
         'v': 1,
         'kind': 'hello',
         'challenge': challenge,
         'maxPayloadBytes': 4096,
-        'features': ['telemetry_subscribe', 'relay_proof', 'sealed_control'],
+        'features': relayFeatures,
       });
       await pumpEventQueue();
       final auth = sent.single;
@@ -564,6 +569,57 @@ void main() {
       await pumpEventQueue();
       expect(sent.last['kind'], 'sealed');
       expect(await relay.open(sent.last), control);
+    });
+
+    test('browses only on a sealed session whose relay shares folders', () async {
+      final shared = connect();
+      final results = <Map<String, Object?>>[];
+      shared.browseResults.listen(results.add);
+      await shared.start();
+      final relay = (await handshake(
+        relayFeatures: const ['relay_proof', 'sealed_control', 'browse_files'],
+      ))!;
+      expect(shared.canBrowse, isTrue);
+
+      const request = {
+        'v': 1,
+        'kind': 'browse_list',
+        'requestId': 'browse-request-0001',
+      };
+      shared.sendBrowse(request);
+      await pumpEventQueue();
+      expect(await relay.open(sent.last), request);
+      expect(
+        () => shared.sendBrowse({'v': 1, 'kind': 'transfer_cancel'}),
+        throwsFormatException,
+      );
+
+      transport.receive(
+        await relay.seal({
+          'v': 1,
+          'kind': 'browse_result',
+          'requestId': 'browse-request-0001',
+          'ok': true,
+          'roots': <Object?>[],
+        }),
+      );
+      await pumpEventQueue();
+      expect(results.single['requestId'], 'browse-request-0001');
+      expect(statuses.last, ConnectionStatus.connected);
+
+      final notShared = connect();
+      await notShared.start();
+      await handshake();
+      expect(notShared.canBrowse, isFalse);
+      expect(() => notShared.sendBrowse(request), throwsStateError);
+
+      final unsealed = connect();
+      await unsealed.start();
+      await handshake(
+        features: const [],
+        relayFeatures: const ['relay_proof', 'sealed_control', 'browse_files'],
+      );
+      expect(unsealed.canBrowse, isFalse);
     });
 
     test('drops an unsealed control message on a sealed session', () async {

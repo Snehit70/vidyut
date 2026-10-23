@@ -25,6 +25,13 @@ laptop as a text Payload (ADR 0025). Opt-in, and only with notification
 access. The code is never kept in logs or Activity.
 _Avoid_: OTP sync, SMS forwarding, notification mirroring
 
+**Shared folder**:
+A laptop folder the phone may browse and pull files from (ADR 0026). Set in
+`sharedFolders` in the relay config. Read-only: the phone lists and takes,
+and hidden files and symlinks are never shown. A pull becomes an ordinary
+laptop → phone Transfer.
+_Avoid_: remote file system, network share, sync folder
+
 **Link**:
 A Payload that is a single web address. The laptop writes it to the clipboard
 exactly as it would any text and additionally opens it in a browser, so the

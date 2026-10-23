@@ -29,6 +29,14 @@ export interface TransferCoordinatorOptions {
   progressSessions?: ReceiverProgressSessions;
 }
 
+/** A laptop file to send, and the subfolder it lands in on the phone. */
+export interface LaptopFileEntry {
+  path: string;
+  folder?: string;
+}
+
+const maxOfferFiles = 100;
+
 export class TransferCoordinator {
   constructor(private readonly options: TransferCoordinatorOptions) {}
 
@@ -109,8 +117,22 @@ export class TransferCoordinator {
 
   async enqueueLaptopFiles(paths: string[]): Promise<TransferOffer> {
     if (paths.length === 0) throw new RangeError("Select at least one file.");
+    const [offer] = await this.enqueueLaptopEntries(
+      paths.map((path) => ({ path })),
+    );
+    return offer!;
+  }
+
+  /**
+   * Queues laptop files for the phone, 100 to a batch (the offer limit), with
+   * the subfolder each lands in. Every file is checked before any is queued.
+   */
+  async enqueueLaptopEntries(
+    entries: readonly LaptopFileEntry[],
+  ): Promise<TransferOffer[]> {
+    if (entries.length === 0) throw new RangeError("Select at least one file.");
     const files: EnqueueTransferFile[] = [];
-    for (const path of paths) {
+    for (const { path, folder } of entries) {
       const info = await stat(path);
       if (!info.isFile()) {
         throw new Error(`Only regular files can be transferred: ${path}`);
@@ -125,15 +147,20 @@ export class TransferCoordinator {
         lastModifiedMs: info.mtimeMs,
         sha256: await hashPath(path),
         sourcePath: path,
+        ...(folder === undefined ? {} : { folder }),
       });
     }
-    const batch = await this.options.queue.enqueue({
-      direction: "laptop_to_phone",
-      origin: "laptop",
-      files,
-    });
+    const offers: TransferOffer[] = [];
+    for (let start = 0; start < files.length; start += maxOfferFiles) {
+      const batch = await this.options.queue.enqueue({
+        direction: "laptop_to_phone",
+        origin: "laptop",
+        files: files.slice(start, start + maxOfferFiles),
+      });
+      offers.push(this.options.queue.offer(batch.transferId));
+    }
     await this.activateNext();
-    return this.options.queue.offer(batch.transferId);
+    return offers;
   }
 
   async handleControl(

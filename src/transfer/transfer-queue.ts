@@ -85,6 +85,7 @@ export interface EnqueueTransferFile {
   sha256: string;
   sourcePath?: string;
   destinationPath?: string;
+  folder?: string;
 }
 
 export interface TransferClaim {
@@ -239,6 +240,7 @@ export class TransferQueue {
           lastModifiedKnown,
           sha256,
           senderTiming,
+          folder,
         }) => ({
           fileId,
           filename,
@@ -248,6 +250,7 @@ export class TransferQueue {
           ...(lastModifiedKnown === undefined ? {} : { lastModifiedKnown }),
           sha256,
           ...(senderTiming === undefined ? {} : { senderTiming }),
+          ...(folder === undefined ? {} : { folder }),
         }),
       ),
     };

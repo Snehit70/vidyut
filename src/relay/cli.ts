@@ -20,6 +20,7 @@ import {
   TransferQueue,
 } from "../transfer/transfer-queue";
 import { TransferCoordinator } from "../transfer/transfer-coordinator";
+import { answerBrowse, LaptopBrowser } from "../transfer/laptop-browser";
 import {
   LaptopTransferDataPlane,
   ReceiverProgressSessions,
@@ -80,6 +81,7 @@ const clipboardPause = new ClipboardPause({
   onChange: () => relay.publishHealth(),
 });
 const receiverProgressSessions = new ReceiverProgressSessions();
+const laptopBrowser = new LaptopBrowser({ folders: config.sharedFolders });
 const transferCoordinator = new TransferCoordinator({
   queue: transferQueue,
   destinationDirectory: config.transferDestination,
@@ -123,6 +125,22 @@ relay = await createRelay({
   deviceConnected: (deviceId, publishControl) =>
     transferCoordinator.handleDeviceConnected(deviceId, publishControl),
   transferHttp: transferDataPlane.handle.bind(transferDataPlane),
+  ...(config.sharedFolders.length > 0 && {
+    browse: (request) =>
+      answerBrowse(
+        request,
+        laptopBrowser,
+        (entries) => {
+          transferCoordinator.enqueueLaptopEntries(entries).catch((error) => {
+            logger.error("browse_pull_failed", {
+              files: entries.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        },
+        config.maxTransferFileBytes,
+      ),
+  }),
 });
 await transferCoordinator.start();
 

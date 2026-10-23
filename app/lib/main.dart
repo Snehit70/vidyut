@@ -12,6 +12,8 @@ import 'package:vidyut_files/vidyut_files.dart';
 import 'src/activity/last_activity.dart';
 import 'src/activity/last_activity_repository.dart';
 import 'src/activity/recent_activity_screen.dart';
+import 'src/browse/laptop_file_browser.dart';
+import 'src/browse/laptop_files_screen.dart';
 import 'src/debug/debug_log.dart';
 import 'src/design/theme.dart';
 import 'src/design/widgets.dart';

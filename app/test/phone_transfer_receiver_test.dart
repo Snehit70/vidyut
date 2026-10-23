@@ -59,121 +59,141 @@ void main() {
     timeout: const Timeout(Duration(seconds: 3)),
   );
 
-  test('downloads, verifies and records a laptop file', () async {
-    final bytes = [1, 2, 3];
-    final crypto = TransferCrypto(random: Random(7));
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final serving = server.listen((request) async {
-      final segments = request.uri.pathSegments;
-      final transferId = segments[2];
-      final fileId = segments[3];
-      final offset = int.parse(request.uri.queryParameters['offset']!);
-      final encrypted = await crypto.encrypt(
-        metadata: TransferChunkMetadata(
-          transferId: transferId,
-          fileId: fileId,
-          offset: offset,
-          plaintextBytes: bytes.length,
-        ),
-        plaintext: bytes,
-        pairingSecret: 'pairing-secret',
+  test(
+    'downloads, verifies and records laptop files, keeping a pulled folder',
+    () async {
+      final bytes = [1, 2, 3];
+      final crypto = TransferCrypto(random: Random(7));
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final serving = server.listen((request) async {
+        final segments = request.uri.pathSegments;
+        final transferId = segments[2];
+        final fileId = segments[3];
+        final offset = int.parse(request.uri.queryParameters['offset']!);
+        final encrypted = await crypto.encrypt(
+          metadata: TransferChunkMetadata(
+            transferId: transferId,
+            fileId: fileId,
+            offset: offset,
+            plaintextBytes: bytes.length,
+          ),
+          plaintext: bytes,
+          pairingSecret: 'pairing-secret',
+        );
+        request.response.headers
+          ..set('x-vidyut-nonce', encrypted.nonce)
+          ..set('x-vidyut-offset', '$offset')
+          ..set('x-vidyut-plaintext-bytes', '${bytes.length}')
+          ..set('x-vidyut-eof', 'true');
+        request.response.add(encrypted.ciphertext);
+        await request.response.close();
+      });
+      final root = await Directory.systemTemp.createTemp(
+        'vidyut-phone-receive-',
       );
-      request.response.headers
-        ..set('x-vidyut-nonce', encrypted.nonce)
-        ..set('x-vidyut-offset', '$offset')
-        ..set('x-vidyut-plaintext-bytes', '${bytes.length}')
-        ..set('x-vidyut-eof', 'true');
-      request.response.add(encrypted.ciphertext);
-      await request.response.close();
-    });
-    final root = await Directory.systemTemp.createTemp('vidyut-phone-receive-');
-    final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
-    final transport = _ReceiverTransport();
-    final pairing = PairingCode(
-      host: '127.0.0.1',
-      port: server.port,
-      secret: 'pairing-secret',
-    );
-    final connection = RelayConnection(
-      pairing: pairing,
-      deviceId: 'phone',
-      transport: transport,
-    );
-    var rootAttempts = 0;
-    final errors = <String>[];
-    final receiver = PhoneTransferReceiver(
-      history: history,
-      crypto: crypto,
-      rootDirectory: () async {
-        rootAttempts += 1;
-        if (rootAttempts == 1) throw StateError('temporary storage failure');
-        return root;
-      },
-      onEvent: (message, {isError = false}) {
-        if (isError) errors.add(message);
-      },
-      onBatchResult: (_) async {
-        throw StateError('activity storage failure');
-      },
-    );
-    receiver.start(connection, pairing);
-    await connection.start();
-    final offer = {
-      'v': 1,
-      'kind': 'transfer_offer',
-      'offer': {
-        'transferId': 'transfer_1234567890',
-        'batchId': 'batch_123456789012',
-        'origin': 'laptop',
-        'direction': 'laptop_to_phone',
-        'createdAtMs': 1753689600000,
-        'files': [
-          {
-            'fileId': 'file_1234567890123',
-            'filename': 'report.bin',
-            'mime': 'application/octet-stream',
-            'size': bytes.length,
-            'lastModifiedMs': 1753689500000,
-            'sha256':
-                '039058c6f2c0cb492c533b0a4d14ef77'
-                'cc0f78abccced5287d84a1a2011cfb81',
-          },
-        ],
-      },
-    };
-    transport.receive(offer);
-    await _waitUntil(() async => errors.isNotEmpty);
-    transport.receive(offer);
+      final history = TransferHistoryRepository(MemoryTransferHistoryStorage());
+      final transport = _ReceiverTransport();
+      final pairing = PairingCode(
+        host: '127.0.0.1',
+        port: server.port,
+        secret: 'pairing-secret',
+      );
+      final connection = RelayConnection(
+        pairing: pairing,
+        deviceId: 'phone',
+        transport: transport,
+      );
+      var rootAttempts = 0;
+      final errors = <String>[];
+      final receiver = PhoneTransferReceiver(
+        history: history,
+        crypto: crypto,
+        rootDirectory: () async {
+          rootAttempts += 1;
+          if (rootAttempts == 1) throw StateError('temporary storage failure');
+          return root;
+        },
+        onEvent: (message, {isError = false}) {
+          if (isError) errors.add(message);
+        },
+        onBatchResult: (_) async {
+          throw StateError('activity storage failure');
+        },
+      );
+      receiver.start(connection, pairing);
+      await connection.start();
+      final offer = {
+        'v': 1,
+        'kind': 'transfer_offer',
+        'offer': {
+          'transferId': 'transfer_1234567890',
+          'batchId': 'batch_123456789012',
+          'origin': 'laptop',
+          'direction': 'laptop_to_phone',
+          'createdAtMs': 1753689600000,
+          'files': [
+            {
+              'fileId': 'file_1234567890123',
+              'filename': 'report.bin',
+              'mime': 'application/octet-stream',
+              'size': bytes.length,
+              'lastModifiedMs': 1753689500000,
+              'sha256':
+                  '039058c6f2c0cb492c533b0a4d14ef77'
+                  'cc0f78abccced5287d84a1a2011cfb81',
+            },
+            {
+              'fileId': 'file_1234567890124',
+              'filename': 'photo.bin',
+              'mime': 'application/octet-stream',
+              'size': bytes.length,
+              'lastModifiedMs': 1753689500000,
+              'sha256':
+                  '039058c6f2c0cb492c533b0a4d14ef77'
+                  'cc0f78abccced5287d84a1a2011cfb81',
+              'folder': 'Trip/Day 1',
+            },
+          ],
+        },
+      };
+      transport.receive(offer);
+      await _waitUntil(() async => errors.isNotEmpty);
+      transport.receive(offer);
 
-    await _waitUntil(() async {
-      final batches = await history.load();
-      return batches.isNotEmpty &&
-          batches.single.status == PhoneTransferStatus.completed;
-    });
+      await _waitUntil(() async {
+        final batches = await history.load();
+        return batches.isNotEmpty &&
+            batches.single.status == PhoneTransferStatus.completed;
+      });
 
-    expect(await File('${root.path}/report.bin').readAsBytes(), bytes);
-    expect(errors, contains(contains('temporary storage failure')));
-    expect(errors, contains(contains('activity storage failure')));
-    expect(
-      transport.sent.map((message) => message['kind']),
-      containsAll([
-        'transfer_accept',
-        'transfer_progress',
-        'transfer_file_complete',
-      ]),
-    );
-    expect(
-      transport.sent.firstWhere(
-        (message) => message['kind'] == 'transfer_accept',
-      )['maxChunkBytes'],
-      TransferChunkPolicy.preferredBytes,
-    );
-    await receiver.dispose();
-    await connection.close();
-    await server.close(force: true);
-    await serving.cancel();
-    await root.delete(recursive: true);
-  });
+      expect(await File('${root.path}/report.bin').readAsBytes(), bytes);
+      expect(
+        await File('${root.path}/Trip/Day 1/photo.bin').readAsBytes(),
+        bytes,
+      );
+      expect(errors, contains(contains('temporary storage failure')));
+      expect(errors, contains(contains('activity storage failure')));
+      expect(
+        transport.sent.map((message) => message['kind']),
+        containsAll([
+          'transfer_accept',
+          'transfer_progress',
+          'transfer_file_complete',
+        ]),
+      );
+      expect(
+        transport.sent.firstWhere(
+          (message) => message['kind'] == 'transfer_accept',
+        )['maxChunkBytes'],
+        TransferChunkPolicy.preferredBytes,
+      );
+      await receiver.dispose();
+      await connection.close();
+      await server.close(force: true);
+      await serving.cancel();
+      await root.delete(recursive: true);
+    },
+  );
 }
 
 Map<String, Object?> _offer({required int size}) {

@@ -756,6 +756,24 @@ class _PairingScreenState extends State<PairingScreen>
             'Send again',
             () => _transferSender.sendAgain(file),
           ),
+          onBrowseLaptop: () => unawaited(_openLaptopFiles()),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openLaptopFiles() async {
+    // The stored pairing carries the relay-proof pin; the screen's copy can
+    // predate it.
+    final pairing = await widget.pairingRepository.load();
+    if (pairing == null || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LaptopFilesScreen(
+          files: LaptopFileBrowser(
+            pairing: pairing,
+            connectionFactory: widget.relayConnectionFactory,
+          ),
         ),
       ),
     );

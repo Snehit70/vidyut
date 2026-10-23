@@ -21,6 +21,7 @@ class TransferFilesScreen extends StatefulWidget {
     this.onShareFile,
     this.onSendAgain,
     this.canUseFileAction,
+    this.onBrowseLaptop,
   });
 
   final TransferHistoryRepository history;
@@ -31,6 +32,9 @@ class TransferFilesScreen extends StatefulWidget {
   final Future<void> Function(PhoneTransferFile file)? onShareFile;
   final Future<void> Function(PhoneTransferFile file)? onSendAgain;
   final bool Function(PhoneTransferFile file)? canUseFileAction;
+
+  /// Opens the laptop's shared folders to pull files from (ADR 0026).
+  final VoidCallback? onBrowseLaptop;
 
   @override
   State<TransferFilesScreen> createState() => _TransferFilesScreenState();
@@ -632,6 +636,12 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
     return AppBar(
       title: const Text('Files'),
       actions: [
+        if (widget.onBrowseLaptop != null)
+          IconButton(
+            tooltip: 'Browse laptop',
+            onPressed: widget.onBrowseLaptop,
+            icon: const Icon(Icons.laptop_outlined),
+          ),
         if (_batches.isNotEmpty)
           IconButton(
             tooltip: 'Clear history',
