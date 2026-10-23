@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -28,10 +29,18 @@ const ICON_STOPPED: &[u8] = include_bytes!("../icons/tray/stopped.png");
 
 /// The disabled first menu row, kept so the health watch can relabel it.
 static STATUS_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+/// Pause or resume clipboard sync, relabelled with the state it would change.
+static PAUSE_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
+/// What the last health read said, so the pause item knows which way to flip.
+static CLIPBOARD_PAUSED: AtomicBool = AtomicBool::new(false);
+
+const PAUSE_LABEL: &str = "Pause clipboard for 1 hour";
+const RESUME_LABEL: &str = "Resume clipboard sync";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Health {
     Ready,
+    Paused,
     Attention,
     Down,
     Stopped,
@@ -41,7 +50,9 @@ impl Health {
     fn icon(self) -> &'static [u8] {
         match self {
             Health::Ready => ICON_READY,
-            Health::Attention => ICON_ATTENTION,
+            // Paused is the user's choice, but it still means copies are not
+            // moving, so it wears the same mark as the shell's warning dot.
+            Health::Paused | Health::Attention => ICON_ATTENTION,
             Health::Down => ICON_DOWN,
             Health::Stopped => ICON_STOPPED,
         }
@@ -50,6 +61,7 @@ impl Health {
     fn label(self) -> &'static str {
         match self {
             Health::Ready => "Ready",
+            Health::Paused => "Clipboard sync paused",
             Health::Attention => "Sync needs attention",
             Health::Down => "Relay down",
             Health::Stopped => "Relay stopped",
@@ -168,9 +180,11 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let status = MenuItem::with_id(app, "status", "Checking…", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Vidyut", true, None::<&str>)?;
     let send = MenuItem::with_id(app, "send", "Send files", true, None::<&str>)?;
+    let pause = MenuItem::with_id(app, "pause", PAUSE_LABEL, false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let _ = STATUS_ITEM.set(status.clone());
-    let menu = Menu::with_items(app, &[&status, &show, &send, &quit])?;
+    let _ = PAUSE_ITEM.set(pause.clone());
+    let menu = Menu::with_items(app, &[&status, &show, &send, &pause, &quit])?;
     let icon = Image::from_bytes(Health::Attention.icon())
         .map_err(|error| format!("tray icon is unreadable: {error}"))?;
 
@@ -185,6 +199,15 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             "show" => show_window(app),
             "send" => {
                 let _ = send_files_from_dialog(app);
+            }
+            "pause" => {
+                // A blocking HTTP round trip; keep it off the event loop.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Some(current) = toggle_clipboard_pause() {
+                        apply_tray_status(&app, current.0, current.1);
+                    }
+                });
             }
             "quit" => {
                 app.exit(0);
@@ -241,20 +264,36 @@ fn read_health() -> (Health, usize) {
     let Some(body) = response_body(&response) else {
         return (Health::Down, 0);
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return (Health::Down, 0);
-    };
+    health_from_state(body).unwrap_or((Health::Down, 0))
+}
+
+/// Reads a `/control/v1/state` body. None when it is not JSON at all.
+fn health_from_state(body: &str) -> Option<(Health, usize)> {
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
     let devices = value
         .get("authenticatedDeviceCount")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0) as usize;
     let health = match value.get("syncState").and_then(serde_json::Value::as_str) {
         Some("ready") => Health::Ready,
+        Some("sync_paused") => Health::Paused,
         // Anything the shell does not recognise is reported as needing
         // attention rather than as fine.
         _ => Health::Attention,
     };
-    (health, devices)
+    Some((health, devices))
+}
+
+/// Pauses for an hour, or resumes if the last read said paused. An hour
+/// rather than indefinitely: the tray is the easiest place to forget a pause.
+fn toggle_clipboard_pause() -> Option<(Health, usize)> {
+    let (path, body) = if CLIPBOARD_PAUSED.load(Ordering::Relaxed) {
+        ("/control/v1/clipboard/resume", "{}")
+    } else {
+        ("/control/v1/clipboard/pause", r#"{"minutes":60}"#)
+    };
+    let response = http_exchange("POST", path, Some(body.as_bytes())).ok()?;
+    health_from_state(response_body(&response)?)
 }
 
 fn relay_unit_is_active() -> bool {
@@ -288,6 +327,12 @@ fn apply_tray_status(app: &AppHandle, health: Health, devices: usize) {
     )));
     if let Some(item) = STATUS_ITEM.get() {
         let _ = item.set_text(health.label());
+    }
+    let paused = health == Health::Paused;
+    CLIPBOARD_PAUSED.store(paused, Ordering::Relaxed);
+    if let Some(item) = PAUSE_ITEM.get() {
+        let _ = item.set_text(if paused { RESUME_LABEL } else { PAUSE_LABEL });
+        let _ = item.set_enabled(!matches!(health, Health::Down | Health::Stopped));
     }
 }
 
@@ -465,7 +510,24 @@ pub(crate) fn parse_relay_port(json: &str) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_relay_port, response_body, DEFAULT_RELAY_PORT};
+    use super::{health_from_state, parse_relay_port, response_body, Health, DEFAULT_RELAY_PORT};
+
+    #[test]
+    fn reads_a_paused_relay_as_paused() {
+        assert_eq!(
+            health_from_state(r#"{"syncState":"sync_paused","authenticatedDeviceCount":1}"#),
+            Some((Health::Paused, 1))
+        );
+        assert_eq!(
+            health_from_state(r#"{"syncState":"ready"}"#),
+            Some((Health::Ready, 0))
+        );
+        assert_eq!(
+            health_from_state(r#"{"syncState":"later_state"}"#),
+            Some((Health::Attention, 0))
+        );
+        assert_eq!(health_from_state("not json"), None);
+    }
 
     #[test]
     fn default_port_when_json_is_junk() {

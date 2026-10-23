@@ -12,6 +12,7 @@ import 'package:vidyut/src/pairing/pairing_repository.dart';
 import 'package:vidyut/src/pairing/relay_discovery.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
 import 'package:vidyut/src/settings/app_settings_repository.dart';
+import 'package:vidyut/src/settings/clipboard_pause.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
 
 void main() {
@@ -99,6 +100,100 @@ void main() {
 
     expect(find.text('Searching'), findsOneWidget);
     expect(find.text('Send files'), findsOneWidget);
+  });
+
+  testWidgets('asks for laptop telemetry only while home is on screen', (
+    tester,
+  ) async {
+    final storage = MemoryPairingStorage();
+    await PairingRepository(storage).save(
+      const PairingCode(host: '192.168.1.20', port: 17321, secret: 'secret'),
+    );
+    final service = FakeForegroundServiceClient();
+    List<Object?> telemetryRequests() => service.taskData
+        .whereType<Map<String, Object?>>()
+        .where((data) => data['kind'] == 'telemetry')
+        .map((data) => data['active'])
+        .toList();
+
+    await tester.pumpWidget(
+      VidyutApp(
+        appSettingsRepository: AppSettingsRepository(
+          MemoryAppSettingsStorage(),
+        ),
+        lastActivityRepository: LastActivityRepository(
+          MemoryLastActivityStorage(),
+        ),
+        foregroundServiceClient: service,
+        pairingRepository: PairingRepository(storage),
+        relayConnectionFactory: fakeConnection,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(telemetryRequests(), [true]);
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    expect(telemetryRequests(), [true, false, true, false]);
+  });
+
+  testWidgets('pauses and resumes clipboard sync from the status sheet', (
+    tester,
+  ) async {
+    final storage = MemoryPairingStorage();
+    await PairingRepository(storage).save(
+      const PairingCode(host: '192.168.1.20', port: 17321, secret: 'secret'),
+    );
+    final settings = AppSettingsRepository(MemoryAppSettingsStorage());
+    final service = FakeForegroundServiceClient();
+    int pauseCommands() => service.taskData
+        .whereType<Map<String, Object?>>()
+        .where((data) => data['kind'] == 'clipboardPause')
+        .length;
+
+    await tester.pumpWidget(
+      VidyutApp(
+        appSettingsRepository: settings,
+        lastActivityRepository: LastActivityRepository(
+          MemoryLastActivityStorage(),
+        ),
+        foregroundServiceClient: service,
+        pairingRepository: PairingRepository(storage),
+        relayConnectionFactory: fakeConnection,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Searching'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1 hour'));
+    await tester.pumpAndSettle();
+
+    final pause = await settings.loadClipboardPause();
+    expect(pause.paused, isTrue);
+    expect(
+      pause.until!.difference(DateTime.now()).inMinutes,
+      inInclusiveRange(58, 60),
+    );
+    expect(pauseCommands(), 1);
+
+    await tester.tap(find.text('Searching'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Resume sync'));
+    await tester.pumpAndSettle();
+
+    expect(
+      await settings.loadClipboardPause(),
+      const PhoneClipboardPause.off(),
+    );
+    expect(pauseCommands(), 2);
   });
 
   testWidgets('lists nearby relays and selecting one fills host and port', (
@@ -378,6 +473,8 @@ class FakeForegroundServiceClient implements ForegroundServiceClient {
   @override
   void removeTaskDataCallback(TaskDataCallback callback) {}
 
+  final taskData = <Object>[];
+
   @override
-  Future<void> sendToTask(Object data) async {}
+  Future<void> sendToTask(Object data) async => taskData.add(data);
 }

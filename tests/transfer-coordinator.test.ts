@@ -49,6 +49,34 @@ describe("transfer coordinator", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("queues a pulled folder 100 files to a batch, keeping each file's subfolder", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-folder-"));
+    const entries = [];
+    for (let index = 0; index < 101; index++) {
+      const path = join(dir, `photo-${index}.jpg`);
+      await writeFile(path, new Uint8Array([index]));
+      entries.push({ path, folder: index === 0 ? "Trip/Day 1" : "Trip" });
+    }
+    const queue = await memoryQueue();
+    const coordinator = new TransferCoordinator({
+      queue,
+      destinationDirectory: join(dir, "downloads"),
+      maxFileBytes: 1024,
+      publishControl: () => undefined,
+    });
+
+    const offers = await coordinator.enqueueLaptopEntries(entries);
+
+    expect(offers.map((offer) => offer.files.length)).toEqual([100, 1]);
+    expect(offers[0]!.files[0]).toMatchObject({
+      filename: "photo-0.jpg",
+      mime: "image/jpeg",
+      folder: "Trip/Day 1",
+    });
+    expect(offers[1]!.files[0]!.folder).toBe("Trip");
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("fails only the disconnected peer's active transfer", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-coordinator-peers-"));
     const firstPath = join(dir, "first.bin");

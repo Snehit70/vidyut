@@ -277,12 +277,18 @@ class VidyutFilesPlugin :
                 val filename = call.argument<String>("filename")
                 val mime = call.argument<String>("mime")
                 val modified = call.argument<Number>("lastModifiedMs")?.toLong()
-                if (sourcePath == null || filename == null || mime == null) {
+                val folder = call.argument<String>("folder")
+                val segments = folder?.let(VidyutFolderPath::segments)
+                if (sourcePath == null || filename == null || mime == null ||
+                    (folder != null && segments == null)
+                ) {
                     result.error("bad-args", "Missing publish arguments.", null)
                     return
                 }
                 try {
-                    result.success(publish(File(sourcePath), filename, mime, modified))
+                    result.success(
+                        publish(File(sourcePath), filename, mime, modified, segments.orEmpty()),
+                    )
                 } catch (error: Exception) {
                     result.error("publish-failed", error.message, null)
                 }
@@ -793,13 +799,20 @@ class VidyutFilesPlugin :
         return DocumentFile.fromTreeUri(context, Uri.parse(uri))?.name ?: "Selected folder"
     }
 
-    private fun publish(source: File, filename: String, mime: String, modifiedMs: Long?): String {
+    /** [folder] is the subfolder a pulled laptop folder keeps (ADR 0026). */
+    private fun publish(
+        source: File,
+        filename: String,
+        mime: String,
+        modifiedMs: Long?,
+        folder: List<String>,
+    ): String {
         require(source.isFile) { "Source file does not exist." }
         val tree = preferences().getString(KEY_TREE_URI, null)
         val destination = if (tree == null) {
-            publishToDownloads(source, filename, mime, modifiedMs)
+            publishToDownloads(source, filename, mime, modifiedMs, folder)
         } else {
-            publishToTree(source, Uri.parse(tree), filename, mime)
+            publishToTree(source, Uri.parse(tree), filename, mime, folder)
         }
         // Publishing succeeded. Cleanup is best-effort and must not turn a
         // completed transfer into a reported failure.
@@ -807,9 +820,20 @@ class VidyutFilesPlugin :
         return destination
     }
 
-    private fun publishToTree(source: File, treeUri: Uri, filename: String, mime: String): String {
-        val root = DocumentFile.fromTreeUri(context, treeUri)
+    private fun publishToTree(
+        source: File,
+        treeUri: Uri,
+        filename: String,
+        mime: String,
+        folder: List<String>,
+    ): String {
+        var root = DocumentFile.fromTreeUri(context, treeUri)
             ?: error("Configured destination is no longer available.")
+        for (segment in folder) {
+            root = root.findFile(segment)?.takeIf { it.isDirectory }
+                ?: root.createDirectory(segment)
+                ?: error("Could not create folder $segment.")
+        }
         val unique = uniqueName(filename) { root.findFile(it) != null }
         val target = root.createFile(mime, ".$unique.vidyut-part")
             ?: error("Could not create destination file.")
@@ -831,12 +855,14 @@ class VidyutFilesPlugin :
         filename: String,
         mime: String,
         modifiedMs: Long?,
+        folder: List<String>,
     ): String {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             "Public Downloads publishing requires Android 10 or newer."
         }
         val resolver = context.contentResolver
-        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/Vidyut/"
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/Vidyut/" +
+            folder.joinToString("") { "$it/" }
         val unique = uniqueName(filename) { name ->
             resolver.query(
                 MediaStore.Downloads.EXTERNAL_CONTENT_URI,
@@ -902,6 +928,17 @@ class VidyutFilesPlugin :
         private const val STAGE_PREFIX = "stage:"
         private const val STAGE_KEY_ALIAS = "vidyut-transfer-stage-v1"
         private const val KEY_TREE_URI = "destination_tree_uri"
+    }
+}
+
+/** A relative "/"-separated folder from Dart, checked again before use. */
+internal object VidyutFolderPath {
+    fun segments(folder: String): List<String>? {
+        if (folder.isEmpty() || folder.contains('\\') || folder.any { it.isISOControl() }) {
+            return null
+        }
+        val segments = folder.split('/')
+        return segments.takeIf { all -> all.none { it.isEmpty() || it == "." || it == ".." } }
     }
 }
 

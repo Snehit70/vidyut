@@ -10,6 +10,7 @@ import {
 } from "../src/relay/config";
 import { getLanIPv4Addresses } from "../src/relay/network";
 import { createRelay, type RelayHandle } from "../src/relay/relay";
+import { ClipboardPause, withPause } from "../src/relay/clipboard-pause";
 import { encryptPayload } from "../src/shared/crypto";
 
 const secret = "pairing-secret-CONTROL-PLANE-xyz";
@@ -191,6 +192,15 @@ describe("relay loopback control plane", () => {
     }
   });
 
+  test("LAN /health says only whether the relay is up", async () => {
+    const handle = await startRelay();
+    const response = await fetchPath(handle, lanClientHost(), "/health");
+    expect(await response.json()).toEqual({ status: "ok" });
+    const local = await (await fetchPath(handle, "127.0.0.1", "/health")).json();
+    expect(local).toHaveProperty("devices");
+    expect(local).toHaveProperty("pool");
+  });
+
   test("POST /control/v1/rotate-secret persists a new secret and rejects the old one", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-rotate-"));
     const path = join(dir, "relay.json");
@@ -202,6 +212,7 @@ describe("relay loopback control plane", () => {
       logLevel: "info",
       transferDestination: join(dir, "Downloads"),
       maxTransferFileBytes: 1024,
+      sharedFolders: [],
     };
     await writeRelayConfig(path, config);
     const pairingSecret = { value: secret };
@@ -318,6 +329,65 @@ describe("relay loopback control plane", () => {
     expect(seen).toHaveLength(1);
   });
 
+  test("POST /control/v1/clipboard/pause and resume drive the pause and report it", async () => {
+    const pause = new ClipboardPause({ now: () => 1_800_000_000_000 });
+    const handle = await startRelay({
+      clipboardPause: pause,
+      clipboardHealth: () =>
+        withPause({ enabled: true, status: "healthy", watcher: "wl-paste --watch" }, pause),
+    });
+    const post = (path: string, body: unknown, host = "127.0.0.1") =>
+      fetchPath(handle, host, path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const timed = await post("/control/v1/clipboard/pause", { minutes: 15 });
+    expect(timed.status).toBe(200);
+    expect(await timed.json()).toMatchObject({
+      syncState: "sync_paused",
+      clipboard: { paused: true, pausedUntil: 1_800_000_000_000 + 15 * 60_000 },
+    });
+
+    const open = await post("/control/v1/clipboard/pause", {});
+    expect((await open.json()).clipboard).toEqual({
+      enabled: true,
+      status: "healthy",
+      watcher: "wl-paste --watch",
+      paused: true,
+    });
+
+    for (const minutes of [0, 1.5, 24 * 60 + 1, "15"]) {
+      const bad = await post("/control/v1/clipboard/pause", { minutes });
+      expect(bad.status, `minutes ${JSON.stringify(minutes)}`).toBe(400);
+    }
+    const plainText = await fetchPath(handle, "127.0.0.1", "/control/v1/clipboard/resume", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(plainText.status).toBe(415);
+    expect((await post("/control/v1/clipboard/resume", {}, lanClientHost())).status).toBe(404);
+    expect(pause.paused).toBe(true);
+
+    const resumed = await post("/control/v1/clipboard/resume", {});
+    expect(await resumed.json()).toMatchObject({ syncState: "ready" });
+    expect(pause.paused).toBe(false);
+  });
+
+  test("a degraded watcher outranks a pause in the sync state", async () => {
+    const pause = new ClipboardPause({ now: Date.now });
+    pause.pause();
+    const handle = await startRelay({
+      clipboardPause: pause,
+      clipboardHealth: () => withPause({ enabled: true, status: "degraded", error: "no wl-paste" }, pause),
+    });
+    const state = await (await fetchPath(handle, "127.0.0.1", "/control/v1/state")).json();
+    expect(state.syncState).toBe("sync_needs_attention");
+    expect(state.clipboard.paused).toBe(true);
+  });
+
   test("GET /control/v1/setup returns laptop setup status rows on loopback only", async () => {
     const handle = await startRelay();
     const local = await fetchPath(handle, "127.0.0.1", "/control/v1/setup");
@@ -408,3 +478,114 @@ describe("desktop shell content security policy", () => {
     expect(local.headers.get("referrer-policy")).toBe("no-referrer");
   });
 });
+
+describe("control plane rejects browser callers from other origins", () => {
+  test("a rebound Host header cannot read the pairing secret", async () => {
+    const handle = await startRelay();
+    const rebound = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+      headers: { host: "evil.example" },
+    });
+    expect(rebound.status).toBe(403);
+    expect(await rebound.text()).not.toContain(secret);
+
+    const port = new URL(handle.url.replace("ws://", "http://")).port;
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, "localhost"]) {
+      const local = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+        headers: { host },
+      });
+      expect(local.status).toBe(200);
+    }
+    const wrongPort = await fetchPath(handle, "127.0.0.1", "/control/v1/state", {
+      headers: { host: "127.0.0.1:1" },
+    });
+    expect(wrongPort.status).toBe(403);
+  });
+
+  test("a cross-site simple POST cannot rotate the secret or enqueue files", async () => {
+    const seen: string[][] = [];
+    const persisted: string[] = [];
+    const handle = await startRelay({
+      enqueueLaptopFiles: async (paths) => {
+        seen.push(paths);
+        return { transferId: "transfer_enqueued" };
+      },
+      persistPairingSecret: async (next) => {
+        persisted.push(next);
+      },
+    });
+    const rotate = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { origin: "https://evil.example", "content-type": "text/plain" },
+    });
+    expect(rotate.status).toBe(403);
+
+    const crossSite = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { "sec-fetch-site": "cross-site" },
+    });
+    expect(crossSite.status).toBe(403);
+    expect(persisted).toEqual([]);
+
+    const plainText = await fetchPath(
+      handle,
+      "127.0.0.1",
+      "/control/v1/transfers/enqueue",
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ paths: ["/etc/hostname"] }),
+      },
+    );
+    expect(plainText.status).toBe(415);
+    expect(seen).toEqual([]);
+  });
+
+  test("the shell's own same-origin POST still rotates the secret", async () => {
+    const handle = await startRelay({ persistPairingSecret: async () => undefined });
+    const port = new URL(handle.url.replace("ws://", "http://")).port;
+    const rotate = await fetchPath(handle, "127.0.0.1", "/control/v1/rotate-secret", {
+      method: "POST",
+      headers: { origin: `http://127.0.0.1:${port}`, "sec-fetch-site": "same-origin" },
+    });
+    expect(rotate.status).toBe(200);
+  });
+
+  test("a WebSocket handshake from a foreign origin is refused", async () => {
+    const handle = await startRelay();
+    const port = Number(new URL(handle.url.replace("ws://", "http://")).port);
+    const handshake = (origin?: string) =>
+      rawHandshakeStatus(port, origin);
+    expect(await handshake("https://evil.example")).toBe(403);
+    expect(await handshake(`http://127.0.0.1:${port}`)).toBe(101);
+    // The phone's dart:io client sends no Origin at all.
+    expect(await handshake()).toBe(101);
+  });
+});
+
+// Bun's WebSocket client does not let a test set Origin, so speak the
+// handshake by hand and read only the status line.
+async function rawHandshakeStatus(port: number, origin?: string): Promise<number> {
+  const { connect } = await import("node:net");
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        [
+          "GET / HTTP/1.1",
+          `Host: 127.0.0.1:${port}`,
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version: 13",
+          ...(origin ? [`Origin: ${origin}`] : []),
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    socket.once("data", (chunk) => {
+      socket.destroy();
+      resolve(Number(String(chunk).split(" ")[1]));
+    });
+    socket.once("error", reject);
+  });
+}

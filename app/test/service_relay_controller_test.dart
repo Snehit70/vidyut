@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart' as hashes;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
+import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
 import 'package:vidyut/src/foreground/service_relay_controller.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
@@ -14,10 +15,12 @@ import 'package:vidyut/src/receive/payload_receiver.dart';
 import 'package:vidyut/src/receive/received_image_repository.dart';
 import 'package:vidyut/src/receive/received_text_repository.dart';
 import 'package:vidyut/src/settings/app_settings.dart';
+import 'package:vidyut/src/settings/clipboard_pause.dart';
 import 'package:vidyut/src/share/share_payload.dart';
 import 'package:vidyut/src/share/share_publisher.dart';
 import 'package:vidyut/src/shared/payload_crypto.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/session_seal.dart';
 import 'package:vidyut/src/shared/transfer_crypto.dart';
 import 'package:vidyut/src/shared/wire.dart';
 import 'package:vidyut/src/transfer/phone_transfer_receiver.dart';
@@ -163,6 +166,94 @@ void main() {
     expect(harness.transports, hasLength(2));
     expect(harness.transports.first.closed, isTrue);
     expect(harness.transports.last.closed, isFalse);
+  });
+
+  test('carries the telemetry request across reconnects', () async {
+    final harness = _Harness(pairing: pairing);
+    const hello = {
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+      'features': ['telemetry_subscribe'],
+    };
+    Iterable<Object?> subscriptions(_FakeTransport transport) => transport.sent
+        .where((message) => message['kind'] == 'telemetry_subscribe')
+        .map((message) => message['active']);
+
+    await harness.controller.start();
+    harness.transports.single
+      ..receive(hello)
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await harness.controller.handleTaskData(const {
+      'kind': 'telemetry',
+      'active': true,
+    });
+    await _waitUntil(
+      () => subscriptions(harness.transports.single).isNotEmpty,
+    );
+    expect(subscriptions(harness.transports.single), [true]);
+
+    await harness.controller.handleTaskData(const {'kind': 'sync'});
+    harness.transports.last
+      ..receive(hello)
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await _waitUntil(() => subscriptions(harness.transports.last).isNotEmpty);
+
+    expect(subscriptions(harness.transports.last), [true]);
+    await harness.controller.stop();
+  });
+
+  test('pins the pairing once the laptop proves itself', () async {
+    final harness = _Harness(pairing: pairing);
+
+    await harness.controller.start();
+    final transport = harness.transports.single;
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'cmVsYXktY2hhbGxlbmdl',
+      'maxPayloadBytes': 4096,
+    });
+    await _waitUntil(() => transport.sent.isNotEmpty);
+    final clientChallenge = transport.sent.single['clientChallenge'] as String;
+    transport.receive({
+      'v': 1,
+      'kind': 'auth_ok',
+      'relayProof': await createRelayProof(
+        pairingSecret: pairing.secret,
+        challenge: 'cmVsYXktY2hhbGxlbmdl',
+        clientChallenge: clientChallenge,
+        sessionFeatures: const [],
+        deviceId: 'phone',
+      ),
+      'features': const <String>[],
+    });
+    await _waitUntil(() => harness.verifiedSecrets.isNotEmpty);
+
+    expect(harness.verifiedSecrets, [pairing.secret]);
+    await harness.controller.stop();
+  });
+
+  test('leaves the pairing unpinned for a relay without a proof', () async {
+    final harness = _Harness(pairing: pairing);
+
+    await harness.controller.start();
+    harness.transports.single
+      ..receive({
+        'v': 1,
+        'kind': 'hello',
+        'challenge': 'cmVsYXktY2hhbGxlbmdl',
+        'maxPayloadBytes': 4096,
+      })
+      ..receive({'v': 1, 'kind': 'auth_ok'});
+    await _waitUntil(
+      () => harness.emitted.any((event) => event['status'] == 'connected'),
+    );
+    await pumpEventQueue();
+
+    expect(harness.verifiedSecrets, isEmpty);
+    await harness.controller.stop();
   });
 
   test('creates a fresh transfer receiver for each relay session', () async {
@@ -432,6 +523,121 @@ void main() {
   test('default backoff caps at 32 seconds', () {
     expect(defaultReconnectBackoff.last, const Duration(seconds: 32));
     expect(defaultReconnectBackoff.map((d) => d.inSeconds), [2, 4, 8, 16, 32]);
+  });
+
+  group('clipboard pause', () {
+    bool logged(_Harness harness, String message) => harness.emitted.any(
+      (event) => event['kind'] == 'log' && event['message'] == message,
+    );
+
+    test('leaves laptop copies off the phone until resumed', () async {
+      final harness = _Harness(
+        pairing: pairing,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      final transport = harness.transports.single;
+      transport.receive({'v': 1, 'kind': 'auth_ok'});
+      final held = await _textFrame('during pause', origin: 'laptop', ts: 7);
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': held.toJson()});
+      await _waitUntil(
+        () => logged(
+          harness,
+          'Clipboard sync paused: left a laptop copy off this phone.',
+        ),
+      );
+
+      harness.clipboardPause = const PhoneClipboardPause.off();
+      await harness.controller.handleTaskData(serviceClipboardPauseCommand);
+      expect(harness.emitted.last, {'kind': 'clipboardPause', 'pause': ''});
+
+      // The relay's re-send of the copy made during the pause stays dropped.
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': held.toJson()});
+      final fresh = await _textFrame('after pause', origin: 'laptop', ts: 8);
+      transport.receive({'v': 1, 'kind': 'payload', 'frame': fresh.toJson()});
+      await _waitUntil(() => harness.clipboard.texts.isNotEmpty);
+
+      expect(harness.clipboard.texts, ['after pause']);
+    });
+
+    test('holds automatic sends but not a deliberate one', () async {
+      final screenshots = _FakeScreenshotWatcher();
+      final autoSend = _FakeAutoSendWatcher(granted: true);
+      final pushController = ScreenshotPushController(
+        readImage: screenshots.readImage,
+        crypto: PayloadCrypto(),
+        emit: (_) {},
+      );
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(enableClipboardAutoSend: true),
+        screenshotWatcher: screenshots,
+        autoSendWatcher: autoSend,
+        pushController: pushController,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      final transport = harness.transports.single;
+      transport.receive({'v': 1, 'kind': 'auth_ok'});
+      await _drain();
+
+      screenshots.emitEvent(_screenshotEvent(id: 42));
+      autoSend.emitText('copied on phone');
+      autoSend.emitManual(
+        const ManualClipboardReadResult(
+          requestId: 1,
+          status: ManualClipboardReadStatus.text,
+          text: 'sent on purpose',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+
+      expect(harness.autoSendPublished, ['sent on purpose']);
+      expect(
+        logged(harness, 'Clipboard sync paused: screenshot not sent.'),
+        isTrue,
+      );
+      expect(
+        logged(harness, 'Clipboard sync paused: auto-read text not sent.'),
+        isTrue,
+      );
+      expect(
+        transport.sent.where((message) => message['kind'] == 'publish'),
+        isEmpty,
+      );
+    });
+
+    test('says so in the notification and lifts at the deadline', () async {
+      final harness = _Harness(
+        pairing: pairing,
+        clipboardPause: PhoneClipboardPause.until(
+          DateTime.now().add(const Duration(milliseconds: 300)),
+        ),
+      );
+
+      await harness.controller.start();
+      harness.transports.single.receive({'v': 1, 'kind': 'auth_ok'});
+      await _waitUntil(
+        () => harness.notifications.any(
+          (n) => n.text == 'Connected to laptop. Clipboard sync paused.',
+        ),
+      );
+
+      await _waitUntil(
+        () => logged(harness, 'Clipboard sync resumed: the pause ran out.'),
+      );
+      await _drain();
+      expect(
+        harness.notifications.last.text,
+        'Syncing clipboard & screenshots',
+      );
+      expect(harness.emitted.lastWhere((e) => e['kind'] == 'clipboardPause'), {
+        'kind': 'clipboardPause',
+        'pause': '',
+      });
+    });
   });
 
   group('screen-on trigger', () {
@@ -1337,6 +1543,127 @@ void main() {
       expect(watcher.watching, isFalse);
     });
   });
+
+  group('verification codes', () {
+    const bankText = PostedNotification(
+      packageName: 'com.example.bank',
+      title: 'Bank',
+      text: '482913 is your OTP for login. Do not share it.',
+    );
+
+    bool logged(_Harness harness, String message) => harness.emitted.any(
+      (event) => event['kind'] == 'log' && event['message'] == message,
+    );
+
+    test('sends a code from a notification, never logging it', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      notifications.post(bankText);
+      notifications.post(bankText);
+      notifications.post(
+        const PostedNotification(
+          packageName: 'com.example.chat',
+          title: 'Sam',
+          text: 'See you at 7:30, table 12',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+      await _drain();
+
+      expect(harness.autoSendPublished, ['482913']);
+      expect(
+        logged(harness, 'Verification code from com.example.bank sent.'),
+        isTrue,
+      );
+      final everything = harness.emitted.map((e) => '$e').join('\n');
+      expect(everything.contains('482913'), isFalse);
+      final activity = harness.emitted.lastWhere(
+        (e) => e['kind'] == 'activity',
+      );
+      expect(activity['summary'], 'verification code');
+    });
+
+    test('does not listen while the setting is off', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+
+      expect(notifications.listening, isFalse);
+    });
+
+    test('waits for notification access, logging once', () async {
+      final notifications = _FakePostedNotifications(access: false);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isFalse);
+      expect(
+        harness.emitted
+            .where((e) => '${e['message']}'.contains('notification access'))
+            .length,
+        1,
+      );
+
+      notifications.access = true;
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isTrue);
+
+      harness.settings = const AppSettings();
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isFalse);
+    });
+
+    test('holds a code while clipboard sync is paused', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      notifications.post(bankText);
+      await _waitUntil(
+        () => logged(
+          harness,
+          'Clipboard sync paused: verification code not sent.',
+        ),
+      );
+
+      expect(harness.autoSendPublished, isEmpty);
+    });
+
+    test('stop cancels the listener', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      expect(notifications.listening, isTrue);
+      await harness.controller.stop();
+
+      expect(notifications.listening, isFalse);
+    });
+  });
 }
 
 Future<void> _drain() => pumpEventQueue(times: 200);
@@ -1385,6 +1712,8 @@ Future<PayloadFrame> _textFrame(
 }
 
 class _Harness {
+  final verifiedSecrets = <String>[];
+
   _Harness({
     required this.pairing,
     // Effectively "never" so tests without a reconnect stay deterministic.
@@ -1392,6 +1721,7 @@ class _Harness {
     this.settings = const AppSettings(),
     this.screenshotWatcher,
     this.autoSendWatcher,
+    PostedNotifications? postedNotifications,
     ScreenshotPushController? pushController,
     Duration syncStepTimeout = defaultSyncStepTimeout,
     Duration syncStallTimeout = defaultSyncStallTimeout,
@@ -1401,10 +1731,13 @@ class _Harness {
     bool provideAutoSendPublish = true,
     Completer<SharePublishResult>? autoSendGate,
     this.autoSendError,
+    this.clipboardPause = const PhoneClipboardPause.off(),
     Future<AppSettings> Function()? loadSettings,
     ServiceTransferReceiverFactory? transferReceiverFactory,
   }) {
     controller = ServiceRelayController(
+      markRelayVerified: (secret) async => verifiedSecrets.add(secret),
+      loadClipboardPause: () async => clipboardPause,
       reconnectBackoff: reconnectBackoff,
       syncStepTimeout: syncStepTimeout,
       syncStallTimeout: syncStallTimeout,
@@ -1412,6 +1745,7 @@ class _Harness {
       screenshotWatcher: screenshotWatcher,
       pushController: pushController,
       clipboardAutoSendWatcher: autoSendWatcher,
+      postedNotifications: postedNotifications,
       transferReceiverFactory: transferReceiverFactory,
       autoSendPublish: provideAutoSendPublish
           ? (payload) async {
@@ -1462,6 +1796,9 @@ class _Harness {
 
   PairingCode? pairing;
   AppSettings settings;
+
+  /// What storage holds; send [serviceClipboardPauseCommand] after a change.
+  PhoneClipboardPause clipboardPause;
 
   /// Simulates a process freeze that drops a platform-channel reply, leaving a
   /// future that never completes. Mutable so the sync pass can finish first.
@@ -1528,7 +1865,7 @@ class _RecordingClipboard implements AndroidClipboard {
   void Function(String text)? onWrite;
 
   @override
-  Future<void> writeText(String text) async {
+  Future<void> writeText(String text, {String? html}) async {
     texts.add(text);
     onWrite?.call(text);
   }
@@ -1646,6 +1983,26 @@ class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
 
   @override
   Stream<String> get diagnostics => _diagnostics.stream;
+}
+
+class _FakePostedNotifications implements PostedNotifications {
+  _FakePostedNotifications({required this.access});
+
+  bool access;
+  final _controller = StreamController<PostedNotification>.broadcast();
+
+  bool get listening => _controller.hasListener;
+
+  void post(PostedNotification notification) => _controller.add(notification);
+
+  @override
+  Stream<PostedNotification> get notifications => _controller.stream;
+
+  @override
+  Future<bool> hasAccess() async => access;
+
+  @override
+  Future<void> openAccessSettings() async {}
 }
 
 ScreenshotEvent _screenshotEvent({int id = 1}) {

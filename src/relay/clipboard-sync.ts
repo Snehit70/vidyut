@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import type { ClipboardAdapter } from "./clipboard";
 import { pairingSecretValue, type PairingSecretRef } from "./config";
 import { noopLogger, type Logger } from "./logger";
 import type { PayloadPool } from "./payload-pool";
-import { decryptPayload, encryptPayload } from "../shared/crypto";
+import { decryptPayload, encryptAlternative, encryptPayload } from "../shared/crypto";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
 import { isOpenableLink } from "./open-link";
 
@@ -19,6 +20,10 @@ export interface ClipboardHealth {
   status: "starting" | "healthy" | "degraded" | "disabled";
   watcher?: string;
   error?: string;
+  /** The user paused clipboard sync on this laptop (ClipboardPause). */
+  paused?: boolean;
+  /** Relay-clock epoch ms when the pause lifts; absent while paused until resumed. */
+  pausedUntil?: number;
 }
 
 interface ClipboardSyncOptions {
@@ -36,23 +41,41 @@ interface ClipboardSyncOptions {
    * dependency. Omitted, a link still reaches the clipboard and nothing opens.
    */
   openLink?: (url: string) => Promise<void>;
+  /** While true, copies here are not published and payloads are not written. */
+  isPaused?: () => boolean;
 }
+
+// Long enough for wl-paste --watch to report the write it just saw, short
+// enough that a deliberate re-copy of the same text a little later publishes.
+const echoWindowMs = 5_000;
 
 export function startClipboardSync(options: ClipboardSyncOptions): () => void {
   const logger = options.logger ?? noopLogger;
-  let suppressNextChange = false;
+  // What the last incoming write put on the clipboard. A change whose content
+  // matches it is that write echoing back, not the user copying. Matching on
+  // content (not a "skip the next change" flag) means a write that never fires
+  // the watcher cannot swallow the user's next real copy.
+  let lastIncoming: { digests: Set<string>; at: number } | undefined;
 
   const stopWatching = options.clipboard.watch(
     async () => {
-      if (suppressNextChange) {
-        suppressNextChange = false;
+      if (options.isPaused?.()) {
+        logger.info("clipboard_skipped_paused", { direction: "publish" });
         return;
       }
-
       try {
         const payload = await options.clipboard.read();
         if (!payload) return;
+        if (
+          lastIncoming &&
+          lastIncoming.digests.has(contentDigest(payload.data)) &&
+          options.now() - lastIncoming.at <= echoWindowMs
+        ) {
+          lastIncoming = undefined;
+          return;
+        }
 
+        const secret = pairingSecretValue(options.pairingSecret);
         const frame = await encryptPayload(
           {
             type: payload.type,
@@ -61,11 +84,20 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
             ts: options.now(),
           },
           payload.data,
-          pairingSecretValue(options.pairingSecret),
+          secret,
         );
+        if (payload.alternative) {
+          frame.alt = await encryptAlternative(
+            frame,
+            payload.alternative.mime,
+            payload.alternative.data,
+            secret,
+          );
+        }
         logger.info("clipboard_published", {
           type: frame.type,
           mime: frame.mime,
+          ...(frame.alt && { alt: frame.alt.mime }),
           bytes: encodedPayloadBytes(frame),
           nonce: frame.nonce,
           frameTs: frame.ts,
@@ -110,6 +142,14 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
 
   const unsubscribe = options.pool.subscribe((frame, source) => {
     if (source === options.origin || frame.origin === options.origin) return;
+    if (options.isPaused?.()) {
+      logger.info("clipboard_skipped_paused", {
+        direction: "write",
+        nonce: frame.nonce,
+        frameTs: frame.ts,
+      });
+      return;
+    }
     // Do not await the Wayland write on the pool publish path. A stuck
     // wl-copy/magick would otherwise hold the phone's ack and freeze the
     // relay socket until the service is restarted.
@@ -132,15 +172,20 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
       return;
     }
 
-    suppressNextChange = true;
+    // Recorded before the write resolves: wl-copy detaches, and the watcher can
+    // report the change before this promise settles.
+    const echo = { digests: new Set([contentDigest(data)]), at: options.now() };
+    lastIncoming = echo;
     try {
-      await options.clipboard.write({
+      const written = await options.clipboard.write({
         type: frame.type,
         mime: frame.mime,
         data,
       });
+      // An image re-encoded to PNG reads back as the PNG bytes, not ours.
+      if (written) echo.digests.add(contentDigest(written.data));
     } catch (error) {
-      suppressNextChange = false;
+      if (lastIncoming === echo) lastIncoming = undefined;
       logger.error("clipboard_write_failed", {
         nonce: frame.nonce,
         frameTs: frame.ts,
@@ -197,6 +242,10 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
     stopWatching();
     unsubscribe();
   };
+}
+
+function contentDigest(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
 }
 
 function describeError(error: unknown): string {

@@ -8,6 +8,18 @@ export interface PayloadFrame {
   ts: number;
   nonce: string;
   payload: string;
+  /** The same text with its formatting, sealed on its own (ADR 0024). */
+  alt?: PayloadAlternative;
+}
+
+/**
+ * A richer rendering of a text frame. Only `text/html` is defined; a receiver
+ * that does not know it, or cannot open it, uses the plain `payload`.
+ */
+export interface PayloadAlternative {
+  mime: "text/html";
+  nonce: string;
+  payload: string;
 }
 
 export interface PayloadMetadata {
@@ -25,6 +37,8 @@ export interface RelayHealth {
     status: "starting" | "healthy" | "degraded" | "disabled";
     watcher?: string;
     error?: string;
+    paused?: boolean;
+    pausedUntil?: number;
   };
 }
 
@@ -64,6 +78,11 @@ export interface TransferFileOffer {
   lastModifiedKnown?: boolean;
   sha256: string;
   senderTiming?: TransferTimingSummary;
+  /**
+   * Subfolder to place the file in on arrival, relative and "/"-separated.
+   * Set when the phone pulled a whole folder (ADR 0026).
+   */
+  folder?: string;
 }
 
 export interface TransferOffer {
@@ -114,16 +133,118 @@ export type TransferControlMessage =
     };
 
 export type RelayMessage =
-  | { v: 1; kind: "hello"; challenge: string; maxPayloadBytes: number }
-  | { v: 1; kind: "auth"; deviceId: string; proof: string }
-  | { v: 1; kind: "auth_ok"; health?: RelayHealth }
+  /** `features` names optional protocol behaviour this Relay understands. */
+  | {
+      v: 1;
+      kind: "hello";
+      challenge: string;
+      maxPayloadBytes: number;
+      features?: RelayFeature[];
+    }
+  /**
+   * `clientChallenge` asks the Relay to prove it holds the pairing secret too
+   * (ADR 0023); `features` names what the Device can do.
+   */
+  | {
+      v: 1;
+      kind: "auth";
+      deviceId: string;
+      proof: string;
+      clientChallenge?: string;
+      features?: string[];
+    }
+  /**
+   * `relayProof` answers a `clientChallenge`, and covers `features`: the
+   * session features both sides settled on.
+   */
+  | {
+      v: 1;
+      kind: "auth_ok";
+      health?: RelayHealth;
+      relayProof?: string;
+      features?: SessionFeature[];
+    }
   | { v: 1; kind: "health"; health: RelayHealth }
   | LaptopTelemetry
-  | { v: 1; kind: "publish"; frame: PayloadFrame }
+  /**
+   * `sentAt` is the sender's clock at send time. The Relay uses it to map
+   * `frame.ts` onto its own clock before ordering. Absent from older phones.
+   */
+  | { v: 1; kind: "publish"; frame: PayloadFrame; sentAt?: number }
   | { v: 1; kind: "payload"; frame: PayloadFrame }
-  | { v: 1; kind: "ack"; ts: number }
+  /** `stale` marks a frame the pool dropped because it already held a newer one. */
+  | { v: 1; kind: "ack"; ts: number; stale?: true }
   | TransferControlMessage
+  /**
+   * The phone wants laptop telemetry only while someone is looking at it. A
+   * device that advertised `telemetry_subscribe` starts unsubscribed; one that
+   * did not is subscribed for its whole session, as before the feature.
+   */
+  | { v: 1; kind: "telemetry_subscribe"; active: boolean }
+  | BrowseRequest
+  | BrowseResult
+  | SealedMessage
   | { v: 1; kind: "error"; code: string; message: string };
+
+/**
+ * The phone reading the laptop's shared folders (ADR 0026). A `browse_list`
+ * without `root` lists the shared folders themselves. Only sealed sessions
+ * may browse.
+ */
+export type BrowseRequest =
+  | {
+      v: 1;
+      kind: "browse_list";
+      requestId: string;
+      root?: string;
+      path?: string;
+    }
+  | {
+      v: 1;
+      kind: "browse_pull";
+      requestId: string;
+      root: string;
+      paths: string[];
+    };
+
+export interface BrowseRoot {
+  id: string;
+  name: string;
+}
+
+export interface BrowseEntry {
+  name: string;
+  kind: "file" | "folder";
+  /** Absent for folders. */
+  size?: number;
+  modifiedMs: number;
+}
+
+export type BrowseAnswer =
+  | { ok: true; roots: BrowseRoot[] }
+  | { ok: true; entries: BrowseEntry[]; truncated?: true }
+  | { ok: true; queued: { files: number; bytes: number } }
+  | { ok: false; code: string; message: string };
+
+/** The answer to one BrowseRequest, matched by `requestId`. */
+export type BrowseResult = {
+  v: 1;
+  kind: "browse_result";
+  requestId: string;
+} & BrowseAnswer;
+
+/** Any other message, AES-256-GCM sealed under the session key (ADR 0023). */
+export interface SealedMessage {
+  v: 1;
+  kind: "sealed";
+  nonce: string;
+  payload: string;
+}
+
+export type RelayFeature = "telemetry_subscribe" | "relay_proof" | "browse_files" | SessionFeature;
+
+/** Features negotiated per session and covered by `relayProof`. */
+export type SessionFeature = "sealed_control";
 
 export function isPayloadFrame(value: unknown): value is PayloadFrame {
   if (!value || typeof value !== "object") return false;
@@ -136,12 +257,20 @@ export function isPayloadFrame(value: unknown): value is PayloadFrame {
     typeof frame.ts === "number" &&
     Number.isFinite(frame.ts) &&
     typeof frame.nonce === "string" &&
-    typeof frame.payload === "string"
+    typeof frame.payload === "string" &&
+    (frame.alt === undefined || isPayloadAlternative(frame.alt))
   );
 }
 
+function isPayloadAlternative(value: unknown): value is PayloadAlternative {
+  if (!value || typeof value !== "object") return false;
+  const alt = value as Record<string, unknown>;
+  return alt.mime === "text/html" && typeof alt.nonce === "string" && typeof alt.payload === "string";
+}
+
 export function encodedPayloadBytes(frame: PayloadFrame): number {
-  return Buffer.from(frame.payload, "base64").byteLength;
+  const main = Buffer.from(frame.payload, "base64").byteLength;
+  return frame.alt ? main + Buffer.from(frame.alt.payload, "base64").byteLength : main;
 }
 
 const idPattern = /^[A-Za-z0-9_-]{16,128}$/;
@@ -166,6 +295,30 @@ export function isTransferOffer(value: unknown): value is TransferOffer {
       offer.files.map((file) => (file as TransferFileOffer).fileId),
     ).size === offer.files.length
   );
+}
+
+export function isBrowseRequest(value: unknown): value is BrowseRequest {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Record<string, unknown>;
+  if (message.v !== 1 || !isId(message.requestId)) return false;
+  switch (message.kind) {
+    case "browse_list":
+      return (
+        (message.root === undefined && message.path === undefined) ||
+        (typeof message.root === "string" &&
+          (message.path === undefined || typeof message.path === "string"))
+      );
+    case "browse_pull":
+      return (
+        typeof message.root === "string" &&
+        Array.isArray(message.paths) &&
+        message.paths.length > 0 &&
+        message.paths.length <= 100 &&
+        message.paths.every((path) => typeof path === "string")
+      );
+    default:
+      return false;
+  }
 }
 
 export function isTransferControlMessage(
@@ -240,8 +393,19 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
       typeof file.lastModifiedKnown === "boolean") &&
     typeof file.sha256 === "string" &&
     (file.senderTiming === undefined || isTransferTiming(file.senderTiming)) &&
+    (file.folder === undefined || isRelativeFolder(file.folder)) &&
     sha256Pattern.test(file.sha256)
   );
+}
+
+/** A relative "/"-separated folder with no empty, "." or ".." segment. */
+export function isRelativeFolder(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (new TextEncoder().encode(value).byteLength > 1024) return false;
+  if (/[\u0000-\u001f\u007f\\]/u.test(value)) return false;
+  return value
+    .split("/")
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 function isTransferTiming(value: unknown): value is TransferTimingSummary {

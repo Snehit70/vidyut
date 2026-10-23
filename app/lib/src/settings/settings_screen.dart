@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 
 import '../debug/debug_log.dart';
@@ -13,6 +14,7 @@ import '../update/github_update_checker.dart';
 import '../update/apk_installer.dart';
 import 'app_settings.dart';
 import 'clipboard_autosend_screen.dart';
+import 'verification_codes_screen.dart';
 import 'whats_new_screen.dart';
 
 typedef AppSettingsChanged = Future<void> Function(AppSettings settings);
@@ -26,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onChanged,
     this.setupLoader,
     this.clipboardAutoSendWatcher,
+    this.verificationCodes,
     this.debugLog,
     this.paired = false,
     this.onForgetPairing,
@@ -46,6 +49,10 @@ class SettingsScreen extends StatefulWidget {
   /// Backs the Advanced → Clipboard auto-send screen (read-logs-auto-text D6);
   /// the advanced row is hidden when null (widget tests without channels).
   final ClipboardAutoSendWatcher? clipboardAutoSendWatcher;
+
+  /// Backs the Verification codes screen (ADR 0025); the row is hidden when
+  /// null.
+  final PostedNotifications? verificationCodes;
 
   /// The in-app debug log, opened from the Setup section (ADR 0004); the row
   /// is hidden when null.
@@ -145,6 +152,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           settings: _settings,
           onChanged: _updateSettings,
           watcher: watcher,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openVerificationCodes() async {
+    final notifications = widget.verificationCodes;
+    if (notifications == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VerificationCodesScreen(
+          settings: _settings,
+          onChanged: _updateSettings,
+          notifications: notifications,
         ),
       ),
     );
@@ -459,6 +480,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => unawaited(_openClipboardAutoSend()),
+                ),
+              if (widget.verificationCodes != null)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  title: const Text('Verification codes'),
+                  subtitle: Text(
+                    _settings.forwardVerificationCodes
+                        ? 'On. Codes from notifications go to the laptop.'
+                        : 'Send one-time codes from notifications to the laptop.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => unawaited(_openVerificationCodes()),
                 ),
             ],
           ),

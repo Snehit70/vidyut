@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { BunProcessRunner, createWaylandClipboardAdapter } from "./clipboard";
 import { startClipboardSync, type ClipboardHealth } from "./clipboard-sync";
+import { ClipboardPause, withPause } from "./clipboard-pause";
 import { loadOrCreateRelayConfig, writeRelayConfig, type LogLevel } from "./config";
 import { createLogger } from "./logger";
 import { startMdnsAdvertisement } from "./mdns";
@@ -19,6 +20,7 @@ import {
   TransferQueue,
 } from "../transfer/transfer-queue";
 import { TransferCoordinator } from "../transfer/transfer-coordinator";
+import { answerBrowse, LaptopBrowser } from "../transfer/laptop-browser";
 import {
   LaptopTransferDataPlane,
   ReceiverProgressSessions,
@@ -73,7 +75,13 @@ const transferQueue = await TransferQueue.open({
   ),
 });
 let relay: Awaited<ReturnType<typeof createRelay>>;
+const clipboardPause = new ClipboardPause({
+  now: Date.now,
+  logger,
+  onChange: () => relay.publishHealth(),
+});
 const receiverProgressSessions = new ReceiverProgressSessions();
+const laptopBrowser = new LaptopBrowser({ folders: config.sharedFolders });
 const transferCoordinator = new TransferCoordinator({
   queue: transferQueue,
   destinationDirectory: config.transferDestination,
@@ -102,7 +110,8 @@ relay = await createRelay({
   maxPayloadBytes,
   logger,
   relayName,
-  clipboardHealth: () => clipboardHealth,
+  clipboardHealth: () => withPause(clipboardHealth, clipboardPause),
+  clipboardPause,
   persistPairingSecret: async (secret) => {
     config.pairingSecret = secret;
     await writeRelayConfig(options.configPath, config);
@@ -116,6 +125,22 @@ relay = await createRelay({
   deviceConnected: (deviceId, publishControl) =>
     transferCoordinator.handleDeviceConnected(deviceId, publishControl),
   transferHttp: transferDataPlane.handle.bind(transferDataPlane),
+  ...(config.sharedFolders.length > 0 && {
+    browse: (request) =>
+      answerBrowse(
+        request,
+        laptopBrowser,
+        (entries) => {
+          transferCoordinator.enqueueLaptopEntries(entries).catch((error) => {
+            logger.error("browse_pull_failed", {
+              files: entries.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        },
+        config.maxTransferFileBytes,
+      ),
+  }),
 });
 await transferCoordinator.start();
 
@@ -127,6 +152,7 @@ const stopClipboard = options.clipboard
       origin: config.deviceId,
       now: Date.now,
       logger,
+      isPaused: () => clipboardPause.paused,
       // Reuses the same process runner type the clipboard adapter uses, so a
       // link launch and a clipboard write are bounded the same way and a hung
       // browser cannot stall the relay.
@@ -161,6 +187,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
     logger.info("relay_stopping", { signal });
     stopClipboard();
+    clipboardPause.stop();
     stopMdns();
     await relay.stop();
     process.exit(0);

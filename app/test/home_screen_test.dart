@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/activity/last_activity.dart';
 import 'package:vidyut/src/design/theme.dart';
 import 'package:vidyut/src/home/home_screen.dart';
+import 'package:vidyut/src/settings/clipboard_pause.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
 import 'package:vidyut/src/shared/wire.dart';
 
@@ -182,6 +183,64 @@ void main() {
       find.text('Connected, but automatic clipboard sync needs recovery.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('shows a pause on either side as Sync paused', (tester) async {
+    Future<void> pump({
+      PhoneClipboardPause phone = const PhoneClipboardPause.off(),
+      bool laptopPaused = false,
+      String clipboardStatus = 'ok',
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildVidyutTheme(),
+          home: HomeScreen(
+            connectionStatus: ConnectionStatus.connected,
+            relayHealth: RelayHealth(
+              status: 'ok',
+              relayName: 'Desk laptop',
+              clipboardStatus: clipboardStatus,
+              clipboardPaused: laptopPaused,
+            ),
+            clipboardPause: phone,
+            onOpenFiles: () {},
+            onOpenSettings: () {},
+            onOpenRecentActivity: () {},
+            onOpenConnectionDetails: () {},
+            onSendFiles: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pump(phone: const PhoneClipboardPause.untilResumed());
+    expect(find.text('Sync paused'), findsOneWidget);
+    expect(
+      find.text(
+        'Clipboard sync is paused on this phone until you resume it. '
+        'Files still move.',
+      ),
+      findsOneWidget,
+    );
+
+    await pump(laptopPaused: true);
+    expect(find.textContaining('paused on the laptop'), findsOneWidget);
+
+    // A pause that has run out reads as Ready again.
+    await pump(
+      phone: PhoneClipboardPause.until(
+        DateTime.now().subtract(const Duration(minutes: 1)),
+      ),
+    );
+    expect(find.text('Ready'), findsOneWidget);
+
+    // Recovery outranks a pause.
+    await pump(
+      phone: const PhoneClipboardPause.untilResumed(),
+      clipboardStatus: 'degraded',
+    );
+    expect(find.text('Sync needs attention'), findsOneWidget);
   });
 
   testWidgets('renders searching and offline states in both themes', (

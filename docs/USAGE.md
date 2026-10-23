@@ -31,6 +31,9 @@ On the phone:
 - **If that grant is missing** (or MIUI blocked the silent write), tap the receipt
   notification — that's the guaranteed fallback and copies the item into the clipboard.
 
+Text copied from a browser or an editor keeps its formatting. Apps that paste rich
+text get the bold, links and lists, and every other app gets the plain text. Phone → laptop copies are plain text only.
+
 The home screen's **Last activity** card always shows the most recent item ("text (44 B)
 from laptop · just now"), so you can confirm it arrived at a glance.
 
@@ -64,6 +67,18 @@ whatever text you last copied on the phone to the laptop. Vidyut reads it throug
 brief transparent Android activity, reports the result in the notification, and leaves
 you in the app where you copied the text.
 
+### Verification codes — automatic (opt-in)
+
+Turn on **Settings → Verification codes** and allow notification access when
+asked. From then on, when a notification on the phone carries a one-time code
+("Your OTP is 482913"), the code alone lands on the laptop clipboard. Switch to
+the login page and paste.
+
+Codes are spotted by English words such as "code", "OTP" or "verify", so a
+notification in another language is not picked up. Vidyut checks only
+notifications that contain a number, keeps no copy of them, and never writes
+the code to the debug log. Pausing clipboard sync on the phone holds codes too.
+
 ### Advanced: zero-tap text auto-send (opt-in)
 
 If you want copied *text* to fly to the laptop with **no tap at all**, there's an
@@ -88,6 +103,8 @@ Everything else lives behind the **gear icon → Settings**.
 ## Settings at a glance
 
 - **Auto-send screenshots** — the screenshot auto-push toggle.
+- **Verification codes** — send one-time codes from phone notifications to the
+  laptop clipboard (needs notification access).
 - **Notify when laptop payloads arrive** — receipt notifications on/off (delivery-failure
   notices always show).
 - **Setup status** — the live permission/OEM checklist; your recovery surface when
@@ -97,6 +114,30 @@ Everything else lives behind the **gear icon → Settings**.
   you look first when sync misbehaves (Flutter logs don't reach `logcat`).
 - **Forget this laptop** (Danger zone) — deletes the pairing and stops syncing. Use it to
   move to a new laptop or revoke a device, then re-pair from scratch.
+
+---
+
+## Pausing clipboard sync
+
+About to copy a password, or just want the two clipboards apart for a while?
+Pause sync on the laptop. In the desktop window, open **Relay → Clipboard sync**
+and pick **15 min**, **1 hour** or **Until I resume**. From the tray, choose
+**Pause clipboard for 1 hour**.
+
+While it is paused, nothing you copy on the laptop is sent, and nothing the
+phone sends is written to the laptop clipboard. File transfers keep running.
+The status reads **Sync paused**, and **Resume** is one click from the banner
+or the tray. A timed pause lifts by itself. A pause also ends when the relay
+restarts, so a reboot never leaves sync quietly off.
+
+The phone has its own pause. Tap the status at the top of Home and pick
+**15 min**, **1 hour** or **Until I resume** under **Clipboard sync**. While
+it is paused, laptop copies are not written to the phone, and screenshots,
+verification codes and auto-read text are not sent. Sharing to Vidyut and **Send clipboard** still
+send, because you asked for those. A copy the laptop made during the pause is
+not applied when it lifts. Unlike the laptop's, the phone's pause survives a
+restart until it runs out or you resume it. Home reads **Sync paused** when
+either side is paused, and says which.
 
 ---
 
@@ -132,6 +173,25 @@ vidyut-relay --transfers
 Files are transferred only over the paired LAN connection. Interrupted
 transfers retain receiver-confirmed progress and complete files are verified
 with SHA-256 before they become visible.
+
+### Pull files from the laptop
+
+In **Files**, tap the laptop icon to browse the laptop's shared folders. Tap
+a folder to open it, and the download button on a row to pull that file or
+the whole folder. Long-press to pick several. The download button in the top
+bar pulls the folder you are in. Pulled files arrive like any laptop send, in
+`Downloads/Vidyut`, and a pulled folder keeps its subfolders.
+
+The laptop shares Desktop, Documents, Downloads, Music, Pictures and Videos
+by default. Hidden files and symlinks are never shared. To change the list,
+edit `sharedFolders` in `~/.config/vidyut/relay.json` (absolute paths; `[]`
+turns browsing off) and restart the relay:
+
+```bash
+systemctl --user restart vidyut-relay
+```
+
+One pull is at most 1000 files (ADR 0026).
 
 ## Linux updates
 

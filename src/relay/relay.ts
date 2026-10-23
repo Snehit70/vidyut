@@ -1,9 +1,20 @@
 import { verifyPairingProof } from "../shared/auth";
 import {
+  createRelayProof,
+  deriveSessionKey,
+  isClientChallenge,
+  SessionSealer,
+  travelsUnsealed,
+} from "../shared/session-seal";
+import {
   pairingSecretRef,
   type PairingSecretRef,
 } from "./config";
 import { handleControlRequest, isControlPath } from "./control-plane";
+import {
+  isTrustedWebSocketOrigin,
+  rejectUntrustedControlRequest,
+} from "./local-origin";
 import { noopLogger, type Logger } from "./logger";
 import { getPairingHost } from "./network";
 import { PayloadPool } from "./payload-pool";
@@ -14,15 +25,21 @@ import {
 } from "./setup-status";
 import {
   encodedPayloadBytes,
+  isBrowseRequest,
   isPayloadFrame,
   isTransferControlMessage,
+  type BrowseAnswer,
+  type BrowseRequest,
   type PayloadFrame,
   type RelayHealth,
   type LaptopTelemetry,
+  type RelayFeature,
   type RelayMessage,
+  type SessionFeature,
   type TransferControlMessage,
 } from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
+import type { ClipboardPause } from "./clipboard-pause";
 import { sampleLaptopTelemetry } from "./telemetry";
 
 interface RelayOptions {
@@ -33,6 +50,7 @@ interface RelayOptions {
   pool?: PayloadPool;
   heartbeatIntervalMs?: number;
   staleAfterMs?: number;
+  authTimeoutMs?: number;
   logger?: Logger;
   clipboardHealth?: () => ClipboardHealth;
   relayName?: string;
@@ -41,6 +59,7 @@ interface RelayOptions {
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
   setupStatus?: SetupStatusReader;
+  clipboardPause?: ClipboardPause;
   transferControl?: (
     message: TransferControlMessage,
     sourceDeviceId: string,
@@ -55,10 +74,16 @@ interface RelayOptions {
     context: { isLoopback: boolean },
   ) => Promise<Response | undefined>;
   telemetry?: () => Promise<LaptopTelemetry>;
+  /** Answers the phone reading the laptop's shared folders (ADR 0026). */
+  browse?: (request: BrowseRequest) => Promise<BrowseAnswer>;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
 const defaultStaleAfterMs = 90_000;
+// The phone answers hello within one round trip. A socket that has not proved
+// the secret by now is a scanner or a stuck client, and holding it open only
+// lets it sit on a challenge.
+const defaultAuthTimeoutMs = 10_000;
 
 interface DeviceSocketData {
   connId: string;
@@ -68,6 +93,10 @@ interface DeviceSocketData {
   deviceId?: string;
   connectedAt: number;
   lastSeen: number;
+  telemetrySubscribed: boolean;
+  authTimer?: ReturnType<typeof setTimeout>;
+  /** Set once `sealed_control` is negotiated; every later control message goes through it. */
+  sealer?: SessionSealer;
 }
 
 type RelaySocket = Bun.ServerWebSocket<DeviceSocketData>;
@@ -127,14 +156,25 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       socket.ping();
     }
   }, heartbeatIntervalMs);
-  const telemetryInterval = setInterval(() => {
-    if (![...devices].some((socket) => socket.data.authenticated)) return;
-    void (options.telemetry ?? sampleLaptopTelemetry)().then(
-      (telemetry) => broadcast(devices, undefined, telemetry),
+  const sampleTelemetry = options.telemetry ?? sampleLaptopTelemetry;
+  const sendTelemetry = (candidates: RelaySocket[]) => {
+    const recipients = candidates.filter(isTelemetryRecipient);
+    if (recipients.length === 0) return;
+    void sampleTelemetry().then(
+      (telemetry) => {
+        for (const socket of recipients) {
+          if (isTelemetryRecipient(socket)) send(socket, telemetry);
+        }
+      },
       (error) => logger.error("telemetry_sampling_failed", {
         error: error instanceof Error ? error.message : String(error),
       }),
     );
+  };
+  // Sampling reads /proc and /sys, and every sample wakes the phone's radio.
+  // Only phones showing the numbers right now get them.
+  const telemetryInterval = setInterval(() => {
+    sendTelemetry([...devices]);
   }, 5_000);
 
   const server = Bun.serve<DeviceSocketData>({
@@ -144,12 +184,22 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       const address = bunServer.requestIP(request);
       const now = Date.now();
       if (
+        request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+        !isTrustedWebSocketOrigin(request.headers.get("origin"), bunServer.port ?? options.port)
+      ) {
+        logger.warn("websocket_origin_rejected", {
+          remote: address ? `${address.address}:${address.port}` : "unknown",
+        });
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (
         bunServer.upgrade(request, {
           data: {
             connId: randomConnId(),
             remote: address ? `${address.address}:${address.port}` : "unknown",
             challenge: randomBase64(24),
             authenticated: false,
+            telemetrySubscribed: false,
             connectedAt: now,
             lastSeen: now,
           },
@@ -172,7 +222,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         );
       }
       if (pathname === "/health") {
-        return Response.json(healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.()));
+        const snapshot = healthSnapshot(startedAt, devices, pool.current, options.clipboardHealth?.());
+        // The detail (device IPs, what was last copied and when) is for the
+        // person at this laptop. Anyone else on the WiFi learns only that a
+        // Relay is up.
+        return Response.json(isLoopback ? snapshot : { status: snapshot.status });
       }
       if (isControlPath(pathname)) {
         if (!isLoopback) {
@@ -181,6 +235,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         const port = bunServer.port;
         if (port === undefined) {
           return new Response("Relay has no listen port.", { status: 500 });
+        }
+        const rejection = rejectUntrustedControlRequest(request, port);
+        if (rejection) {
+          logger.warn("control_request_rejected", { method: request.method, pathname });
+          return rejection;
         }
         return handleControlRequest(request, {
           pairingSecret,
@@ -207,27 +266,71 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           ...(options.enqueueLaptopFiles && {
             enqueueLaptopFiles: options.enqueueLaptopFiles,
           }),
+          ...(options.clipboardPause && {
+            clipboardPause: options.clipboardPause,
+          }),
           setupStatus: options.setupStatus ?? setupStatusReader,
         });
       }
       return new Response("Vidyut relay", { status: 200 });
     },
     websocket: {
+      // Bun's default cap is 16 MiB per message, and a publish carries the
+      // ciphertext as base64 inside JSON, so the default silently dropped the
+      // socket (1006) for anything over ~12 MiB of plaintext. Size the cap from
+      // maxPayloadBytes so an over-limit frame reaches the payload_too_large
+      // check below instead.
+      maxPayloadLength: websocketMessageLimit(options.maxPayloadBytes),
       open(socket) {
         devices.add(socket);
         logger.info("device_connected", { connId: socket.data.connId, remote: socket.data.remote });
+        socket.data.authTimer = setTimeout(() => {
+          if (socket.data.authenticated) return;
+          logger.warn("auth_failed", {
+            connId: socket.data.connId,
+            remote: socket.data.remote,
+            reason: "auth_timeout",
+          });
+          socket.close(1008, "auth_timeout");
+        }, options.authTimeoutMs ?? defaultAuthTimeoutMs);
         send(socket, {
           v: 1,
           kind: "hello",
           challenge: socket.data.challenge,
           maxPayloadBytes: options.maxPayloadBytes,
+          features: options.browse ? [...relayFeatures, "browse_files"] : [...relayFeatures],
         });
       },
       async message(socket, rawMessage) {
         socket.data.lastSeen = Date.now();
-        const message = parseMessage(rawMessage);
+        let message = parseMessage(rawMessage);
         if (!message) {
           sendError(logger, socket, "bad_message", "Message must be valid JSON.");
+          return;
+        }
+        const sealer = socket.data.sealer;
+        if (sealer && message.kind === "sealed") {
+          try {
+            message = sealer.open(message);
+          } catch (error) {
+            // The counters cannot resynchronise after a lost or forged
+            // message, so the session ends and the phone reconnects.
+            logger.warn("sealed_message_rejected", {
+              connId: socket.data.connId,
+              deviceId: socket.data.deviceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            socket.close(1008, "seal_failed");
+            return;
+          }
+        } else if (sealer && !travelsUnsealed(message)) {
+          logger.warn("sealed_message_rejected", {
+            connId: socket.data.connId,
+            deviceId: socket.data.deviceId,
+            kind: message.kind,
+            error: "unsealed control message on a sealed session",
+          });
+          socket.close(1008, "seal_required");
           return;
         }
 
@@ -241,13 +344,27 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             relayHealth(options.relayName ?? "Vidyut Relay", options.clipboardHealth?.()),
           );
           if (socket.data.authenticated) {
+            clearTimeout(socket.data.authTimer);
             notifyDeviceConnected(
               options.deviceConnected,
               socket.data.deviceId,
               (message) => send(socket, message),
             );
-            void (options.telemetry ?? sampleLaptopTelemetry)().then((telemetry) => send(socket, telemetry));
+            sendTelemetry([socket]);
           }
+          return;
+        }
+
+        if (message.kind === "telemetry_subscribe") {
+          const active = message.active === true;
+          const changed = socket.data.telemetrySubscribed !== active;
+          socket.data.telemetrySubscribed = active;
+          if (active && changed) sendTelemetry([socket]);
+          return;
+        }
+
+        if (message.kind === "browse_list" || message.kind === "browse_pull") {
+          await answerBrowse(logger, socket, message, options.browse);
           return;
         }
 
@@ -299,16 +416,27 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
 
-        const accepted = await pool.publish(message.frame, socket);
+        const clockOffsetMs = senderClockOffset(message.sentAt);
+        const accepted = await pool.publish(
+          message.frame,
+          socket,
+          message.frame.ts + clockOffsetMs,
+        );
         if (!accepted) {
           logger.warn("payload_stale_dropped", {
             connId: socket.data.connId,
             deviceId: socket.data.deviceId,
             ...frameIdentity(message.frame),
+            clockOffsetMs,
             currentTs: pool.current?.ts,
           });
         }
-        send(socket, { v: 1, kind: "ack", ts: message.frame.ts });
+        send(socket, {
+          v: 1,
+          kind: "ack",
+          ts: message.frame.ts,
+          ...(!accepted && { stale: true as const }),
+        });
       },
       pong(socket) {
         socket.data.lastSeen = Date.now();
@@ -319,6 +447,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         socket.data.lastSeen = Date.now();
       },
       close(socket, wsCode, wsReason) {
+        clearTimeout(socket.data.authTimer);
         // A reaped socket was already removed by the heartbeat sweep and got
         // its socket_reaped terminal event; skip it so each connection ends
         // with exactly one terminal event.
@@ -377,6 +506,28 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       devices.clear();
     },
   };
+}
+
+/**
+ * How far the sender's clock is behind the Relay's (negative when ahead),
+ * measured at receipt. Includes the one-way network delay, which is noise at
+ * the scale of clipboard races. Senders that predate `sentAt` get 0.
+ */
+function senderClockOffset(sentAt: unknown): number {
+  if (typeof sentAt !== "number" || !Number.isFinite(sentAt)) return 0;
+  return Date.now() - sentAt;
+}
+
+const websocketEnvelopeBytes = 64 * 1024;
+
+export function websocketMessageLimit(maxPayloadBytes: number): number {
+  return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
+}
+
+const relayFeatures: readonly RelayFeature[] = ["telemetry_subscribe", "relay_proof", "sealed_control"];
+
+function isTelemetryRecipient(socket: RelaySocket): boolean {
+  return socket.data.authenticated && socket.data.telemetrySubscribed;
 }
 
 function notifyDeviceDisconnected(
@@ -441,12 +592,47 @@ async function authenticate(
 
   socket.data.authenticated = true;
   socket.data.deviceId = message.deviceId;
+  // A phone that predates telemetry_subscribe never asks, so it keeps the
+  // always-on stream it was built against.
+  socket.data.telemetrySubscribed = !(
+    Array.isArray(message.features) &&
+    message.features.includes("telemetry_subscribe")
+  );
+  // A phone that sends a clientChallenge wants this Relay to prove it holds
+  // the secret too. Older phones send none and get the one-way handshake.
+  const clientChallenge = isClientChallenge(message.clientChallenge) ? message.clientChallenge : undefined;
+  const sessionFeatures: SessionFeature[] =
+    clientChallenge && Array.isArray(message.features) && message.features.includes("sealed_control")
+      ? ["sealed_control"]
+      : [];
   logger.info("auth_ok", {
     connId: socket.data.connId,
     deviceId: message.deviceId,
     msSinceConnect: Date.now() - socket.data.connectedAt,
+    relayProof: clientChallenge !== undefined,
+    sealed: sessionFeatures.includes("sealed_control"),
   });
-  send(socket, { v: 1, kind: "auth_ok", health });
+  send(socket, {
+    v: 1,
+    kind: "auth_ok",
+    health,
+    ...(clientChallenge && {
+      relayProof: createRelayProof(
+        pairingSecret,
+        socket.data.challenge,
+        clientChallenge,
+        sessionFeatures,
+        message.deviceId,
+      ),
+      features: sessionFeatures,
+    }),
+  });
+  if (clientChallenge && sessionFeatures.includes("sealed_control")) {
+    socket.data.sealer = new SessionSealer(
+      deriveSessionKey(pairingSecret, socket.data.challenge, clientChallenge, message.deviceId),
+      "relay_to_phone",
+    );
+  }
   if (currentPayload) {
     send(socket, { v: 1, kind: "payload", frame: currentPayload });
     logger.info("payload_broadcast", {
@@ -531,6 +717,51 @@ function frameIdentity(frame: PayloadFrame): Record<string, unknown> {
   };
 }
 
+async function answerBrowse(
+  logger: Logger,
+  socket: RelaySocket,
+  message: unknown,
+  browse: RelayOptions["browse"],
+): Promise<void> {
+  const raw = message as Record<string, unknown>;
+  const requestId = typeof raw.requestId === "string" ? raw.requestId : "";
+  const reply = (answer: BrowseAnswer) =>
+    send(socket, { v: 1, kind: "browse_result", requestId, ...answer });
+  // Listings name the laptop's files, so they travel sealed or not at all.
+  if (!socket.data.sealer) {
+    reply({ ok: false, code: "seal_required", message: "Update Vidyut on the phone to browse the laptop." });
+    return;
+  }
+  if (!isBrowseRequest(message)) {
+    reply({ ok: false, code: "bad_request", message: "The browse request was malformed." });
+    return;
+  }
+  if (!browse) {
+    reply({ ok: false, code: "browse_unavailable", message: "This laptop does not share folders." });
+    return;
+  }
+  try {
+    const answer = await browse(message);
+    if (message.kind === "browse_pull" && answer.ok && "queued" in answer) {
+      logger.info("browse_pull_queued", {
+        connId: socket.data.connId,
+        deviceId: socket.data.deviceId,
+        files: answer.queued.files,
+        bytes: answer.queued.bytes,
+      });
+    }
+    reply(answer);
+  } catch (error) {
+    logger.error("browse_failed", {
+      connId: socket.data.connId,
+      deviceId: socket.data.deviceId,
+      kind: message.kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    reply({ ok: false, code: "browse_failed", message: "The laptop could not read that." });
+  }
+}
+
 function transferIdOf(message: TransferControlMessage): string {
   return message.kind === "transfer_offer"
     ? message.offer.transferId
@@ -538,7 +769,8 @@ function transferIdOf(message: TransferControlMessage): string {
 }
 
 function send(socket: RelaySocket, message: RelayMessage): void {
-  socket.send(JSON.stringify(message));
+  const sealer = socket.data.sealer;
+  socket.send(JSON.stringify(sealer && !travelsUnsealed(message) ? sealer.seal(message) : message));
 }
 
 function sendError(logger: Logger, socket: RelaySocket, code: string, message: string): void {

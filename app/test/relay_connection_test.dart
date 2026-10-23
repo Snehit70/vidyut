@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
 import 'package:vidyut/src/shared/relay_connection.dart';
+import 'package:vidyut/src/shared/session_seal.dart';
 import 'package:vidyut/src/shared/wire.dart';
 
 void main() {
@@ -107,6 +108,33 @@ void main() {
     expect(health, isNotNull);
     expect(health!.clipboardStatus, isNull);
     expect(health.clipboardError, isNull);
+    expect(health.clipboardPaused, isFalse);
+  });
+
+  test('reads a laptop clipboard pause and its deadline', () {
+    final timed = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {
+        'status': 'healthy',
+        'paused': true,
+        'pausedUntil': 1700000000000,
+      },
+    })!;
+    final open = RelayHealth.fromJson({
+      'status': 'ok',
+      'relayName': 'framework',
+      'clipboard': {'status': 'healthy', 'paused': true},
+    })!;
+
+    expect(timed.clipboardPaused, isTrue);
+    expect(
+      timed.clipboardPausedUntil,
+      DateTime.fromMillisecondsSinceEpoch(1700000000000),
+    );
+    expect(open.clipboardPaused, isTrue);
+    expect(open.clipboardPausedUntil, isNull);
+    expect(timed.degraded, isFalse);
   });
 
   test('emits incoming payload frames', () async {
@@ -135,6 +163,31 @@ void main() {
     await expectLater(connection.payloads, emits(frame));
   });
 
+  test('keeps a formatted alternative and ignores one it does not know', () {
+    final json = {
+      'v': 1,
+      'type': 'text',
+      'mime': 'text/plain',
+      'origin': 'laptop',
+      'ts': 1800000200001,
+      'nonce': 'nonce',
+      'payload': 'payload',
+    };
+    const alt = {'mime': 'text/html', 'nonce': 'alt-nonce', 'payload': 'alt'};
+
+    expect(PayloadFrame.fromJson({...json, 'alt': alt}).toJson(), {
+      ...json,
+      'alt': alt,
+    });
+    expect(
+      PayloadFrame.fromJson({
+        ...json,
+        'alt': {...alt, 'mime': 'text/rtf'},
+      }).alt,
+      isNull,
+    );
+  });
+
   test('publishes payload frames to the relay', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(
@@ -145,6 +198,7 @@ void main() {
       ),
       deviceId: 'phone',
       transport: transport,
+      clock: () => DateTime.fromMillisecondsSinceEpoch(1800000200050),
     );
     const frame = PayloadFrame(
       type: PayloadType.text,
@@ -160,8 +214,36 @@ void main() {
 
     await expectLater(
       transport.sent,
-      emits({'v': 1, 'kind': 'publish', 'frame': frame.toJson()}),
+      emits({
+        'v': 1,
+        'kind': 'publish',
+        'frame': frame.toJson(),
+        'sentAt': 1800000200050,
+      }),
     );
+  });
+
+  test('a stale ack still acks and explains the dropped copy', () async {
+    final transport = FakeRelayTransport();
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+
+    await connection.start();
+    final ack = connection.acks.first;
+    final event = connection.events.first;
+    transport.receive({'v': 1, 'kind': 'ack', 'ts': 42, 'stale': true});
+
+    expect(await ack, 42);
+    final dropped = await event;
+    expect(dropped.code, 'stale');
+    expect(dropped.isError, isFalse);
   });
 
   test('sends and emits typed transfer control messages', () async {
@@ -265,6 +347,76 @@ void main() {
     expect(connection.maxPayloadBytes, 4096);
   });
 
+  test('asks for telemetry only while wanted on a relay that offers it', () async {
+    final transport = FakeRelayTransport();
+    final sent = <Map<String, Object?>>[];
+    transport.sent.listen(sent.add);
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+    connection.telemetryWanted = true;
+
+    await connection.start();
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+      'features': ['telemetry_subscribe'],
+    });
+    await pumpEventQueue();
+    expect(sent.single['features'], contains('telemetry_subscribe'));
+
+    transport.receive({'v': 1, 'kind': 'auth_ok'});
+    await pumpEventQueue();
+    connection.telemetryWanted = false;
+    connection.telemetryWanted = false;
+    await pumpEventQueue();
+
+    expect(sent.skip(1), [
+      {'v': 1, 'kind': 'telemetry_subscribe', 'active': true},
+      {'v': 1, 'kind': 'telemetry_subscribe', 'active': false},
+    ]);
+  });
+
+  test('never sends a telemetry subscription to an older relay', () async {
+    final transport = FakeRelayTransport();
+    final sent = <Map<String, Object?>>[];
+    transport.sent.listen(sent.add);
+    final connection = RelayConnection(
+      pairing: const PairingCode(
+        host: '127.0.0.1',
+        port: 17321,
+        secret: 'pairing-secret',
+      ),
+      deviceId: 'phone',
+      transport: transport,
+    );
+    connection.telemetryWanted = true;
+
+    await connection.start();
+    transport.receive({
+      'v': 1,
+      'kind': 'hello',
+      'challenge': 'relay-challenge',
+      'maxPayloadBytes': 4096,
+    });
+    transport.receive({'v': 1, 'kind': 'auth_ok'});
+    await pumpEventQueue();
+    connection.telemetryWanted = false;
+    connection.telemetryWanted = true;
+    await pumpEventQueue();
+
+    // An unknown kind would come back as an error and drop the session.
+    expect(sent.map((message) => message['kind']), ['auth']);
+  });
+
   test('surfaces publish acks as a stream of acked ts', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(
@@ -305,6 +457,240 @@ void main() {
     });
 
     expect((await errorEvent).code, 'payload_too_large');
+  });
+
+  group('mutual auth', () {
+    const secret = 'pairing-secret';
+    const challenge = 'cmVsYXktY2hhbGxlbmdlLWJ5dGVz';
+
+    late FakeRelayTransport transport;
+    late List<Map<String, Object?>> sent;
+    late List<ConnectionStatus> statuses;
+    late List<RelayEvent> events;
+
+    RelayConnection connect({bool pinned = false}) {
+      transport = FakeRelayTransport();
+      sent = [];
+      statuses = [];
+      events = [];
+      transport.sent.listen(sent.add);
+      final connection = RelayConnection(
+        pairing: PairingCode(
+          host: '127.0.0.1',
+          port: 17321,
+          secret: secret,
+          relayVerified: pinned,
+        ),
+        deviceId: 'phone',
+        transport: transport,
+      );
+      connection.status.listen(statuses.add);
+      connection.events.listen(events.add);
+      return connection;
+    }
+
+    /// Plays the relay's side of the handshake; returns the relay's sealer
+    /// when the session is sealed.
+    Future<SessionSealer?> handshake({
+      List<String> features = const ['sealed_control'],
+      String proofSecret = secret,
+      bool sendProof = true,
+      List<String> relayFeatures = const [
+        'telemetry_subscribe',
+        'relay_proof',
+        'sealed_control',
+      ],
+    }) async {
+      transport.receive({
+        'v': 1,
+        'kind': 'hello',
+        'challenge': challenge,
+        'maxPayloadBytes': 4096,
+        'features': relayFeatures,
+      });
+      await pumpEventQueue();
+      final auth = sent.single;
+      expect(auth['features'], contains('sealed_control'));
+      final clientChallenge = auth['clientChallenge'] as String;
+      transport.receive({
+        'v': 1,
+        'kind': 'auth_ok',
+        if (sendProof) ...{
+          'relayProof': await createRelayProof(
+            pairingSecret: proofSecret,
+            challenge: challenge,
+            clientChallenge: clientChallenge,
+            sessionFeatures: features,
+            deviceId: 'phone',
+          ),
+          'features': features,
+        },
+      });
+      await pumpEventQueue();
+      if (!features.contains('sealed_control')) return null;
+      return SessionSealer(
+        await deriveSessionKey(
+          pairingSecret: secret,
+          challenge: challenge,
+          clientChallenge: clientChallenge,
+          deviceId: 'phone',
+        ),
+        SealDirection.relayToPhone,
+      );
+    }
+
+    test('seals control both ways once the relay proves itself', () async {
+      final connection = connect();
+      final telemetry = <LaptopTelemetry>[];
+      connection.telemetry.listen(telemetry.add);
+      await connection.start();
+      final relay = (await handshake())!;
+
+      expect(statuses.last, ConnectionStatus.connected);
+      expect(connection.relayVerified, isTrue);
+
+      transport.receive(
+        await relay.seal({
+          'v': 1,
+          'kind': 'telemetry',
+          'ts': 1,
+          'batteryPercent': 50,
+        }),
+      );
+      await pumpEventQueue();
+      expect(telemetry, hasLength(1));
+
+      const control = {
+        'v': 1,
+        'kind': 'transfer_cancel',
+        'transferId': 'transfer-1',
+      };
+      connection.sendTransferControl(control);
+      await pumpEventQueue();
+      expect(sent.last['kind'], 'sealed');
+      expect(await relay.open(sent.last), control);
+    });
+
+    test('browses only on a sealed session whose relay shares folders', () async {
+      final shared = connect();
+      final results = <Map<String, Object?>>[];
+      shared.browseResults.listen(results.add);
+      await shared.start();
+      final relay = (await handshake(
+        relayFeatures: const ['relay_proof', 'sealed_control', 'browse_files'],
+      ))!;
+      expect(shared.canBrowse, isTrue);
+
+      const request = {
+        'v': 1,
+        'kind': 'browse_list',
+        'requestId': 'browse-request-0001',
+      };
+      shared.sendBrowse(request);
+      await pumpEventQueue();
+      expect(await relay.open(sent.last), request);
+      expect(
+        () => shared.sendBrowse({'v': 1, 'kind': 'transfer_cancel'}),
+        throwsFormatException,
+      );
+
+      transport.receive(
+        await relay.seal({
+          'v': 1,
+          'kind': 'browse_result',
+          'requestId': 'browse-request-0001',
+          'ok': true,
+          'roots': <Object?>[],
+        }),
+      );
+      await pumpEventQueue();
+      expect(results.single['requestId'], 'browse-request-0001');
+      expect(statuses.last, ConnectionStatus.connected);
+
+      final notShared = connect();
+      await notShared.start();
+      await handshake();
+      expect(notShared.canBrowse, isFalse);
+      expect(() => notShared.sendBrowse(request), throwsStateError);
+
+      final unsealed = connect();
+      await unsealed.start();
+      await handshake(
+        features: const [],
+        relayFeatures: const ['relay_proof', 'sealed_control', 'browse_files'],
+      );
+      expect(unsealed.canBrowse, isFalse);
+    });
+
+    test('drops an unsealed control message on a sealed session', () async {
+      final connection = connect();
+      final telemetry = <LaptopTelemetry>[];
+      connection.telemetry.listen(telemetry.add);
+      await connection.start();
+      await handshake();
+
+      transport.receive({
+        'v': 1,
+        'kind': 'telemetry',
+        'ts': 1,
+        'batteryPercent': 50,
+      });
+      await pumpEventQueue();
+
+      expect(telemetry, isEmpty);
+      expect(statuses.last, ConnectionStatus.connected);
+    });
+
+    test('goes offline when a sealed message fails to open', () async {
+      final connection = connect();
+      await connection.start();
+      final relay = (await handshake())!;
+      final message = await relay.seal({'v': 1, 'kind': 'health'});
+
+      transport.receive(message);
+      transport.receive(message);
+      await pumpEventQueue();
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'seal_failed');
+    });
+
+    test('refuses a relay whose proof does not verify', () async {
+      final connection = connect();
+      await connection.start();
+      await handshake(proofSecret: 'someone-else');
+
+      expect(statuses, [ConnectionStatus.searching, ConnectionStatus.offline]);
+      expect(events.last.code, 'relay_unverified');
+      expect(connection.relayVerified, isFalse);
+    });
+
+    test('accepts an older relay until the pairing has seen a proof', () async {
+      final connection = connect();
+      await connection.start();
+      await handshake(sendProof: false);
+
+      expect(statuses.last, ConnectionStatus.connected);
+      expect(connection.relayVerified, isFalse);
+    });
+
+    test('refuses a missing proof once the pairing is pinned', () async {
+      final connection = connect(pinned: true);
+      await connection.start();
+      await handshake(sendProof: false);
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'relay_unverified');
+    });
+
+    test('refuses an unsealed session once the pairing is pinned', () async {
+      final connection = connect(pinned: true);
+      await connection.start();
+      await handshake(features: const []);
+
+      expect(statuses.last, ConnectionStatus.offline);
+      expect(events.last.code, 'relay_unverified');
+    });
   });
 }
 

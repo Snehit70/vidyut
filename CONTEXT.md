@@ -14,8 +14,23 @@ _Avoid_: queue, history, buffer, stack
 
 **Payload**:
 One clipboard item synced through the pool — an image, a text blob, or a
-**Link** — plus its metadata (type, size, origin device, timestamp).
+**Link** — plus its metadata (type, size, origin device, timestamp). Text
+copied on the laptop can also carry its formatting as HTML, which the phone
+pastes where apps accept it (ADR 0024). It is still one Payload.
 _Avoid_: item, entry, message, clip
+
+**Verification code**:
+A one-time code that Vidyut finds in a phone notification and sends to the
+laptop as a text Payload (ADR 0025). Opt-in, and only with notification
+access. The code is never kept in logs or Activity.
+_Avoid_: OTP sync, SMS forwarding, notification mirroring
+
+**Shared folder**:
+A laptop folder the phone may browse and pull files from (ADR 0026). Set in
+`sharedFolders` in the relay config. Read-only: the phone lists and takes,
+and hidden files and symlinks are never shown. A pull becomes an ordinary
+laptop → phone Transfer.
+_Avoid_: remote file system, network share, sync folder
 
 **Link**:
 A Payload that is a single web address. The laptop writes it to the clipboard
@@ -214,3 +229,13 @@ _Avoid_: connected only, online, synced
 The user-facing Home state in which the phone remains connected but automatic
 clipboard synchronization is degraded or requires recovery.
 _Avoid_: Needs attention, offline, failed
+
+**Sync paused**:
+The state in which the user has chosen to stop automatic clipboard
+synchronization for a while (15 minutes, an hour, or until resumed). Each
+device has its own pause. On the laptop, copies are not published and incoming
+payloads are not written. On the phone, incoming payloads are not written, and
+screenshots, verification codes and auto-read text are not sent; a deliberate send (share sheet,
+**Send clipboard**) still goes. File transfers are unaffected. A degraded
+watcher still reports Sync needs attention, because resuming would not fix it.
+_Avoid_: disabled, off, offline

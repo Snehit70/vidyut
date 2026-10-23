@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   BunProcessRunner,
   createWaylandClipboardAdapter,
+  maxAlternativeBytes,
   type ProcessRunner,
   type RunOptions,
 } from "../src/relay/clipboard";
@@ -129,6 +130,44 @@ describe("Wayland clipboard adapter", () => {
     // The read must pass -n so wl-paste emits exact bytes and never appends a
     // trailing newline to text payloads.
     expect(runner.calls.at(-1)?.args).toEqual(["--type", "image/png", "-n"]);
+  });
+
+  test("reads a text copy's HTML formatting alongside it", async () => {
+    const runner = new FakeRunner();
+    runner.outputs.set("wl-paste --list-types", new TextEncoder().encode("text/html\ntext/plain\n"));
+    runner.outputs.set("wl-paste --type text/plain -n", new TextEncoder().encode("bold"));
+    runner.outputs.set("wl-paste --type text/html -n", new TextEncoder().encode("<b>bold</b>"));
+    const clipboard = createWaylandClipboardAdapter(runner);
+
+    await expect(clipboard.read()).resolves.toEqual({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode("bold"),
+      alternative: { mime: "text/html", data: new TextEncoder().encode("<b>bold</b>") },
+    });
+  });
+
+  test("sends plain text alone when the HTML is too large or unreadable", async () => {
+    const runner = new FakeRunner();
+    runner.outputs.set("wl-paste --list-types", new TextEncoder().encode("text/html\ntext/plain\n"));
+    runner.outputs.set("wl-paste --type text/plain -n", new TextEncoder().encode("big"));
+    runner.outputs.set("wl-paste --type text/html -n", new Uint8Array(maxAlternativeBytes + 1));
+    const clipboard = createWaylandClipboardAdapter(runner);
+    expect((await clipboard.read())?.alternative).toBeUndefined();
+
+    runner.exitCodes.set("wl-paste --type text/html -n", 1);
+    runner.outputs.delete("wl-paste --type text/html -n");
+    expect((await clipboard.read())?.alternative).toBeUndefined();
+  });
+
+  test("does not read HTML for an image copy", async () => {
+    const runner = new FakeRunner();
+    runner.outputs.set("wl-paste --list-types", new TextEncoder().encode("image/png\ntext/html\n"));
+    runner.outputs.set("wl-paste --type image/png -n", new Uint8Array([137, 80, 78, 71]));
+    const clipboard = createWaylandClipboardAdapter(runner);
+
+    expect((await clipboard.read())?.alternative).toBeUndefined();
+    expect(runner.calls.map((call) => call.args.join(" "))).not.toContain("--type text/html -n");
   });
 
   test("treats an empty clipboard as no payload", async () => {

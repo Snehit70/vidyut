@@ -6,6 +6,16 @@ import org.junit.Test
 
 class VidyutFilesPluginTest {
     @Test
+    fun folderPathSplitsIntoSegmentsAndRefusesClimbing() {
+        assertEquals(listOf("Trip", "Day 1"), VidyutFolderPath.segments("Trip/Day 1"))
+        assertEquals(null, VidyutFolderPath.segments("Trip/../.."))
+        assertEquals(null, VidyutFolderPath.segments("/etc"))
+        assertEquals(null, VidyutFolderPath.segments("Trip//Day"))
+        assertEquals(null, VidyutFolderPath.segments("Trip\\Day"))
+        assertEquals(null, VidyutFolderPath.segments(""))
+    }
+
+    @Test
     fun sourceGrantUsesOnlyReturnedReadPermission() {
         val returned =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or

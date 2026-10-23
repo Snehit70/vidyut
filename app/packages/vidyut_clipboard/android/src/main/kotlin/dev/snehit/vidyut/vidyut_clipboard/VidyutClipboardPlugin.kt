@@ -1,14 +1,17 @@
 package dev.snehit.vidyut.vidyut_clipboard
 
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
@@ -31,8 +34,10 @@ class VidyutClipboardPlugin :
     EventChannel.StreamHandler {
     private lateinit var channel: MethodChannel
     private lateinit var screenOnChannel: EventChannel
+    private lateinit var notificationsChannel: EventChannel
     private lateinit var context: Context
     private var screenOnListener: (() -> Unit)? = null
+    private var notificationListener: ((Map<String, String>) -> Unit)? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -40,12 +45,31 @@ class VidyutClipboardPlugin :
         channel.setMethodCallHandler(this)
         screenOnChannel = EventChannel(binding.binaryMessenger, "vidyut/screen_on")
         screenOnChannel.setStreamHandler(this)
+        notificationsChannel = EventChannel(binding.binaryMessenger, "vidyut/posted_notifications")
+        notificationsChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                val listener: (Map<String, String>) -> Unit = { events.success(it) }
+                notificationListener = listener
+                PostedNotifications.addListener(listener)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                stopNotificationEvents()
+            }
+        })
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         screenOnChannel.setStreamHandler(null)
+        notificationsChannel.setStreamHandler(null)
         onCancel(null)
+        stopNotificationEvents()
+    }
+
+    private fun stopNotificationEvents() {
+        notificationListener?.let { PostedNotifications.removeListener(it) }
+        notificationListener = null
     }
 
     // Screen-on events (keepalive spec D5). Each engine's listen adds one
@@ -72,8 +96,12 @@ class VidyutClipboardPlugin :
         when (call.method) {
             "writeText" -> {
                 val text = call.argument<String>("text")
+                val html = call.argument<String>("html")
                 if (text == null) {
                     result.error("bad-args", "text is required", null)
+                } else if (html != null) {
+                    // Apps that paste formatting take the HTML; the rest take the text.
+                    setPrimaryClip(result) { ClipData.newHtmlText("Vidyut text", text, html) }
                 } else {
                     setPrimaryClip(result) { ClipData.newPlainText("Vidyut text", text) }
                 }
@@ -90,6 +118,18 @@ class VidyutClipboardPlugin :
             "openClipboardPermissionSettings" -> {
                 try {
                     openClipboardPermissionSettings()
+                    result.success(null)
+                } catch (error: Exception) {
+                    result.error("open-settings", error.message, null)
+                }
+            }
+            "hasNotificationAccess" -> result.success(
+                NotificationManagerCompat.getEnabledListenerPackages(context)
+                    .contains(context.packageName)
+            )
+            "openNotificationAccessSettings" -> {
+                try {
+                    openNotificationAccessSettings()
                     result.success(null)
                 } catch (error: Exception) {
                     result.error("open-settings", error.message, null)
@@ -189,6 +229,31 @@ class VidyutClipboardPlugin :
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startResolvedOrFallback(powerKeeper)
+    }
+
+    // Straight to Vidyut's own switch where Android has that page (11+),
+    // otherwise the list of apps with notification access.
+    private fun openNotificationAccessSettings() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).apply {
+                putExtra(
+                    Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                    ComponentName(context, CodeNotificationListener::class.java).flattenToString()
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(detail)
+                return
+            } catch (_: ActivityNotFoundException) {
+                // Some skins drop the detail page; the list below always exists.
+            }
+        }
+        context.startActivity(
+            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
     }
 
     private fun startResolvedOrFallback(preferred: Intent) {

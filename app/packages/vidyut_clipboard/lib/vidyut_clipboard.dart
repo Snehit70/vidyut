@@ -15,8 +15,12 @@ class VidyutClipboard {
   /// access, not a wiring bug.
   static const blockedErrorCode = 'clipboard-blocked';
 
-  Future<void> writeText(String text) {
-    return channel.invokeMethod<void>('writeText', {'text': text});
+  /// With [html], the clip carries formatting for apps that paste it.
+  Future<void> writeText(String text, {String? html}) {
+    return channel.invokeMethod<void>('writeText', {
+      'text': text,
+      'html': ?html,
+    });
   }
 
   Future<void> writeImage({required String path, required String mime}) {
@@ -69,4 +73,51 @@ class ScreenOnEvents {
 
   Stream<void> get events =>
       _channel.receiveBroadcastStream().map((_) {});
+}
+
+/// One notification another app posted, as the native listener saw it. Only
+/// notifications with a digit in the title or text are delivered.
+class PostedNotification {
+  const PostedNotification({
+    required this.packageName,
+    required this.title,
+    required this.text,
+  });
+
+  final String packageName;
+  final String title;
+  final String text;
+}
+
+/// Notifications from the native `CodeNotificationListener`, which Android
+/// runs only after the user grants notification access. Nothing is delivered
+/// until something listens; the foreground-service isolate is the consumer.
+class PostedNotifications {
+  PostedNotifications({EventChannel? channel, MethodChannel? methods})
+    : _channel = channel ?? defaultChannel,
+      _methods = methods ?? VidyutClipboard.channel;
+
+  static const defaultChannel = EventChannel('vidyut/posted_notifications');
+
+  final EventChannel _channel;
+  final MethodChannel _methods;
+
+  Stream<PostedNotification> get notifications =>
+      _channel.receiveBroadcastStream().map((event) {
+        final map = (event as Map<Object?, Object?>).cast<String, Object?>();
+        return PostedNotification(
+          packageName: map['packageName'] as String? ?? '',
+          title: map['title'] as String? ?? '',
+          text: map['text'] as String? ?? '',
+        );
+      });
+
+  Future<bool> hasAccess() async =>
+      await _methods.invokeMethod<bool>('hasNotificationAccess') ?? false;
+
+  /// Opens Vidyut's notification-access switch, or the list of apps with
+  /// access where Android has no per-app page.
+  Future<void> openAccessSettings() {
+    return _methods.invokeMethod<void>('openNotificationAccessSettings');
+  }
 }

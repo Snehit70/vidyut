@@ -5,7 +5,15 @@ export interface ClipboardPayload {
   type: PayloadType;
   mime: string;
   data: Uint8Array;
+  /** The same text with its formatting, when the copying app offered it. */
+  alternative?: { mime: "text/html"; data: Uint8Array };
 }
+
+/**
+ * Formatting is a nicety on top of the plain text, so a page's worth is
+ * plenty. Anything larger goes as plain text alone.
+ */
+export const maxAlternativeBytes = 512 * 1024;
 
 export interface ProcessResult {
   exitCode: number;
@@ -44,7 +52,12 @@ export interface ProcessRunner {
 
 export interface ClipboardAdapter {
   read(): Promise<ClipboardPayload | undefined>;
-  write(payload: ClipboardPayload): Promise<void>;
+  /**
+   * Resolves with what actually reached the clipboard when that differs from
+   * the input (an image re-encoded to PNG), so echo suppression can recognise
+   * the change the write itself provokes.
+   */
+  write(payload: ClipboardPayload): Promise<ClipboardPayload | void>;
   watch(
     onChange: () => void | Promise<void>,
     onReady?: () => void,
@@ -124,14 +137,34 @@ async function readClipboard(runner: ProcessRunner): Promise<ClipboardPayload | 
   // wl-paste auto-enables it for binary content.
   const read = await runner.run("wl-paste", ["--type", selected.mime, "-n"]);
   ensureProcessOk(read, `wl-paste --type ${selected.mime}`);
-  return {
+  const payload: ClipboardPayload = {
     type: selected.type,
     mime: selected.mime,
     data: read.stdout,
   };
+  if (selected.type === "text" && availableTypes.has("text/html")) {
+    const html = await readHtml(runner);
+    if (html) payload.alternative = { mime: "text/html", data: html };
+  }
+  return payload;
 }
 
-async function writeClipboard(runner: ProcessRunner, payload: ClipboardPayload): Promise<void> {
+/** Best effort: a failed or oversized read leaves the copy as plain text. */
+async function readHtml(runner: ProcessRunner): Promise<Uint8Array | undefined> {
+  try {
+    const read = await runner.run("wl-paste", ["--type", "text/html", "-n"]);
+    if (read.exitCode !== 0) return undefined;
+    if (read.stdout.byteLength === 0 || read.stdout.byteLength > maxAlternativeBytes) return undefined;
+    return read.stdout;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeClipboard(
+  runner: ProcessRunner,
+  payload: ClipboardPayload,
+): Promise<ClipboardPayload> {
   const { mime, data } = await normalizeImageToPng(runner, payload);
   // Without detachOutput this blocks until the NEXT clipboard change —
   // and everything downstream of the write (the ack to the sender, the
@@ -140,6 +173,7 @@ async function writeClipboard(runner: ProcessRunner, payload: ClipboardPayload):
     detachOutput: true,
   });
   ensureProcessOk(result, `wl-copy --type ${mime}`);
+  return { type: payload.type, mime, data };
 }
 
 /**

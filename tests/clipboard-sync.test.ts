@@ -7,7 +7,7 @@ import {
 import { connectDevice } from "../src/relay/client";
 import { PayloadPool } from "../src/relay/payload-pool";
 import { createRelay } from "../src/relay/relay";
-import { decryptPayload, encryptPayload } from "../src/shared/crypto";
+import { decryptAlternative, decryptPayload, encryptPayload } from "../src/shared/crypto";
 import type { ClipboardPayload } from "../src/relay/clipboard";
 
 class FakeClipboard implements WatchableClipboardAdapter {
@@ -21,7 +21,7 @@ class FakeClipboard implements WatchableClipboardAdapter {
     return this.payload;
   }
 
-  async write(payload: ClipboardPayload) {
+  async write(payload: ClipboardPayload): Promise<ClipboardPayload | void> {
     this.writes.push(payload);
     this.payload = payload;
   }
@@ -84,6 +84,34 @@ describe("clipboard sync", () => {
     stop();
   });
 
+  test("publishes a copy's formatting alongside its plain text", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_001,
+    });
+
+    await clipboard.changeTo({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode("bold"),
+      alternative: { mime: "text/html", data: new TextEncoder().encode("<b>bold</b>") },
+    });
+
+    const frame = pool.current!;
+    expect(await decryptPayload(frame, "pairing-secret")).toEqual(new TextEncoder().encode("bold"));
+    expect(frame.alt?.mime).toBe("text/html");
+    expect(await decryptAlternative(frame, frame.alt!, "pairing-secret")).toEqual(
+      new TextEncoder().encode("<b>bold</b>"),
+    );
+
+    stop();
+  });
+
   test("writes incoming device payloads into the laptop clipboard", async () => {
     const pool = new PayloadPool();
     const clipboard = new FakeClipboard();
@@ -111,6 +139,134 @@ describe("clipboard sync", () => {
       },
     ]);
 
+    stop();
+  });
+
+  test("neither publishes nor writes while paused, and syncs again after", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    let paused = true;
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_020,
+      isPaused: () => paused,
+    });
+    const text = (value: string): ClipboardPayload => ({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode(value),
+    });
+
+    await clipboard.changeTo(text("private"));
+    await pool.publish(
+      await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "phone", ts: 1_800_000_020_019 },
+        new TextEncoder().encode("from phone"),
+        "pairing-secret",
+      ),
+    );
+    await Bun.sleep(5);
+    expect(clipboard.writes).toEqual([]);
+    expect(pool.current?.origin).toBe("phone");
+
+    paused = false;
+    await clipboard.changeTo(text("shared"));
+    expect(pool.current?.origin).toBe("laptop");
+    expect(await decryptPayload(pool.current!, "pairing-secret")).toEqual(new TextEncoder().encode("shared"));
+
+    stop();
+  });
+
+  test("drops the change its own incoming write provokes, by content", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_010,
+    });
+    const frame = await encryptPayload(
+      { type: "text", mime: "text/plain", origin: "phone", ts: 1_800_000_020_005 },
+      new TextEncoder().encode("from phone"),
+      "pairing-secret",
+    );
+    await pool.publish(frame);
+    await waitUntil(() => clipboard.writes.length === 1, "clipboard write");
+
+    // wl-paste --watch reports the write: same bytes, so it is not republished.
+    await clipboard.changeTo(clipboard.writes[0]!);
+    expect(pool.current?.nonce).toBe(frame.nonce);
+
+    // The user then copies something else; that publishes.
+    await clipboard.changeTo({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode("typed on laptop"),
+    });
+    expect(pool.current?.origin).toBe("laptop");
+    stop();
+  });
+
+  test("a write that never fires the watcher does not swallow the next real copy", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_020,
+    });
+    await pool.publish(
+      await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "phone", ts: 1_800_000_020_015 },
+        new TextEncoder().encode("from phone"),
+        "pairing-secret",
+      ),
+    );
+    await waitUntil(() => clipboard.writes.length === 1, "clipboard write");
+
+    await clipboard.changeTo({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode("a different copy"),
+    });
+    expect(pool.current?.origin).toBe("laptop");
+    stop();
+  });
+
+  test("recognises an image echo after the write re-encoded it to PNG", async () => {
+    const pool = new PayloadPool();
+    const png = new Uint8Array([137, 80, 78, 71, 1]);
+    const clipboard = new (class extends FakeClipboard {
+      override async write(payload: ClipboardPayload) {
+        await super.write(payload);
+        this.payload = { type: "image", mime: "image/png", data: png };
+        return this.payload;
+      }
+    })();
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_030,
+    });
+    const frame = await encryptPayload(
+      { type: "image", mime: "image/jpeg", origin: "phone", ts: 1_800_000_020_031 },
+      new Uint8Array([255, 216, 255]),
+      "pairing-secret",
+    );
+    await pool.publish(frame);
+    await waitUntil(() => clipboard.writes.length === 1, "clipboard write");
+
+    await clipboard.changeTo({ type: "image", mime: "image/png", data: png });
+    expect(pool.current?.nonce).toBe(frame.nonce);
     stop();
   });
 

@@ -230,12 +230,14 @@ class VidyutFiles {
     required String filename,
     required String mime,
     required int? lastModifiedMs,
+    String? folder,
   }) async {
     final destination = await _channel.invokeMethod<String>('publish', {
       'sourcePath': sourcePath,
       'filename': filename,
       'mime': mime,
       'lastModifiedMs': lastModifiedMs,
+      'folder': ?folder,
     });
     if (destination == null) {
       throw PlatformException(

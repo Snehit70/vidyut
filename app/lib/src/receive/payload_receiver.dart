@@ -40,7 +40,8 @@ enum ClipboardWriteOutcome {
 }
 
 abstract interface class AndroidClipboard {
-  Future<void> writeText(String text);
+  /// With [html], apps that paste formatting get it; the rest get [text].
+  Future<void> writeText(String text, {String? html});
 }
 
 /// Writes text through the `vidyut/clipboard` channel. The plugin hosts
@@ -53,7 +54,8 @@ class FlutterAndroidClipboard implements AndroidClipboard {
   final VidyutClipboard _clipboard;
 
   @override
-  Future<void> writeText(String text) => _clipboard.writeText(text);
+  Future<void> writeText(String text, {String? html}) =>
+      _clipboard.writeText(text, html: html);
 }
 
 abstract interface class AndroidImageClipboard {
@@ -319,8 +321,11 @@ class PayloadReceiver {
         case PayloadType.link:
         case PayloadType.text:
           final text = utf8.decode(plaintext);
+          final html = await _openHtml(frame, pairingSecret);
           await receivedTextRepository.saveLatest(text, id: frame.nonce);
-          final outcome = await _tryWrite(() => clipboard.writeText(text));
+          final outcome = await _tryWrite(
+            () => clipboard.writeText(text, html: html),
+          );
           await notifier.showTextReceipt(
             _preview(text),
             copied: outcome == ClipboardWriteOutcome.confirmed,
@@ -359,6 +364,24 @@ class PayloadReceiver {
       }
     } on Object catch (error) {
       return PayloadReceiveResult.failed('Receive failed: $error');
+    }
+  }
+
+  /// The frame's formatting, or null to write plain text. A broken
+  /// alternative costs the formatting, never the text.
+  Future<String?> _openHtml(PayloadFrame frame, String pairingSecret) async {
+    final alt = frame.alt;
+    if (frame.type != PayloadType.text || alt == null) return null;
+    try {
+      final html = await crypto.decryptAlternative(
+        frame: frame,
+        alternative: alt,
+        pairingSecret: pairingSecret,
+      );
+      return utf8.decode(html);
+    } on Object catch (error) {
+      log?.call('Formatting dropped, writing plain text: $error');
+      return null;
     }
   }
 

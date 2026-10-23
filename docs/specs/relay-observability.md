@@ -39,9 +39,10 @@ everything needed to measure the bar.
 | Event | Level | Fields | Emitted |
 |---|---|---|---|
 | `device_connected` | info | `connId`, `remote` (ip:port from `socket.remoteAddress`) | `open()` |
-| `auth_ok` | info | `connId`, `deviceId`, `msSinceConnect` | proof verified |
+| `auth_ok` | info | `connId`, `deviceId`, `msSinceConnect`, `relayProof` (the phone sent a `clientChallenge`), `sealed` | proof verified |
 | `auth_failed` | warn | `connId`, `remote`, `reason` (`not_auth_message` \| `proof_rejected`) | before the 1008 close |
 | `device_disconnected` | info | `connId`, `deviceId?`, `authenticated`, `durationMs`, `wsCode`, `wsReason` | `close()` |
+| `sealed_message_rejected` | warn | `connId`, `deviceId`, `error`, `kind?` | a `sealed` message fails to open (close 1008 `seal_failed`) or a plain control message arrives on a sealed session (close 1008 `seal_required`); ADR 0023 |
 | `socket_reaped` | warn | `connId`, `deviceId?`, `idleMs`, `staleAfterMs` | heartbeat sweep terminates a silent socket |
 | `client_error_sent` | warn | `connId`, `deviceId?`, `code` (`bad_message` \| `payload_too_large` \| `auth_required` \| `auth_failed`) | every `sendError` |
 
@@ -71,6 +72,8 @@ exactly one terminal event).
 | `clipboard_published` | info | `type`, `mime`, `bytes`, `nonce`, `frameTs` | local clipboard change encrypted + published (start of laptop→phone leg) |
 | `clipboard_write` | info | `type`, `mime`, `bytes`, `nonce`, `frameTs`, `e2eMs` (`Date.now() − frameTs`) | remote frame decrypted and written to Wayland clipboard |
 | `clipboard_write_failed` | error | `nonce`, `frameTs`, `stage` (`decrypt` \| `write`), `error` | currently swallowed by `Promise.allSettled` — must be caught and logged |
+| `clipboard_skipped_paused` | info | `direction` (`publish` \| `write`), `nonce?`, `frameTs?` | a change or an incoming frame ignored because sync is paused |
+| `clipboard_paused` / `clipboard_resumed` | info | `until?` / `reason` (`resumed` \| `expired`) | `ClipboardPause` changes (`clipboard-pause.ts`) |
 
 `clipboard_write.e2eMs` **is** the phone→laptop bar measurement: origin capture to laptop
 clipboard, one line per screenshot.

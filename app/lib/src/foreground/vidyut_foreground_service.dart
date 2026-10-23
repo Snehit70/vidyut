@@ -83,6 +83,7 @@ class VidyutForegroundTaskHandler extends TaskHandler {
     controller = ServiceRelayController(
       loadPairing: pairingRepository.load,
       loadSettings: settingsRepository.load,
+      loadClipboardPause: settingsRepository.loadClipboardPause,
       screenshotWatcher: screenshotWatcher,
       pushController: ScreenshotPushController(
         readImage: screenshotWatcher.readImage,
@@ -97,6 +98,8 @@ class VidyutForegroundTaskHandler extends TaskHandler {
       screenOnEvents: ScreenOnEvents().events,
       clipboardAutoSendWatcher: autoSendWatcher,
       autoSendPublish: sharePublisher.publish,
+      postedNotifications: PostedNotifications(),
+      markRelayVerified: pairingRepository.markRelayVerified,
       transferReceiverFactory: (_) => PhoneTransferReceiver(
         history: TransferHistoryRepository(
           SharedPreferencesTransferHistoryStorage(),
@@ -268,8 +271,8 @@ class _EchoGuardClipboard implements AndroidClipboard {
   final void Function(String text) _record;
 
   @override
-  Future<void> writeText(String text) async {
-    await _inner.writeText(text);
+  Future<void> writeText(String text, {String? html}) async {
+    await _inner.writeText(text, html: html);
     _record(text);
   }
 }

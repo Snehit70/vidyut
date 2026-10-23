@@ -6,12 +6,20 @@ class PairingCode {
     required this.port,
     required this.secret,
     this.name,
+    this.relayVerified = false,
   });
 
   final String host;
   final int port;
   final String secret;
   final String? name;
+
+  /// The laptop has proven it holds [secret] at least once (ADR 0023). From
+  /// then on a relay that cannot prove it again is refused, so an attacker on
+  /// the network cannot downgrade the phone to the one-way handshake. A fresh
+  /// pairing starts unverified. Not part of equality: it is a fact learned
+  /// about the pairing, not what identifies it.
+  final bool relayVerified;
 
   @override
   bool operator ==(Object other) {
@@ -59,6 +67,7 @@ class PairingCode {
     required String host,
     required String port,
     required String secret,
+    bool relayVerified = false,
   }) {
     final parsedPort = int.tryParse(port.trim());
     if (host.trim().isEmpty) {
@@ -74,6 +83,7 @@ class PairingCode {
       host: host.trim(),
       port: parsedPort,
       secret: secret.trim(),
+      relayVerified: relayVerified,
     );
   }
 }
