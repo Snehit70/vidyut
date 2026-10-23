@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../pairing/pairing_code.dart';
 import '../shared/relay_connection.dart';
@@ -39,6 +40,44 @@ class BrowseListing {
   final bool truncated;
 }
 
+/// A search hit: an entry plus where it lives. [path] is relative to [root]
+/// and ends in the entry's own name.
+class BrowseMatch extends BrowseEntry {
+  const BrowseMatch({
+    required super.name,
+    required super.isFolder,
+    super.size,
+    required super.modified,
+    required this.root,
+    required this.path,
+  });
+
+  final String root;
+  final String path;
+
+  /// The folder holding the match, "/"-separated; empty is the root itself.
+  String get parent {
+    final slash = path.lastIndexOf('/');
+    return slash < 0 ? '' : path.substring(0, slash);
+  }
+}
+
+class BrowseSearchResult {
+  const BrowseSearchResult({required this.matches, required this.truncated});
+
+  final List<BrowseMatch> matches;
+
+  /// The laptop stopped looking at its cap; there may be more.
+  final bool truncated;
+}
+
+/// A picture of a laptop file, ready for [Image.memory].
+class BrowseThumbnail {
+  const BrowseThumbnail(this.bytes);
+
+  final Uint8List bytes;
+}
+
 /// What a pull put in the laptop's send queue.
 class BrowseQueued {
   const BrowseQueued({required this.files, required this.bytes});
@@ -63,6 +102,19 @@ abstract interface class LaptopFiles {
 
   /// [path] is "/"-separated and relative to [root]; empty is the root.
   Future<BrowseListing> list(String root, String path);
+
+  /// A picture of the file at [path], or null when the laptop has none (a
+  /// document, an archive, a missing tool). [large] asks for a bigger one for
+  /// the full-screen preview.
+  Future<BrowseThumbnail?> thumbnail(
+    String root,
+    String path, {
+    bool large = false,
+  });
+
+  /// Looks for entries whose name has every word of [query], under one folder
+  /// or, with no [root], under all shared folders.
+  Future<BrowseSearchResult> search(String query, {String? root, String? path});
 
   /// Asks the laptop to send [paths] under [root]. A folder brings everything
   /// under it, subfolders kept; an empty path is the whole root.
@@ -113,26 +165,70 @@ class LaptopFileBrowser implements LaptopFiles {
       'root': root,
       if (path.isNotEmpty) 'path': path,
     });
-    final entries = _list(reply['entries']).map((entry) {
-      final name = entry['name'];
-      final kind = entry['kind'];
-      final size = entry['size'];
-      final modified = entry['modifiedMs'];
-      if (name is! String ||
-          (kind != 'file' && kind != 'folder') ||
-          modified is! int ||
-          (size != null && size is! int)) {
-        throw _malformed;
-      }
-      return BrowseEntry(
-        name: name,
-        isFolder: kind == 'folder',
-        size: size as int?,
-        modified: DateTime.fromMillisecondsSinceEpoch(modified),
-      );
-    }).toList();
+    final entries = _list(reply['entries']).map(_entry).toList();
     return BrowseListing(
       entries: entries,
+      truncated: reply['truncated'] == true,
+    );
+  }
+
+  @override
+  Future<BrowseThumbnail?> thumbnail(
+    String root,
+    String path, {
+    bool large = false,
+  }) async {
+    final Map<String, Object?> reply;
+    try {
+      reply = await _request({
+        'kind': 'browse_thumb',
+        'root': root,
+        'path': path,
+        if (large) 'size': 'large',
+      });
+    } on BrowseFailure catch (failure) {
+      if (failure.code == 'no_thumbnail') return null;
+      rethrow;
+    }
+    final thumb = reply['thumb'];
+    if (thumb is! Map) throw _malformed;
+    final data = thumb['data'];
+    if (data is! String) throw _malformed;
+    try {
+      return BrowseThumbnail(base64.decode(data));
+    } on FormatException {
+      throw _malformed;
+    }
+  }
+
+  @override
+  Future<BrowseSearchResult> search(
+    String query, {
+    String? root,
+    String? path,
+  }) async {
+    final reply = await _request({
+      'kind': 'browse_search',
+      'query': query,
+      'root': ?root,
+      if (root != null && path != null && path.isNotEmpty) 'path': path,
+    });
+    final matches = _list(reply['matches']).map((match) {
+      final entry = _entry(match);
+      final matchRoot = match['root'];
+      final matchPath = match['path'];
+      if (matchRoot is! String || matchPath is! String) throw _malformed;
+      return BrowseMatch(
+        name: entry.name,
+        isFolder: entry.isFolder,
+        size: entry.size,
+        modified: entry.modified,
+        root: matchRoot,
+        path: matchPath,
+      );
+    }).toList();
+    return BrowseSearchResult(
+      matches: matches,
       truncated: reply['truncated'] == true,
     );
   }
@@ -267,6 +363,25 @@ class LaptopFileBrowser implements LaptopFiles {
   String _requestId() => base64Url
       .encode(List<int>.generate(16, (_) => _random.nextInt(256)))
       .replaceAll('=', '');
+
+  static BrowseEntry _entry(Map<Object?, Object?> entry) {
+    final name = entry['name'];
+    final kind = entry['kind'];
+    final size = entry['size'];
+    final modified = entry['modifiedMs'];
+    if (name is! String ||
+        (kind != 'file' && kind != 'folder') ||
+        modified is! int ||
+        (size != null && size is! int)) {
+      throw _malformed;
+    }
+    return BrowseEntry(
+      name: name,
+      isFolder: kind == 'folder',
+      size: size as int?,
+      modified: DateTime.fromMillisecondsSinceEpoch(modified),
+    );
+  }
 
   static Iterable<Map<Object?, Object?>> _list(Object? value) {
     if (value is! List) throw _malformed;

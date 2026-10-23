@@ -94,6 +94,79 @@ void main() {
     await files.close();
   });
 
+  test('fetches a thumbnail, and treats "no picture" as null', () async {
+    final requests = <Map<String, Object?>>[];
+    final files = browser((request) {
+      requests.add(request);
+      return request['path'] == 'notes.txt'
+          ? {
+              'ok': false,
+              'code': 'no_thumbnail',
+              'message': 'There is no picture for that file.',
+            }
+          : {
+              'ok': true,
+              'thumb': {
+                'mime': 'image/png',
+                'data': base64.encode([1, 2, 3]),
+              },
+            };
+    });
+
+    final small = await files.thumbnail('0', 'a.jpg');
+    final large = await files.thumbnail('0', 'a.jpg', large: true);
+    final none = await files.thumbnail('0', 'notes.txt');
+
+    expect(small?.bytes, [1, 2, 3]);
+    expect(large?.bytes, [1, 2, 3]);
+    expect(none, isNull);
+    expect(requests.first['kind'], 'browse_thumb');
+    expect(requests.first.containsKey('size'), isFalse);
+    expect(requests[1]['size'], 'large');
+    await files.close();
+  });
+
+  test('searches by name and reads where each match lives', () async {
+    final requests = <Map<String, Object?>>[];
+    final files = browser((request) {
+      requests.add(request);
+      return {
+        'ok': true,
+        'matches': [
+          {
+            'root': '1',
+            'path': 'Trip/Day 1/beach.jpg',
+            'name': 'beach.jpg',
+            'kind': 'file',
+            'size': 9,
+            'modifiedMs': 3000,
+          },
+          {
+            'root': '0',
+            'path': 'beach',
+            'name': 'beach',
+            'kind': 'folder',
+            'modifiedMs': 1000,
+          },
+        ],
+        'truncated': true,
+      };
+    });
+
+    final everywhere = await files.search('beach');
+    await files.search('beach', root: '1', path: 'Trip');
+
+    expect(everywhere.truncated, isTrue);
+    expect(everywhere.matches.first.root, '1');
+    expect(everywhere.matches.first.parent, 'Trip/Day 1');
+    expect(everywhere.matches.last.parent, '');
+    expect(everywhere.matches.last.isFolder, isTrue);
+    expect(requests.first.containsKey('root'), isFalse);
+    expect(requests.last['root'], '1');
+    expect(requests.last['path'], 'Trip');
+    await files.close();
+  });
+
   test('turns a refusal into a failure with the laptop code', () async {
     final files = browser(
       (request) => {
