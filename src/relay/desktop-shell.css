@@ -1,0 +1,448 @@
+/*
+ * Desktop shell styles, inlined into the page by desktop-shell-page.ts.
+ *
+ * Colour, type, and shape tokens mirror design/tokens.css, which mirrors
+ * app/lib/src/design/{palette,theme}.dart. tests/design-tokens.test.ts fails if
+ * the three drift apart.
+ *
+ * The metrics below the token block are desktop-specific and deliberately not
+ * tokens: the phone's 48px control height is a touch target, and a mouse-driven
+ * window wants a denser row. Nothing here changes a shared value.
+ */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/ui/manrope.ttf") format("truetype");
+}
+:root {
+  --ground: #FFFFFF;
+  --mist: #FDF0F4;
+  --petal: #F8D3DE;
+  --raspberry: #C83861;
+  --ink: #33202B;
+  --muted: #856774;
+  --hairline: #9D878F;
+  --error: #B3283E;
+  --success: #2D8A4A;
+  --success-mist: #EDF8F0;
+  --warning: #A05A00;
+  --warning-mist: #FFF7E8;
+
+  --surface-page: var(--ground);
+  --surface-card: var(--mist);
+  --surface-emphasis: var(--petal);
+  --surface-secondary: var(--mist);
+  --surface-snack: var(--ink);
+
+  --text-body: var(--ink);
+  --text-muted: var(--muted);
+  --text-error: var(--error);
+  --text-on-primary: #FFFFFF;
+  --text-on-emphasis: var(--ink);
+  --text-on-snack: #FFFFFF;
+
+  --border-hairline: var(--hairline);
+  --border-focus: var(--raspberry);
+  --hairline-soft: color-mix(in srgb, var(--hairline) 40%, transparent);
+
+  --font-sans: "Manrope", system-ui, sans-serif;
+
+  --type-title-lg-size: 18px;
+  --type-title-lg-weight: 700;
+  --type-title-md-size: 16px;
+  --type-title-md-weight: 700;
+  --type-title-sm-size: 14px;
+  --type-title-sm-weight: 700;
+  --type-body-md-size: 14px;
+  --type-label-lg-size: 14px;
+  --type-label-lg-weight: 600;
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 600;
+  --type-line-height: 1.35;
+
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-tile: 8px;
+  --focus-border: 1.5px;
+  --ease-out-cubic: cubic-bezier(0.33, 1, 0.68, 1);
+  --dur-press-down: 100ms;
+  --dur-press-up: 150ms;
+  --press-scale: 0.96;
+
+  /* Desktop metrics. */
+  --bar-height: 44px;
+  --sidebar-width: 212px;
+  --control-height-compact: 34px;
+  --row-height: 40px;
+  --pane-pad: 20px;
+  --gap: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #171116;
+    --mist: #241A20;
+    --petal: #8F2949;
+    --raspberry: #FFB1C3;
+    --ink: #F8EAF0;
+    --muted: #D4B8C4;
+    --hairline: #805F6C;
+    --error: #FFB3BD;
+    --success: #8DDB9F;
+    --success-mist: #241A20;
+    --warning: #FFB870;
+    --warning-mist: #241A20;
+
+    --surface-snack: var(--mist);
+    --text-on-primary: var(--ground);
+    --text-on-snack: var(--ink);
+  }
+}
+* { box-sizing: border-box; }
+/* An author display rule outranks the user agent [hidden] rule, so anything
+   toggled with the hidden attribute needs this to actually disappear. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-body);
+  font-family: var(--font-sans);
+  font-size: var(--type-label-lg-size);
+  font-weight: 500;
+  line-height: var(--type-line-height);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon {
+  width: 1em;
+  height: 1em;
+  display: block;
+  fill: currentColor;
+  flex: none;
+}
+.app { height: 100vh; display: flex; flex-direction: column; }
+
+/* Title bar: identity left, live state right. Flat, hairline-ruled, no shadow. */
+.titlebar {
+  height: var(--bar-height);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0 var(--pane-pad);
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.titlebar-id { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.titlebar-end { display: flex; align-items: center; gap: 12px; flex: none; }
+/* Named Quit, not Stop, and it sits in the title bar rather than beside the
+   relay controls: stopping the Relay and closing the shell are different
+   actions and must not read alike. */
+.quit {
+  font: inherit;
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.quit:hover { color: var(--text-body); border-color: var(--muted); }
+.quit:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+h1 {
+  margin: 0;
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  letter-spacing: -0.2px;
+}
+.sep { color: var(--text-muted); }
+.relay-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-weight: var(--type-label-lg-weight);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  flex: none;
+}
+body[data-sync="ready"] .status-dot { background: var(--success); }
+body[data-sync="sync_needs_attention"] .status-dot,
+body[data-sync="sync_paused"] .status-dot { background: var(--warning); }
+body[data-sync="relay_down"] .status-dot { background: var(--error); }
+body[data-sync="relay_down"] .status { color: var(--text-error); }
+
+/* Only when the state is not healthy. Ready stays quiet in the title bar. */
+.banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px var(--pane-pad);
+  background: var(--warning-mist);
+  color: var(--text-body);
+  border-bottom: 1px solid var(--hairline-soft);
+  font-size: var(--type-label-lg-size);
+}
+.banner .icon { color: var(--warning); font-size: 20px; }
+.banner p { margin: 0; }
+.banner .btn { margin-left: auto; flex: none; }
+body[data-sync="relay_down"] .banner { background: var(--surface-card); }
+body[data-sync="relay_down"] .banner .icon { color: var(--error); }
+
+.body { flex: 1; display: flex; min-height: 0; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--gap) 10px;
+  border-right: 1px solid var(--hairline-soft);
+}
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--row-height);
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-tile);
+  background: none;
+  color: var(--text-body);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-press-up) var(--ease-out-cubic);
+}
+.nav-item .icon { font-size: 18px; color: var(--muted); }
+.nav-item span { flex: 1; }
+.nav-item:hover { background: var(--surface-card); }
+.nav-item[aria-selected="true"] {
+  background: var(--surface-emphasis);
+  color: var(--raspberry);
+  font-weight: var(--type-label-lg-weight);
+}
+.nav-item[aria-selected="true"] .icon { color: var(--raspberry); }
+kbd {
+  font-family: inherit;
+  font-size: var(--type-label-sm-size);
+  color: var(--text-muted);
+  background: none;
+}
+.sidebar-foot { padding-top: var(--gap); border-top: 1px solid var(--hairline-soft); }
+
+/* Content pane: one section at a time, scrolls internally. */
+.pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--pane-pad);
+}
+/* Cap the measure so a wide window does not stretch rows to the far edge, and
+   centre it so the leftover space is balanced rather than all on one side. */
+.pane > * { max-width: 880px; margin-inline: auto; }
+.pane:focus-visible { outline: var(--focus-border) solid var(--border-focus); outline-offset: -2px; }
+.pane-head { margin-bottom: var(--pane-pad); }
+h2 {
+  margin: 0 0 4px;
+  font-size: var(--type-title-lg-size);
+  font-weight: var(--type-title-lg-weight);
+  letter-spacing: -0.3px;
+}
+h3 {
+  margin: 0 0 var(--gap);
+  font-size: var(--type-label-lg-size);
+  font-weight: var(--type-label-lg-weight);
+}
+p { margin: 0; }
+.pane-head p, .block > p, .note { color: var(--text-muted); }
+.note { font-size: var(--type-label-sm-size); margin-top: 8px; }
+
+.pairing-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pane-pad);
+  align-items: start;
+}
+.qr-frame {
+  padding: 10px;
+  background: var(--ground);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-control);
+}
+.qr { display: block; width: 168px; height: 168px; }
+
+.facts { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.facts > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: var(--gap); align-items: baseline; }
+dt { color: var(--text-muted); font-size: var(--type-label-sm-size); font-weight: var(--type-label-lg-weight); text-transform: uppercase; letter-spacing: 0.4px; }
+dd { margin: 0; overflow-wrap: anywhere; user-select: all; }
+
+.row-actions { display: flex; gap: 10px; margin-top: var(--pane-pad); }
+.block { margin-top: 24px; padding-top: var(--pane-pad); border-top: 1px solid var(--hairline-soft); }
+.block:first-of-type { margin-top: 0; }
+.block-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); margin-bottom: 6px; }
+.block-head h3 { margin: 0; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-height-compact);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: var(--type-label-lg-weight);
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform var(--dur-press-down) var(--ease-out-cubic);
+}
+.btn:active:not(:disabled) { transform: scale(var(--press-scale)); }
+.btn.filled { width: 100%; background: var(--raspberry); color: var(--text-on-primary); }
+.btn.outlined {
+  background: var(--surface-page);
+  color: var(--raspberry);
+  border-color: var(--hairline);
+}
+.btn.danger {
+  color: var(--text-error);
+  border-color: var(--error);
+}
+.btn.danger:hover { background: color-mix(in srgb, var(--error) 8%, var(--surface-page)); }
+.sidebar-foot .btn { width: 100%; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible, a:focus-visible, .nav-item:focus-visible {
+  outline: var(--focus-border) solid var(--border-focus);
+  outline-offset: 2px;
+}
+.btn-row { display: flex; gap: 10px; margin-top: var(--pane-pad); }
+.btn-row .btn { flex: 1; }
+
+.confirm {
+  margin-top: var(--gap);
+  padding: var(--gap);
+  background: var(--surface-emphasis);
+  border-radius: var(--radius-control);
+  color: var(--text-on-emphasis);
+}
+.confirm p { margin-bottom: 10px; }
+.confirm .btn-row { margin-top: 0; }
+
+.summary {
+  display: flex;
+  gap: var(--pane-pad);
+  padding: 10px 14px;
+  margin-bottom: var(--pane-pad);
+  background: var(--surface-card);
+  border-radius: var(--radius-control);
+}
+.summary div { display: flex; flex-direction: column; }
+.summary b { font-size: var(--type-title-md-size); font-weight: var(--type-title-md-weight); }
+.summary span { color: var(--text-muted); font-size: var(--type-label-sm-size); font-weight: var(--type-label-lg-weight); }
+.summary .bad b { color: var(--text-error); }
+
+.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.rows li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: var(--row-height);
+  padding: 8px 10px;
+  border-radius: var(--radius-tile);
+}
+.rows li:not(.empty):hover { background: var(--surface-card); }
+.rows .icon { width: 18px; height: 18px; margin-top: 2px; color: var(--muted); }
+.rows .icon.good { color: var(--success); }
+.rows .icon.warn { color: var(--warning); }
+.rows .icon.bad { color: var(--error); }
+.rows .grow { flex: 1; min-width: 0; }
+.row-title { font-size: var(--type-label-lg-size); font-weight: var(--type-label-lg-weight); }
+.row-detail { color: var(--text-muted); font-size: var(--type-label-sm-size); }
+.row-fix { color: var(--text-error); font-size: var(--type-label-sm-size); margin-top: 2px; }
+.rows .trailing { color: var(--text-muted); font-size: var(--type-label-sm-size); white-space: nowrap; margin-top: 2px; }
+.empty { color: var(--text-muted); }
+.stale {
+  margin: 0 0 var(--gap);
+  padding: 8px 12px;
+  background: var(--surface-card);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--radius-tile);
+  color: var(--text-muted);
+  font-size: var(--type-label-sm-size);
+}
+body[data-stale="true"] .rows { opacity: 0.55; }
+.checked { margin: -6px 0 var(--gap); color: var(--text-muted); font-size: var(--type-label-sm-size); }
+.group-label {
+  margin: 16px 0 6px;
+  font-size: var(--type-label-sm-size);
+  font-weight: var(--type-label-lg-weight);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.snack {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 40px);
+  padding: 10px 16px;
+  background: var(--surface-snack);
+  color: var(--text-on-snack);
+  border-radius: var(--radius-control);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+
+/* Narrow window: the sidebar becomes a tab strip. The window is resizable, so
+   this is a real layout, not a phone breakpoint. */
+@media (max-width: 680px) {
+  .body { flex-direction: column; }
+  .sidebar {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+  .nav { flex-direction: row; flex: 1; overflow-x: auto; }
+  .nav-item kbd { display: none; }
+  .sidebar-foot { padding-top: 0; border-top: none; }
+  .sidebar-foot .btn { width: auto; }
+  .pairing-grid { grid-template-columns: minmax(0, 1fr); }
+  .qr-frame { justify-self: start; }
+}
+
+/* ADR 0013: this window has no entrance choreography. Motion is limited to
+   press and state feedback, and stands down when reduced motion is requested. */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .nav-item { transition: none; }
+  .btn:active:not(:disabled) { transform: none; }
+}

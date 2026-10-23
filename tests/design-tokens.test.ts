@@ -534,14 +534,18 @@ describe("desktop shell behaviour guards", () => {
     // Ready means a live connection and a healthy watcher, so a state this
     // window does not know must not resolve to it. This evaluates the real
     // injected function rather than asserting on its source text.
-    const statusLiteral = shellHtml.match(/var STATUS = (\{.*?\});/)?.[1];
+    const shellJson = shellHtml.match(
+      /<script type="application\/json" id="shell">(.*?)<\/script>/,
+    )?.[1];
     const fnSource = shellHtml.match(
       /function statusCopyFor\(syncState\) \{[\s\S]*?\n  \}/,
     )?.[0];
-    expect(statusLiteral).toBeDefined();
+    expect(shellJson).toBeDefined();
     expect(fnSource).toBeDefined();
 
-    const status = JSON.parse(statusLiteral!) as Record<string, { label: string }>;
+    const status = (
+      JSON.parse(shellJson!) as { status: Record<string, { label: string }> }
+    ).status;
     const statusCopyFor = new Function(
       "STATUS",
       `${fnSource}\nreturn statusCopyFor;`,
