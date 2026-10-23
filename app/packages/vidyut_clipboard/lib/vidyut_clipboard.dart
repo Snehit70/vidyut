@@ -19,7 +19,7 @@ class VidyutClipboard {
   Future<void> writeText(String text, {String? html}) {
     return channel.invokeMethod<void>('writeText', {
       'text': text,
-      if (html != null) 'html': html,
+      'html': ?html,
     });
   }
 
