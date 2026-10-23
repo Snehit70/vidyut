@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:flutter/services.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
+import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
 import '../activity/last_activity.dart';
 import '../pairing/pairing_code.dart';
 import '../push/screenshot_push_controller.dart';
+import '../push/verification_code.dart';
 import '../receive/payload_receiver.dart';
 import '../settings/app_settings.dart';
 import '../settings/clipboard_pause.dart';
@@ -109,12 +111,14 @@ class ServiceRelayController {
     this.transferReceiverFactory,
     this.markRelayVerified,
     this.loadClipboardPause,
+    this.postedNotifications,
+    VerificationCodeFilter? verificationCodes,
     this.deviceId = 'phone',
     this.reconnectBackoff = defaultReconnectBackoff,
     this.syncStepTimeout = defaultSyncStepTimeout,
     this.syncStallTimeout = defaultSyncStallTimeout,
     this.watchdogInterval = defaultWatchdogInterval,
-  });
+  }) : _verificationCodes = verificationCodes ?? VerificationCodeFilter();
 
   final ServicePairingLoader loadPairing;
   final ServiceSettingsLoader loadSettings;
@@ -163,6 +167,12 @@ class ServiceRelayController {
   /// [serviceClipboardPauseCommand]. Absent means never paused.
   final ServiceClipboardPauseLoader? loadClipboardPause;
 
+  /// Other apps' notifications, listened to while
+  /// [AppSettings.forwardVerificationCodes] is on and notification access is
+  /// granted. Codes found in them go out through [autoSendPublish].
+  final PostedNotifications? postedNotifications;
+  final VerificationCodeFilter _verificationCodes;
+
   final String deviceId;
   final List<Duration> reconnectBackoff;
   final Duration syncStepTimeout;
@@ -184,6 +194,8 @@ class ServiceRelayController {
   StreamSubscription<ManualClipboardReadResult>? _manualReadSubscription;
   StreamSubscription<String>? _autoSendTextsSubscription;
   StreamSubscription<String>? _autoSendDiagnosticsSubscription;
+  StreamSubscription<PostedNotification>? _postedNotificationsSubscription;
+  bool _verificationCodesInertLogged = false;
   ConnectionStatus _lastStatus = ConnectionStatus.offline;
   bool _screenshotWatching = false;
   bool _screenshotPaused = false;
@@ -497,6 +509,7 @@ class ServiceRelayController {
     _manualReadSubscription = null;
     await _stopScreenshotWatcher();
     await _stopClipboardAutoSendWatcher();
+    await _stopVerificationCodes();
     await _teardown();
   }
 
@@ -588,6 +601,7 @@ class ServiceRelayController {
       _reconcileClipboardAutoSendWatcher(settings),
       'auto-send watcher',
     );
+    await _bounded(_reconcileVerificationCodes(settings), 'verification codes');
     final pairing = await _bounded(loadPairing(), 'load pairing');
     if (generation != _syncGeneration) return;
     _unpaired = pairing == null;
@@ -924,6 +938,78 @@ class ServiceRelayController {
         recordActivity(_sentTextActivity(text, ActivityOutcome.failed)),
       );
     }
+  }
+
+  /// Listens to notifications only while the setting is on and access is
+  /// granted. Like the auto-send watcher, the subscription spans reconnects.
+  Future<void> _reconcileVerificationCodes(AppSettings settings) async {
+    final notifications = postedNotifications;
+    if (notifications == null) return;
+    if (!settings.forwardVerificationCodes) {
+      await _stopVerificationCodes();
+      _verificationCodesInertLogged = false;
+      return;
+    }
+    if (!await notifications.hasAccess()) {
+      await _stopVerificationCodes();
+      if (!_verificationCodesInertLogged) {
+        _verificationCodesInertLogged = true;
+        _log(
+          'Verification codes enabled but notification access is off; '
+          'allow it in Settings.',
+        );
+      }
+      return;
+    }
+    _verificationCodesInertLogged = false;
+    _postedNotificationsSubscription ??= notifications.notifications.listen(
+      (notification) => unawaited(_onPostedNotification(notification)),
+      onError: (Object error) =>
+          _log('Notification listener failed: $error', isError: true),
+    );
+  }
+
+  Future<void> _stopVerificationCodes() async {
+    await _postedNotificationsSubscription?.cancel();
+    _postedNotificationsSubscription = null;
+  }
+
+  /// Sends the code in [notification], if it has one. The code itself never
+  /// reaches the log or Activity; only the app it came from does.
+  Future<void> _onPostedNotification(PostedNotification notification) async {
+    final code = _verificationCodes.codeFor(notification);
+    if (code == null) return;
+    if (_clipboardPaused) {
+      _log('Clipboard sync paused: verification code not sent.');
+      return;
+    }
+    final publish = autoSendPublish;
+    if (publish == null) return;
+    var outcome = ActivityOutcome.failed;
+    try {
+      final result = await publish(SharePayload.text(code));
+      if (result.published) outcome = ActivityOutcome.completed;
+      _log(
+        result.published
+            ? 'Verification code from ${notification.packageName} sent.'
+            : 'Verification code from ${notification.packageName} not sent: '
+                  '${result.message}',
+        isError: !result.published,
+      );
+    } catch (error) {
+      _log('Verification code publish failed: $error', isError: true);
+    }
+    unawaited(
+      recordActivity(
+        LastActivity(
+          direction: ActivityDirection.sent,
+          summary: 'verification code',
+          counterpart: knownCounterpart,
+          timestamp: DateTime.now(),
+          outcome: outcome,
+        ),
+      ),
+    );
   }
 
   void _setScreenshotPaused(bool paused, {ScreenshotAccessLevel? access}) {

@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart' as hashes;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:screenshot_observer/screenshot_observer.dart';
+import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 
 import 'package:vidyut/src/foreground/service_relay_controller.dart';
 import 'package:vidyut/src/pairing/pairing_code.dart';
@@ -1542,6 +1543,127 @@ void main() {
       expect(watcher.watching, isFalse);
     });
   });
+
+  group('verification codes', () {
+    const bankText = PostedNotification(
+      packageName: 'com.example.bank',
+      title: 'Bank',
+      text: '482913 is your OTP for login. Do not share it.',
+    );
+
+    bool logged(_Harness harness, String message) => harness.emitted.any(
+      (event) => event['kind'] == 'log' && event['message'] == message,
+    );
+
+    test('sends a code from a notification, never logging it', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      notifications.post(bankText);
+      notifications.post(bankText);
+      notifications.post(
+        const PostedNotification(
+          packageName: 'com.example.chat',
+          title: 'Sam',
+          text: 'See you at 7:30, table 12',
+        ),
+      );
+      await _waitUntil(() => harness.autoSendPublished.isNotEmpty);
+      await _drain();
+
+      expect(harness.autoSendPublished, ['482913']);
+      expect(
+        logged(harness, 'Verification code from com.example.bank sent.'),
+        isTrue,
+      );
+      final everything = harness.emitted.map((e) => '$e').join('\n');
+      expect(everything.contains('482913'), isFalse);
+      final activity = harness.emitted.lastWhere(
+        (e) => e['kind'] == 'activity',
+      );
+      expect(activity['summary'], 'verification code');
+    });
+
+    test('does not listen while the setting is off', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+
+      expect(notifications.listening, isFalse);
+    });
+
+    test('waits for notification access, logging once', () async {
+      final notifications = _FakePostedNotifications(access: false);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isFalse);
+      expect(
+        harness.emitted
+            .where((e) => '${e['message']}'.contains('notification access'))
+            .length,
+        1,
+      );
+
+      notifications.access = true;
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isTrue);
+
+      harness.settings = const AppSettings();
+      await harness.controller.handleTaskData(const {'kind': 'sync'});
+      expect(notifications.listening, isFalse);
+    });
+
+    test('holds a code while clipboard sync is paused', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+        clipboardPause: const PhoneClipboardPause.untilResumed(),
+      );
+
+      await harness.controller.start();
+      notifications.post(bankText);
+      await _waitUntil(
+        () => logged(
+          harness,
+          'Clipboard sync paused: verification code not sent.',
+        ),
+      );
+
+      expect(harness.autoSendPublished, isEmpty);
+    });
+
+    test('stop cancels the listener', () async {
+      final notifications = _FakePostedNotifications(access: true);
+      final harness = _Harness(
+        pairing: pairing,
+        settings: const AppSettings(forwardVerificationCodes: true),
+        postedNotifications: notifications,
+      );
+
+      await harness.controller.start();
+      expect(notifications.listening, isTrue);
+      await harness.controller.stop();
+
+      expect(notifications.listening, isFalse);
+    });
+  });
 }
 
 Future<void> _drain() => pumpEventQueue(times: 200);
@@ -1599,6 +1721,7 @@ class _Harness {
     this.settings = const AppSettings(),
     this.screenshotWatcher,
     this.autoSendWatcher,
+    PostedNotifications? postedNotifications,
     ScreenshotPushController? pushController,
     Duration syncStepTimeout = defaultSyncStepTimeout,
     Duration syncStallTimeout = defaultSyncStallTimeout,
@@ -1622,6 +1745,7 @@ class _Harness {
       screenshotWatcher: screenshotWatcher,
       pushController: pushController,
       clipboardAutoSendWatcher: autoSendWatcher,
+      postedNotifications: postedNotifications,
       transferReceiverFactory: transferReceiverFactory,
       autoSendPublish: provideAutoSendPublish
           ? (payload) async {
@@ -1859,6 +1983,26 @@ class _FakeAutoSendWatcher implements ClipboardAutoSendWatcher {
 
   @override
   Stream<String> get diagnostics => _diagnostics.stream;
+}
+
+class _FakePostedNotifications implements PostedNotifications {
+  _FakePostedNotifications({required this.access});
+
+  bool access;
+  final _controller = StreamController<PostedNotification>.broadcast();
+
+  bool get listening => _controller.hasListener;
+
+  void post(PostedNotification notification) => _controller.add(notification);
+
+  @override
+  Stream<PostedNotification> get notifications => _controller.stream;
+
+  @override
+  Future<bool> hasAccess() async => access;
+
+  @override
+  Future<void> openAccessSettings() async {}
 }
 
 ScreenshotEvent _screenshotEvent({int id = 1}) {

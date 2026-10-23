@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 
 import 'src/activity/last_activity.dart';
@@ -949,6 +950,7 @@ class _PairingScreenState extends State<PairingScreen>
           onChanged: _updateSettings,
           setupLoader: _setupLoader,
           clipboardAutoSendWatcher: ChannelClipboardAutoSendWatcher(),
+          verificationCodes: PostedNotifications(),
           debugLog: _debugLog,
           paired: _pairing != null,
           pairedDeviceName: _relayHealth?.relayName ?? _pairing?.name,

@@ -25,6 +25,7 @@ class AppSettings {
     this.showPersistentSendNotification = true,
     this.autoPushScreenshots = true,
     this.enableClipboardAutoSend = false,
+    this.forwardVerificationCodes = false,
     this.receiveFiles = true,
     this.fileTransferAlerts = true,
     this.allowMeteredFileTransfers = true,
@@ -46,6 +47,11 @@ class AppSettings {
   /// reconciles the auto-send watcher against this flag and the grant on every
   /// sync.
   final bool enableClipboardAutoSend;
+
+  /// Opt-in: send one-time codes from other apps' notifications to the laptop
+  /// clipboard. Effective only with notification access granted; the service
+  /// reconciles the listener against both on every sync.
+  final bool forwardVerificationCodes;
   final bool receiveFiles;
   final bool fileTransferAlerts;
   final bool allowMeteredFileTransfers;
@@ -57,6 +63,7 @@ class AppSettings {
     bool? showPersistentSendNotification,
     bool? autoPushScreenshots,
     bool? enableClipboardAutoSend,
+    bool? forwardVerificationCodes,
     bool? receiveFiles,
     bool? fileTransferAlerts,
     bool? allowMeteredFileTransfers,
@@ -71,6 +78,8 @@ class AppSettings {
       autoPushScreenshots: autoPushScreenshots ?? this.autoPushScreenshots,
       enableClipboardAutoSend:
           enableClipboardAutoSend ?? this.enableClipboardAutoSend,
+      forwardVerificationCodes:
+          forwardVerificationCodes ?? this.forwardVerificationCodes,
       receiveFiles: receiveFiles ?? this.receiveFiles,
       fileTransferAlerts: fileTransferAlerts ?? this.fileTransferAlerts,
       allowMeteredFileTransfers:
@@ -88,6 +97,7 @@ class AppSettings {
             showPersistentSendNotification &&
         other.autoPushScreenshots == autoPushScreenshots &&
         other.enableClipboardAutoSend == enableClipboardAutoSend &&
+        other.forwardVerificationCodes == forwardVerificationCodes &&
         other.receiveFiles == receiveFiles &&
         other.fileTransferAlerts == fileTransferAlerts &&
         other.allowMeteredFileTransfers == allowMeteredFileTransfers &&
@@ -101,6 +111,7 @@ class AppSettings {
     showPersistentSendNotification,
     autoPushScreenshots,
     enableClipboardAutoSend,
+    forwardVerificationCodes,
     receiveFiles,
     fileTransferAlerts,
     allowMeteredFileTransfers,

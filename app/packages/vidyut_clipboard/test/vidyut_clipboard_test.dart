@@ -89,4 +89,43 @@ void main() {
 
     expect(await ScreenOnEvents().events.take(2).length, 2);
   });
+
+  test('posted notifications arrive as typed values', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockStreamHandler(
+          PostedNotifications.defaultChannel,
+          MockStreamHandler.inline(
+            onListen: (arguments, events) {
+              events.success({
+                'packageName': 'com.bank',
+                'title': 'Bank',
+                'text': 'Your code is 123456',
+              });
+            },
+          ),
+        );
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockStreamHandler(PostedNotifications.defaultChannel, null);
+    });
+
+    final posted = await PostedNotifications().notifications.first;
+
+    expect(posted.packageName, 'com.bank');
+    expect(posted.title, 'Bank');
+    expect(posted.text, 'Your code is 123456');
+  });
+
+  test('notification access is read and opened over the channel', () async {
+    nativeHandler = (call) =>
+        call.method == 'hasNotificationAccess' ? true : null;
+
+    expect(await PostedNotifications().hasAccess(), isTrue);
+    await PostedNotifications().openAccessSettings();
+
+    expect(calls.map((call) => call.method), [
+      'hasNotificationAccess',
+      'openNotificationAccessSettings',
+    ]);
+  });
 }

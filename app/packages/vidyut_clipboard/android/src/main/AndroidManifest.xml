@@ -7,4 +7,17 @@
             <action android:name="miui.intent.action.APP_PERM_EDITOR" />
         </intent>
     </queries>
+    <application>
+        <!-- Verification-code forwarding. Android binds it only once the user
+             grants notification access, which nothing does by default. -->
+        <service
+            android:name=".CodeNotificationListener"
+            android:exported="false"
+            android:label="Vidyut verification codes"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
 </manifest>

@@ -19,6 +19,12 @@ copied on the laptop can also carry its formatting as HTML, which the phone
 pastes where apps accept it (ADR 0024). It is still one Payload.
 _Avoid_: item, entry, message, clip
 
+**Verification code**:
+A one-time code that Vidyut finds in a phone notification and sends to the
+laptop as a text Payload (ADR 0025). Opt-in, and only with notification
+access. The code is never kept in logs or Activity.
+_Avoid_: OTP sync, SMS forwarding, notification mirroring
+
 **Link**:
 A Payload that is a single web address. The laptop writes it to the clipboard
 exactly as it would any text and additionally opens it in a browser, so the
@@ -222,7 +228,7 @@ The state in which the user has chosen to stop automatic clipboard
 synchronization for a while (15 minutes, an hour, or until resumed). Each
 device has its own pause. On the laptop, copies are not published and incoming
 payloads are not written. On the phone, incoming payloads are not written, and
-screenshots and auto-read text are not sent; a deliberate send (share sheet,
+screenshots, verification codes and auto-read text are not sent; a deliberate send (share sheet,
 **Send clipboard**) still goes. File transfers are unaffected. A degraded
 watcher still reports Sync needs attention, because resuming would not fix it.
 _Avoid_: disabled, off, offline

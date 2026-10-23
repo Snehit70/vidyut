@@ -48,6 +48,8 @@ class AppSettingsRepository {
   static const _autoPushScreenshotsKey = 'vidyut.settings.autoPushScreenshots';
   static const _enableClipboardAutoSendKey =
       'vidyut.settings.enableClipboardAutoSend';
+  static const _forwardVerificationCodesKey =
+      'vidyut.settings.forwardVerificationCodes';
   static const _miuiClipboardHintShownKey =
       'vidyut.settings.miuiClipboardHintShown';
   static const _receiveFilesKey = 'vidyut.settings.receiveFiles';
@@ -70,6 +72,7 @@ class AppSettingsRepository {
       _storage.read(_allowMeteredFileTransfersKey),
       _storage.read(_maxTransferFileBytesKey),
       _storage.read(_themeModeKey),
+      _storage.read(_forwardVerificationCodesKey),
     ]);
     return AppSettings(
       showReceiveNotifications: _readBool(values[0], fallback: true),
@@ -82,6 +85,8 @@ class AppSettingsRepository {
       allowMeteredFileTransfers: _readBool(values[6], fallback: true),
       maxTransferFileBytes: int.tryParse(values[7] ?? '') ?? 1024 * 1024 * 1024,
       themeMode: _readThemeMode(values[8]),
+      // Default off: reading notifications is never on by surprise.
+      forwardVerificationCodes: _readBool(values[9], fallback: false),
     );
   }
 
@@ -103,6 +108,10 @@ class AppSettingsRepository {
       _storage.write(
         _enableClipboardAutoSendKey,
         settings.enableClipboardAutoSend.toString(),
+      ),
+      _storage.write(
+        _forwardVerificationCodesKey,
+        settings.forwardVerificationCodes.toString(),
       ),
       _storage.write(_receiveFilesKey, settings.receiveFiles.toString()),
       _storage.write(
