@@ -3,9 +3,12 @@ import { basename, join, sep } from "node:path";
 import type {
   BrowseAnswer,
   BrowseEntry,
+  BrowseMatch,
   BrowseRequest,
   BrowseRoot,
+  BrowseThumbSize,
 } from "../shared/wire";
+import { LaptopThumbnailer, type Thumbnail } from "./laptop-thumbnails";
 import type { LaptopFileEntry } from "./transfer-coordinator";
 
 export class BrowseError extends Error {
@@ -22,10 +25,18 @@ export interface LaptopBrowserOptions {
   folders: readonly string[];
   maxEntries?: number;
   maxPullFiles?: number;
+  maxSearchMatches?: number;
+  /** Entries a search may look at before it stops and says it is partial. */
+  maxSearchVisited?: number;
+  searchTimeoutMs?: number;
+  thumbnailer?: LaptopThumbnailer;
 }
 
 const defaultMaxEntries = 2000;
 const defaultMaxPullFiles = 1000;
+const defaultMaxSearchMatches = 300;
+const defaultMaxSearchVisited = 50_000;
+const defaultSearchTimeoutMs = 4000;
 
 /**
  * Read-only view of the laptop's shared folders for the phone. Paths from the
@@ -36,10 +47,18 @@ const defaultMaxPullFiles = 1000;
 export class LaptopBrowser {
   private readonly maxEntries: number;
   private readonly maxPullFiles: number;
+  private readonly maxSearchMatches: number;
+  private readonly maxSearchVisited: number;
+  private readonly searchTimeoutMs: number;
+  private readonly thumbnailer: LaptopThumbnailer;
 
   constructor(private readonly options: LaptopBrowserOptions) {
     this.maxEntries = options.maxEntries ?? defaultMaxEntries;
     this.maxPullFiles = options.maxPullFiles ?? defaultMaxPullFiles;
+    this.maxSearchMatches = options.maxSearchMatches ?? defaultMaxSearchMatches;
+    this.maxSearchVisited = options.maxSearchVisited ?? defaultMaxSearchVisited;
+    this.searchTimeoutMs = options.searchTimeoutMs ?? defaultSearchTimeoutMs;
+    this.thumbnailer = options.thumbnailer ?? new LaptopThumbnailer();
   }
 
   /** Shared folders that exist right now. Ids are stable while the config is. */
@@ -102,6 +121,92 @@ export class LaptopBrowser {
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
     return { entries, truncated };
+  }
+
+  /** A picture of one file, or undefined when nothing can draw it. */
+  async thumbnail(
+    rootId: string,
+    path: string,
+    size: BrowseThumbSize,
+  ): Promise<Thumbnail | undefined> {
+    const { target } = await this.resolve(rootId, path);
+    if (!(await stat(target)).isFile()) {
+      throw new BrowseError("not_a_file", "That is not a file.");
+    }
+    return this.thumbnailer.thumbnail(target, size);
+  }
+
+  /**
+   * Names under `path` of one shared folder, or under every shared folder
+   * when `rootId` is omitted, that contain every word of `query`. It walks
+   * breadth first so shallow matches come first, and stops at a match, entry
+   * or time limit, reporting a partial answer rather than running on.
+   */
+  async search(
+    query: string,
+    rootId?: string,
+    path = "",
+  ): Promise<{ matches: BrowseMatch[]; truncated: boolean }> {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const queue: Array<{ rootId: string; directory: string; segments: string[] }> = [];
+    if (rootId === undefined) {
+      for (const root of await this.roots()) {
+        const { target } = await this.resolve(root.id, "");
+        queue.push({ rootId: root.id, directory: target, segments: [] });
+      }
+    } else {
+      const { target } = await this.resolve(rootId, path);
+      if (!(await stat(target)).isDirectory()) {
+        throw new BrowseError("not_a_folder", "That is not a folder.");
+      }
+      queue.push({
+        rootId,
+        directory: target,
+        segments: path === "" ? [] : path.split("/"),
+      });
+    }
+
+    const matches: BrowseMatch[] = [];
+    const deadline = Date.now() + this.searchTimeoutMs;
+    let visited = 0;
+    for (let next = 0; next < queue.length; next++) {
+      const { rootId: root, directory, segments } = queue[next]!;
+      let dirents;
+      try {
+        dirents = await readdir(directory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const dirent of dirents) {
+        if (!isShareableName(dirent.name)) continue;
+        if (!dirent.isFile() && !dirent.isDirectory()) continue;
+        if (visited >= this.maxSearchVisited || Date.now() > deadline) {
+          return { matches, truncated: true };
+        }
+        visited += 1;
+        const full = join(directory, dirent.name);
+        const entrySegments = [...segments, dirent.name];
+        if (dirent.isDirectory()) {
+          queue.push({ rootId: root, directory: full, segments: entrySegments });
+        }
+        const lower = dirent.name.toLowerCase();
+        if (!words.every((word) => lower.includes(word))) continue;
+        if (matches.length >= this.maxSearchMatches) {
+          return { matches, truncated: true };
+        }
+        const info = await stat(full).catch(() => undefined);
+        if (!info) continue;
+        matches.push({
+          root,
+          path: entrySegments.join("/"),
+          name: dirent.name,
+          kind: dirent.isDirectory() ? "folder" : "file",
+          ...(dirent.isDirectory() ? {} : { size: info.size }),
+          modifiedMs: Math.trunc(info.mtimeMs),
+        });
+      }
+    }
+    return { matches, truncated: false };
   }
 
   /**
@@ -185,6 +290,13 @@ export class LaptopBrowser {
     if (target !== root && !target.startsWith(root + sep)) {
       throw new BrowseError("invalid_path", "That path cannot be shared.");
     }
+    // A link inside the share can point at a hidden file inside the same share.
+    if (
+      target !== root &&
+      target.slice(root.length + 1).split(sep).some((part) => !isShareableName(part))
+    ) {
+      throw new BrowseError("invalid_path", "That path cannot be shared.");
+    }
     const rootName =
       (await this.roots()).find((candidate) => candidate.id === rootId)
         ?.name ?? basename(root);
@@ -219,6 +331,33 @@ export async function answerBrowse(
       return truncated
         ? { ok: true, entries, truncated: true }
         : { ok: true, entries };
+    }
+    if (request.kind === "browse_thumb") {
+      const thumb = await browser.thumbnail(
+        request.root,
+        request.path,
+        request.size ?? "small",
+      );
+      return thumb
+        ? {
+            ok: true,
+            thumb: { mime: thumb.mime, data: thumb.data.toString("base64") },
+          }
+        : {
+            ok: false,
+            code: "no_thumbnail",
+            message: "There is no picture for that file.",
+          };
+    }
+    if (request.kind === "browse_search") {
+      const { matches, truncated } = await browser.search(
+        request.query,
+        request.root,
+        request.path,
+      );
+      return truncated
+        ? { ok: true, matches, truncated: true }
+        : { ok: true, matches };
     }
     const files = await browser.collect(request.root, request.paths);
     let bytes = 0;

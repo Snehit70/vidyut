@@ -25,6 +25,7 @@ import {
 } from "./setup-status";
 import {
   encodedPayloadBytes,
+  isBrowseKind,
   isBrowseRequest,
   isPayloadFrame,
   isTransferControlMessage,
@@ -363,7 +364,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
 
-        if (message.kind === "browse_list" || message.kind === "browse_pull") {
+        if (isBrowseKind(message.kind)) {
           await answerBrowse(logger, socket, message, options.browse);
           return;
         }

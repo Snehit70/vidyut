@@ -187,8 +187,11 @@ export type RelayMessage =
   | { v: 1; kind: "error"; code: string; message: string };
 
 /**
- * The phone reading the laptop's shared folders (ADR 0026). A `browse_list`
- * without `root` lists the shared folders themselves. Only sealed sessions
+ * The phone reading the laptop's shared folders (ADR 0026, 0027). A
+ * `browse_list` without `root` lists the shared folders themselves. A
+ * `browse_thumb` asks for a picture of one file, small for a list row and
+ * large for a full-screen preview. A `browse_search` matches names under one
+ * shared folder, or under all of them without `root`. Only sealed sessions
  * may browse.
  */
 export type BrowseRequest =
@@ -205,7 +208,25 @@ export type BrowseRequest =
       requestId: string;
       root: string;
       paths: string[];
+    }
+  | {
+      v: 1;
+      kind: "browse_thumb";
+      requestId: string;
+      root: string;
+      path: string;
+      size?: BrowseThumbSize;
+    }
+  | {
+      v: 1;
+      kind: "browse_search";
+      requestId: string;
+      query: string;
+      root?: string;
+      path?: string;
     };
+
+export type BrowseThumbSize = "small" | "large";
 
 export interface BrowseRoot {
   id: string;
@@ -220,10 +241,18 @@ export interface BrowseEntry {
   modifiedMs: number;
 }
 
+/** One name match from a `browse_search`; `path` is relative to `root` and ends in `name`. */
+export interface BrowseMatch extends BrowseEntry {
+  root: string;
+  path: string;
+}
+
 export type BrowseAnswer =
   | { ok: true; roots: BrowseRoot[] }
   | { ok: true; entries: BrowseEntry[]; truncated?: true }
   | { ok: true; queued: { files: number; bytes: number } }
+  | { ok: true; thumb: { mime: "image/png" | "image/jpeg"; data: string } }
+  | { ok: true; matches: BrowseMatch[]; truncated?: true }
   | { ok: false; code: string; message: string };
 
 /** The answer to one BrowseRequest, matched by `requestId`. */
@@ -297,6 +326,15 @@ export function isTransferOffer(value: unknown): value is TransferOffer {
   );
 }
 
+export function isBrowseKind(kind: unknown): boolean {
+  return (
+    kind === "browse_list" ||
+    kind === "browse_pull" ||
+    kind === "browse_thumb" ||
+    kind === "browse_search"
+  );
+}
+
 export function isBrowseRequest(value: unknown): value is BrowseRequest {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
@@ -316,10 +354,32 @@ export function isBrowseRequest(value: unknown): value is BrowseRequest {
         message.paths.length <= 100 &&
         message.paths.every((path) => typeof path === "string")
       );
+    case "browse_thumb":
+      return (
+        typeof message.root === "string" &&
+        typeof message.path === "string" &&
+        message.path.length > 0 &&
+        (message.size === undefined ||
+          message.size === "small" ||
+          message.size === "large")
+      );
+    case "browse_search":
+      return (
+        typeof message.query === "string" &&
+        message.query.trim().length >= minSearchQueryLength &&
+        message.query.length <= maxSearchQueryLength &&
+        (message.root === undefined || typeof message.root === "string") &&
+        (message.path === undefined ||
+          (typeof message.root === "string" &&
+            typeof message.path === "string"))
+      );
     default:
       return false;
   }
 }
+
+export const minSearchQueryLength = 2;
+export const maxSearchQueryLength = 100;
 
 export function isTransferControlMessage(
   value: unknown,
