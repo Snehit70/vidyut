@@ -20,6 +20,19 @@ describe("relay config", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("keeps an empty shared folder list, which turns browsing off", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vidyut-config-shared-"));
+    const path = join(dir, "relay.json");
+    const first = await loadOrCreateRelayConfig(path);
+    await writeFile(path, JSON.stringify({ ...first, sharedFolders: [] }));
+
+    expect((await loadOrCreateRelayConfig(path)).sharedFolders).toEqual([]);
+
+    await writeFile(path, JSON.stringify({ ...first, sharedFolders: ["relative/path"] }));
+    expect((await loadOrCreateRelayConfig(path)).sharedFolders).toHaveLength(6);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("migrates an existing clipboard-only config in place", async () => {
     const dir = await mkdtemp(join(tmpdir(), "vidyut-config-migrate-"));
     const path = join(dir, "relay.json");
@@ -38,6 +51,14 @@ describe("relay config", () => {
 
     expect(config.pairingSecret).toBe("existing-secret");
     expect(config.maxTransferFileBytes).toBe(1024 * 1024 * 1024);
+    expect(config.sharedFolders.map((folder) => folder.split("/").at(-1))).toEqual([
+      "Desktop",
+      "Documents",
+      "Downloads",
+      "Music",
+      "Pictures",
+      "Videos",
+    ]);
     expect(
       JSON.parse(await readFile(path, "utf8")).transferDestination,
     ).toBe(config.transferDestination);

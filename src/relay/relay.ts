@@ -25,8 +25,11 @@ import {
 } from "./setup-status";
 import {
   encodedPayloadBytes,
+  isBrowseRequest,
   isPayloadFrame,
   isTransferControlMessage,
+  type BrowseAnswer,
+  type BrowseRequest,
   type PayloadFrame,
   type RelayHealth,
   type LaptopTelemetry,
@@ -71,6 +74,8 @@ interface RelayOptions {
     context: { isLoopback: boolean },
   ) => Promise<Response | undefined>;
   telemetry?: () => Promise<LaptopTelemetry>;
+  /** Answers the phone reading the laptop's shared folders (ADR 0026). */
+  browse?: (request: BrowseRequest) => Promise<BrowseAnswer>;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -293,7 +298,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           kind: "hello",
           challenge: socket.data.challenge,
           maxPayloadBytes: options.maxPayloadBytes,
-          features: [...relayFeatures],
+          features: options.browse ? [...relayFeatures, "browse_files"] : [...relayFeatures],
         });
       },
       async message(socket, rawMessage) {
@@ -355,6 +360,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           const changed = socket.data.telemetrySubscribed !== active;
           socket.data.telemetrySubscribed = active;
           if (active && changed) sendTelemetry([socket]);
+          return;
+        }
+
+        if (message.kind === "browse_list" || message.kind === "browse_pull") {
+          await answerBrowse(logger, socket, message, options.browse);
           return;
         }
 
@@ -705,6 +715,51 @@ function frameIdentity(frame: PayloadFrame): Record<string, unknown> {
     nonce: frame.nonce,
     frameTs: frame.ts,
   };
+}
+
+async function answerBrowse(
+  logger: Logger,
+  socket: RelaySocket,
+  message: unknown,
+  browse: RelayOptions["browse"],
+): Promise<void> {
+  const raw = message as Record<string, unknown>;
+  const requestId = typeof raw.requestId === "string" ? raw.requestId : "";
+  const reply = (answer: BrowseAnswer) =>
+    send(socket, { v: 1, kind: "browse_result", requestId, ...answer });
+  // Listings name the laptop's files, so they travel sealed or not at all.
+  if (!socket.data.sealer) {
+    reply({ ok: false, code: "seal_required", message: "Update Vidyut on the phone to browse the laptop." });
+    return;
+  }
+  if (!isBrowseRequest(message)) {
+    reply({ ok: false, code: "bad_request", message: "The browse request was malformed." });
+    return;
+  }
+  if (!browse) {
+    reply({ ok: false, code: "browse_unavailable", message: "This laptop does not share folders." });
+    return;
+  }
+  try {
+    const answer = await browse(message);
+    if (message.kind === "browse_pull" && answer.ok && "queued" in answer) {
+      logger.info("browse_pull_queued", {
+        connId: socket.data.connId,
+        deviceId: socket.data.deviceId,
+        files: answer.queued.files,
+        bytes: answer.queued.bytes,
+      });
+    }
+    reply(answer);
+  } catch (error) {
+    logger.error("browse_failed", {
+      connId: socket.data.connId,
+      deviceId: socket.data.deviceId,
+      kind: message.kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    reply({ ok: false, code: "browse_failed", message: "The laptop could not read that." });
+  }
 }
 
 function transferIdOf(message: TransferControlMessage): string {

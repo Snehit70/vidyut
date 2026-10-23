@@ -212,6 +212,7 @@ describe("relay loopback control plane", () => {
       logLevel: "info",
       transferDestination: join(dir, "Downloads"),
       maxTransferFileBytes: 1024,
+      sharedFolders: [],
     };
     await writeRelayConfig(path, config);
     const pairingSecret = { value: secret };

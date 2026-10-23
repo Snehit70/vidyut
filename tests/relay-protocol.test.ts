@@ -515,6 +515,85 @@ describe("relay protocol", () => {
       expect(phone.isClosed()).toBe(true);
     });
 
+    test("answers browse requests sealed, matched by request id", async () => {
+      await relay.stop();
+      const requests: unknown[] = [];
+      relay = await createRelay({
+        hostname: "127.0.0.1",
+        port: 0,
+        pairingSecret: secret,
+        maxPayloadBytes: 1024 * 1024,
+        browse: async (request) => {
+          requests.push(request);
+          return { ok: true, roots: [{ id: "0", name: "Downloads" }] };
+        },
+      });
+      const { phone, sealer } = await sealedPhone();
+      const requestId = "browse-request-0001";
+
+      phone.send(sealer.seal({ v: 1, kind: "browse_list", requestId }));
+
+      expect(await nextOpened(phone, sealer)).toEqual({
+        v: 1,
+        kind: "browse_result",
+        requestId,
+        ok: true,
+        roots: [{ id: "0", name: "Downloads" }],
+      });
+      expect(requests).toEqual([{ v: 1, kind: "browse_list", requestId }]);
+
+      phone.send(sealer.seal({ v: 1, kind: "browse_pull", requestId, root: "0", paths: [] }));
+      expect(await nextOpened(phone, sealer)).toMatchObject({ requestId, ok: false, code: "bad_request" });
+      expect(requests).toHaveLength(1);
+      phone.close();
+    });
+
+    test("advertises browsing only when the laptop shares folders", async () => {
+      const plain = await connectRawWebSocket(relay.url);
+      const plainHello = await plain.next();
+      expect(plainHello.kind === "hello" && plainHello.features).not.toContain("browse_files");
+      plain.close();
+      await relay.stop();
+      relay = await createRelay({
+        hostname: "127.0.0.1",
+        port: 0,
+        pairingSecret: secret,
+        maxPayloadBytes: 1024 * 1024,
+        browse: async () => ({ ok: true, roots: [] }),
+      });
+      const browsing = await connectRawWebSocket(relay.url);
+      const hello = await browsing.next();
+      expect(hello.kind === "hello" && hello.features).toContain("browse_files");
+      browsing.close();
+    });
+
+    test("refuses to browse on an unsealed session", async () => {
+      await relay.stop();
+      let asked = false;
+      relay = await createRelay({
+        hostname: "127.0.0.1",
+        port: 0,
+        pairingSecret: secret,
+        maxPayloadBytes: 1024 * 1024,
+        browse: async () => {
+          asked = true;
+          return { ok: true, roots: [] };
+        },
+      });
+      const legacy = await connectRawWebSocket(relay.url);
+      await authenticateRawClient(legacy, secret, "legacy");
+
+      legacy.send({ v: 1, kind: "browse_list", requestId: "browse-request-0002" });
+
+      expect(await legacy.next((message) => message.kind === "browse_result")).toMatchObject({
+        requestId: "browse-request-0002",
+        ok: false,
+        code: "seal_required",
+      });
+      expect(asked).toBe(false);
+      legacy.close();
+    });
+
     test("keeps the one-way handshake for a phone without a client challenge", async () => {
       const legacy = await connectRawWebSocket(relay.url);
       await authenticateRawClient(legacy, secret, "legacy");

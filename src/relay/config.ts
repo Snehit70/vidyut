@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -28,11 +28,19 @@ export interface RelayConfig {
   logLevel: LogLevel;
   transferDestination: string;
   maxTransferFileBytes: number;
+  /** Folders the phone may browse and pull from (ADR 0026). Empty turns browsing off. */
+  sharedFolders: string[];
 }
 
 export const defaultRelayPort = 17321;
 export const defaultMaxPayloadBytes = 25 * 1024 * 1024;
 export const defaultMaxTransferFileBytes = 1024 * 1024 * 1024;
+
+export function defaultSharedFolders(): string[] {
+  return ["Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos"].map(
+    (name) => join(homedir(), name),
+  );
+}
 
 export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig> {
   try {
@@ -40,7 +48,8 @@ export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig
     const config = normalizeConfig(parsed);
     if (
       parsed.transferDestination !== config.transferDestination ||
-      parsed.maxTransferFileBytes !== config.maxTransferFileBytes
+      parsed.maxTransferFileBytes !== config.maxTransferFileBytes ||
+      parsed.sharedFolders === undefined
     ) {
       await writeRelayConfig(path, config);
     }
@@ -57,6 +66,7 @@ export async function loadOrCreateRelayConfig(path: string): Promise<RelayConfig
     logLevel: "info",
     transferDestination: join(homedir(), "Downloads", "Vidyut"),
     maxTransferFileBytes: defaultMaxTransferFileBytes,
+    sharedFolders: defaultSharedFolders(),
   };
   await writeRelayConfig(path, config);
   return config;
@@ -89,6 +99,13 @@ function normalizeConfig(config: Partial<RelayConfig>): RelayConfig {
       config.maxTransferFileBytes > 0
         ? config.maxTransferFileBytes
         : defaultMaxTransferFileBytes,
+    sharedFolders:
+      Array.isArray(config.sharedFolders) &&
+      config.sharedFolders.every(
+        (folder) => typeof folder === "string" && isAbsolute(folder),
+      )
+        ? config.sharedFolders
+        : defaultSharedFolders(),
   };
 }
 

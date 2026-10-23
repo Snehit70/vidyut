@@ -78,6 +78,11 @@ export interface TransferFileOffer {
   lastModifiedKnown?: boolean;
   sha256: string;
   senderTiming?: TransferTimingSummary;
+  /**
+   * Subfolder to place the file in on arrival, relative and "/"-separated.
+   * Set when the phone pulled a whole folder (ADR 0026).
+   */
+  folder?: string;
 }
 
 export interface TransferOffer {
@@ -176,8 +181,57 @@ export type RelayMessage =
    * did not is subscribed for its whole session, as before the feature.
    */
   | { v: 1; kind: "telemetry_subscribe"; active: boolean }
+  | BrowseRequest
+  | BrowseResult
   | SealedMessage
   | { v: 1; kind: "error"; code: string; message: string };
+
+/**
+ * The phone reading the laptop's shared folders (ADR 0026). A `browse_list`
+ * without `root` lists the shared folders themselves. Only sealed sessions
+ * may browse.
+ */
+export type BrowseRequest =
+  | {
+      v: 1;
+      kind: "browse_list";
+      requestId: string;
+      root?: string;
+      path?: string;
+    }
+  | {
+      v: 1;
+      kind: "browse_pull";
+      requestId: string;
+      root: string;
+      paths: string[];
+    };
+
+export interface BrowseRoot {
+  id: string;
+  name: string;
+}
+
+export interface BrowseEntry {
+  name: string;
+  kind: "file" | "folder";
+  /** Absent for folders. */
+  size?: number;
+  modifiedMs: number;
+}
+
+export type BrowseAnswer =
+  | { ok: true; roots: BrowseRoot[] }
+  | { ok: true; entries: BrowseEntry[]; truncated?: true }
+  | { ok: true; queued: { files: number; bytes: number } }
+  | { ok: false; code: string; message: string };
+
+/** The answer to one BrowseRequest, matched by `requestId`. */
+export type BrowseResult = {
+  v: 1;
+  kind: "browse_result";
+  requestId: string;
+} & BrowseAnswer;
 
 /** Any other message, AES-256-GCM sealed under the session key (ADR 0023). */
 export interface SealedMessage {
@@ -187,7 +241,7 @@ export interface SealedMessage {
   payload: string;
 }
 
-export type RelayFeature = "telemetry_subscribe" | "relay_proof" | SessionFeature;
+export type RelayFeature = "telemetry_subscribe" | "relay_proof" | "browse_files" | SessionFeature;
 
 /** Features negotiated per session and covered by `relayProof`. */
 export type SessionFeature = "sealed_control";
@@ -241,6 +295,30 @@ export function isTransferOffer(value: unknown): value is TransferOffer {
       offer.files.map((file) => (file as TransferFileOffer).fileId),
     ).size === offer.files.length
   );
+}
+
+export function isBrowseRequest(value: unknown): value is BrowseRequest {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Record<string, unknown>;
+  if (message.v !== 1 || !isId(message.requestId)) return false;
+  switch (message.kind) {
+    case "browse_list":
+      return (
+        (message.root === undefined && message.path === undefined) ||
+        (typeof message.root === "string" &&
+          (message.path === undefined || typeof message.path === "string"))
+      );
+    case "browse_pull":
+      return (
+        typeof message.root === "string" &&
+        Array.isArray(message.paths) &&
+        message.paths.length > 0 &&
+        message.paths.length <= 100 &&
+        message.paths.every((path) => typeof path === "string")
+      );
+    default:
+      return false;
+  }
 }
 
 export function isTransferControlMessage(
@@ -315,8 +393,19 @@ function isTransferFileOffer(value: unknown): value is TransferFileOffer {
       typeof file.lastModifiedKnown === "boolean") &&
     typeof file.sha256 === "string" &&
     (file.senderTiming === undefined || isTransferTiming(file.senderTiming)) &&
+    (file.folder === undefined || isRelativeFolder(file.folder)) &&
     sha256Pattern.test(file.sha256)
   );
+}
+
+/** A relative "/"-separated folder with no empty, "." or ".." segment. */
+export function isRelativeFolder(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (new TextEncoder().encode(value).byteLength > 1024) return false;
+  if (/[\u0000-\u001f\u007f\\]/u.test(value)) return false;
+  return value
+    .split("/")
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 function isTransferTiming(value: unknown): value is TransferTimingSummary {
