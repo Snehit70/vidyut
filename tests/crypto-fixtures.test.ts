@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPairingProof } from "../src/shared/auth";
-import { decryptPayload, encryptPayload } from "../src/shared/crypto";
+import { decryptAlternative, decryptPayload, encryptAlternative, encryptPayload } from "../src/shared/crypto";
 import {
   createRelayProof,
   deriveSessionKey,
@@ -17,7 +17,13 @@ interface PayloadVector {
   frame: PayloadFrame;
 }
 
+interface AlternativeVector extends PayloadVector {
+  altPlaintextBase64: string;
+  frame: PayloadFrame & { alt: NonNullable<PayloadFrame["alt"]> };
+}
+
 const payloadVectors = fixtures.payloadVectors as PayloadVector[];
+const alternativeVectors = fixtures.alternativeVectors as AlternativeVector[];
 const firstVector = payloadVectors[0];
 if (!firstVector) throw new Error("crypto-fixtures.json has no payload vectors");
 
@@ -37,6 +43,27 @@ describe("cross-language crypto fixtures", () => {
         new Uint8Array(Buffer.from(vector.frame.nonce, "base64")),
       );
       expect(frame).toEqual(vector.frame);
+    });
+  }
+
+  for (const vector of alternativeVectors) {
+    test(`decrypts alternative vector ${vector.name}`, async () => {
+      const plaintext = await decryptPayload(vector.frame, vector.pairingSecret);
+      expect(Buffer.from(plaintext).toString("base64")).toBe(vector.plaintextBase64);
+      const alt = await decryptAlternative(vector.frame, vector.frame.alt, vector.pairingSecret);
+      expect(Buffer.from(alt).toString("base64")).toBe(vector.altPlaintextBase64);
+    });
+
+    test(`re-encrypts alternative vector ${vector.name} byte-for-byte`, async () => {
+      const { alt, ...frame } = vector.frame;
+      const sealed = await encryptAlternative(
+        frame,
+        alt.mime,
+        new Uint8Array(Buffer.from(vector.altPlaintextBase64, "base64")),
+        vector.pairingSecret,
+        new Uint8Array(Buffer.from(alt.nonce, "base64")),
+      );
+      expect(sealed).toEqual(alt);
     });
   }
 

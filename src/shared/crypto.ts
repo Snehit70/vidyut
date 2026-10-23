@@ -1,4 +1,4 @@
-import type { PayloadFrame, PayloadMetadata } from "./wire";
+import type { PayloadAlternative, PayloadFrame, PayloadMetadata } from "./wire";
 
 const textEncoder = new TextEncoder();
 const kdfSalt = textEncoder.encode("vidyut-v1-pairing-secret");
@@ -44,6 +44,49 @@ export async function decryptPayload(frame: PayloadFrame, pairingSecret: string)
     },
     key,
     toArrayBuffer(fromBase64(frame.payload)),
+  );
+  return new Uint8Array(plaintext);
+}
+
+/**
+ * Seals a richer rendering of `frame`'s content. Its associated data names the
+ * frame's nonce, so the alternative cannot be moved onto another frame.
+ */
+export async function encryptAlternative(
+  frame: PayloadFrame,
+  mime: PayloadAlternative["mime"],
+  plaintext: Uint8Array,
+  pairingSecret: string,
+  nonceBytes: Uint8Array = crypto.getRandomValues(new Uint8Array(12)),
+): Promise<PayloadAlternative> {
+  const nonce = toBase64(nonceBytes);
+  const key = await derivePayloadKey(pairingSecret);
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: toArrayBuffer(nonceBytes),
+      additionalData: alternativeAssociatedData(frame, mime, nonce),
+    },
+    key,
+    toArrayBuffer(plaintext),
+  );
+  return { mime, nonce, payload: toBase64(new Uint8Array(ciphertext)) };
+}
+
+export async function decryptAlternative(
+  frame: PayloadFrame,
+  alternative: PayloadAlternative,
+  pairingSecret: string,
+): Promise<Uint8Array> {
+  const key = await derivePayloadKey(pairingSecret);
+  const plaintext = await crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: toArrayBuffer(fromBase64(alternative.nonce)),
+      additionalData: alternativeAssociatedData(frame, alternative.mime, alternative.nonce),
+    },
+    key,
+    toArrayBuffer(fromBase64(alternative.payload)),
   );
   return new Uint8Array(plaintext);
 }
@@ -94,6 +137,12 @@ function associatedData(frame: Omit<PayloadFrame, "payload">): ArrayBuffer {
       ts: frame.ts,
       nonce: frame.nonce,
     }),
+  ));
+}
+
+function alternativeAssociatedData(frame: PayloadFrame, mime: string, nonce: string): ArrayBuffer {
+  return toArrayBuffer(textEncoder.encode(
+    JSON.stringify({ v: 1, kind: "alt", mime, nonce, frameNonce: frame.nonce }),
   ));
 }
 

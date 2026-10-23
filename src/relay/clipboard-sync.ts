@@ -3,7 +3,7 @@ import type { ClipboardAdapter } from "./clipboard";
 import { pairingSecretValue, type PairingSecretRef } from "./config";
 import { noopLogger, type Logger } from "./logger";
 import type { PayloadPool } from "./payload-pool";
-import { decryptPayload, encryptPayload } from "../shared/crypto";
+import { decryptPayload, encryptAlternative, encryptPayload } from "../shared/crypto";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
 import { isOpenableLink } from "./open-link";
 
@@ -75,6 +75,7 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
           return;
         }
 
+        const secret = pairingSecretValue(options.pairingSecret);
         const frame = await encryptPayload(
           {
             type: payload.type,
@@ -83,11 +84,20 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
             ts: options.now(),
           },
           payload.data,
-          pairingSecretValue(options.pairingSecret),
+          secret,
         );
+        if (payload.alternative) {
+          frame.alt = await encryptAlternative(
+            frame,
+            payload.alternative.mime,
+            payload.alternative.data,
+            secret,
+          );
+        }
         logger.info("clipboard_published", {
           type: frame.type,
           mime: frame.mime,
+          ...(frame.alt && { alt: frame.alt.mime }),
           bytes: encodedPayloadBytes(frame),
           nonce: frame.nonce,
           frameTs: frame.ts,

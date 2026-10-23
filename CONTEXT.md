@@ -14,7 +14,9 @@ _Avoid_: queue, history, buffer, stack
 
 **Payload**:
 One clipboard item synced through the pool — an image, a text blob, or a
-**Link** — plus its metadata (type, size, origin device, timestamp).
+**Link** — plus its metadata (type, size, origin device, timestamp). Text
+copied on the laptop can also carry its formatting as HTML, which the phone
+pastes where apps accept it (ADR 0024). It is still one Payload.
 _Avoid_: item, entry, message, clip
 
 **Link**:

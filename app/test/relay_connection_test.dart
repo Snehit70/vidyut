@@ -163,6 +163,31 @@ void main() {
     await expectLater(connection.payloads, emits(frame));
   });
 
+  test('keeps a formatted alternative and ignores one it does not know', () {
+    final json = {
+      'v': 1,
+      'type': 'text',
+      'mime': 'text/plain',
+      'origin': 'laptop',
+      'ts': 1800000200001,
+      'nonce': 'nonce',
+      'payload': 'payload',
+    };
+    const alt = {'mime': 'text/html', 'nonce': 'alt-nonce', 'payload': 'alt'};
+
+    expect(PayloadFrame.fromJson({...json, 'alt': alt}).toJson(), {
+      ...json,
+      'alt': alt,
+    });
+    expect(
+      PayloadFrame.fromJson({
+        ...json,
+        'alt': {...alt, 'mime': 'text/rtf'},
+      }).alt,
+      isNull,
+    );
+  });
+
   test('publishes payload frames to the relay', () async {
     final transport = FakeRelayTransport();
     final connection = RelayConnection(

@@ -73,6 +73,75 @@ class PayloadCrypto {
     );
   }
 
+  /// Seals a richer rendering of [frame]'s content. The associated data names
+  /// the frame's nonce, so the alternative cannot be moved onto another frame.
+  Future<PayloadAlternative> encryptAlternative({
+    required PayloadFrame frame,
+    required String mime,
+    required List<int> plaintext,
+    required String pairingSecret,
+  }) async {
+    final nonce = _randomBytes(12);
+    final nonceBase64 = base64Encode(nonce);
+    final key = await _deriveKey(pairingSecret);
+    final secretBox = await _algorithm.encrypt(
+      plaintext,
+      secretKey: key,
+      nonce: nonce,
+      aad: _alternativeAssociatedData(frame, mime, nonceBase64),
+    );
+    return PayloadAlternative(
+      mime: mime,
+      nonce: nonceBase64,
+      payload: base64Encode([...secretBox.cipherText, ...secretBox.mac.bytes]),
+    );
+  }
+
+  Future<List<int>> decryptAlternative({
+    required PayloadFrame frame,
+    required PayloadAlternative alternative,
+    required String pairingSecret,
+  }) async {
+    final encrypted = base64Decode(alternative.payload);
+    if (encrypted.length < 16) {
+      throw const FormatException('Alternative ciphertext is too short.');
+    }
+    final key = await _deriveKey(pairingSecret);
+    final macOffset = encrypted.length - 16;
+    final box = SecretBox(
+      encrypted.sublist(0, macOffset),
+      nonce: base64Decode(alternative.nonce),
+      mac: Mac(encrypted.sublist(macOffset)),
+    );
+    return _algorithm.decrypt(
+      box,
+      secretKey: key,
+      aad: _alternativeAssociatedData(
+        frame,
+        alternative.mime,
+        alternative.nonce,
+      ),
+    );
+  }
+
+  /// Matches `alternativeAssociatedData` in src/shared/crypto.ts, key order
+  /// included.
+  List<int> _alternativeAssociatedData(
+    PayloadFrame frame,
+    String mime,
+    String nonce,
+  ) {
+    return utf8.encode(
+      jsonEncode({
+        'v': 1,
+        'kind': 'alt',
+        'mime': mime,
+        'nonce': nonce,
+        'frameNonce': frame.nonce,
+      }),
+    );
+  }
+
   Future<SecretKey> _deriveKey(String pairingSecret) {
     return _derivedKeys.putIfAbsent(pairingSecret, () {
       return _kdf.deriveKey(

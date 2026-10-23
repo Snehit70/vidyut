@@ -72,8 +72,12 @@ class VidyutClipboardPlugin :
         when (call.method) {
             "writeText" -> {
                 val text = call.argument<String>("text")
+                val html = call.argument<String>("html")
                 if (text == null) {
                     result.error("bad-args", "text is required", null)
+                } else if (html != null) {
+                    // Apps that paste formatting take the HTML; the rest take the text.
+                    setPrimaryClip(result) { ClipData.newHtmlText("Vidyut text", text, html) }
                 } else {
                     setPrimaryClip(result) { ClipData.newPlainText("Vidyut text", text) }
                 }

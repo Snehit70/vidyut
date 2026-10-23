@@ -7,7 +7,7 @@ import {
 import { connectDevice } from "../src/relay/client";
 import { PayloadPool } from "../src/relay/payload-pool";
 import { createRelay } from "../src/relay/relay";
-import { decryptPayload, encryptPayload } from "../src/shared/crypto";
+import { decryptAlternative, decryptPayload, encryptPayload } from "../src/shared/crypto";
 import type { ClipboardPayload } from "../src/relay/clipboard";
 
 class FakeClipboard implements WatchableClipboardAdapter {
@@ -80,6 +80,34 @@ describe("clipboard sync", () => {
       ts: 1_800_000_020_000,
     });
     expect(await decryptPayload(pool.current!, "pairing-secret")).toEqual(new TextEncoder().encode("from laptop"));
+
+    stop();
+  });
+
+  test("publishes a copy's formatting alongside its plain text", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_001,
+    });
+
+    await clipboard.changeTo({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode("bold"),
+      alternative: { mime: "text/html", data: new TextEncoder().encode("<b>bold</b>") },
+    });
+
+    const frame = pool.current!;
+    expect(await decryptPayload(frame, "pairing-secret")).toEqual(new TextEncoder().encode("bold"));
+    expect(frame.alt?.mime).toBe("text/html");
+    expect(await decryptAlternative(frame, frame.alt!, "pairing-secret")).toEqual(
+      new TextEncoder().encode("<b>bold</b>"),
+    );
 
     stop();
   });

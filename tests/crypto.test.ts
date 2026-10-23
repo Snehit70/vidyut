@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { decryptPayload, encryptPayload } from "../src/shared/crypto";
+import { decryptAlternative, decryptPayload, encryptAlternative, encryptPayload } from "../src/shared/crypto";
+import { encodedPayloadBytes, isPayloadFrame } from "../src/shared/wire";
 
 describe("payload crypto", () => {
   test("round-trips encrypted text payloads", async () => {
@@ -57,5 +58,41 @@ describe("payload crypto", () => {
     const frame = await encryptPayload(metadata, plaintext, "after-rotation");
     await expect(decryptPayload(frame, "after-rotation")).resolves.toEqual(plaintext);
     await expect(decryptPayload(frame, "before-rotation")).rejects.toThrow();
+  });
+
+  test("round-trips a formatted alternative bound to its frame", async () => {
+    const secret = "pairing-secret";
+    const metadata = { type: "text" as const, mime: "text/plain", origin: "laptop", ts: 1_800_000_010_010 };
+    const frame = await encryptPayload(metadata, new TextEncoder().encode("hi"), secret);
+    const html = new TextEncoder().encode("<b>hi</b>");
+    const alt = await encryptAlternative(frame, "text/html", html, secret);
+
+    await expect(decryptAlternative(frame, alt, secret)).resolves.toEqual(html);
+    await expect(decryptAlternative(frame, alt, "wrong-secret")).rejects.toThrow();
+
+    // Lifted onto another frame, the alternative no longer opens.
+    const other = await encryptPayload(metadata, new TextEncoder().encode("hi"), secret);
+    await expect(decryptAlternative(other, alt, secret)).rejects.toThrow();
+  });
+});
+
+describe("payload frame shape", () => {
+  const frame = { v: 1, type: "text", mime: "text/plain", origin: "laptop", ts: 1, nonce: "AA==", payload: "AAAA" };
+
+  test("accepts a frame with or without a well-formed alternative", () => {
+    expect(isPayloadFrame(frame)).toBe(true);
+    expect(isPayloadFrame({ ...frame, alt: { mime: "text/html", nonce: "AA==", payload: "AAAA" } })).toBe(true);
+  });
+
+  test("rejects a malformed alternative", () => {
+    expect(isPayloadFrame({ ...frame, alt: { mime: "text/rtf", nonce: "AA==", payload: "AAAA" } })).toBe(false);
+    expect(isPayloadFrame({ ...frame, alt: { mime: "text/html", nonce: "AA==" } })).toBe(false);
+    expect(isPayloadFrame({ ...frame, alt: "AAAA" })).toBe(false);
+  });
+
+  test("counts the alternative against the payload size", () => {
+    const withAlt = { ...frame, alt: { mime: "text/html" as const, nonce: "AA==", payload: "AAAAAAAA" } };
+    expect(encodedPayloadBytes(frame as never)).toBe(3);
+    expect(encodedPayloadBytes(withAlt as never)).toBe(9);
   });
 });

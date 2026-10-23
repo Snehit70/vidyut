@@ -35,6 +35,8 @@ void main() {
           as Map<String, Object?>;
   final payloadVectors = (fixtures['payloadVectors'] as List<Object?>)
       .cast<Map<String, Object?>>();
+  final alternativeVectors = (fixtures['alternativeVectors'] as List<Object?>)
+      .cast<Map<String, Object?>>();
   final proofVectors = (fixtures['pairingProofVectors'] as List<Object?>)
       .cast<Map<String, Object?>>();
   final sessionVectors = (fixtures['sessionVectors'] as List<Object?>)
@@ -74,6 +76,45 @@ void main() {
       );
 
       expect(encrypted, frame);
+    });
+  }
+
+  for (final vector in alternativeVectors) {
+    final name = vector['name'] as String;
+    final pairingSecret = vector['pairingSecret'] as String;
+    final frame = PayloadFrame.fromJson(vector['frame']);
+    final alt = frame.alt!;
+
+    test('decrypts alternative vector $name', () async {
+      final crypto = PayloadCrypto();
+      final text = await crypto.decrypt(
+        frame: frame,
+        pairingSecret: pairingSecret,
+      );
+      final html = await crypto.decryptAlternative(
+        frame: frame,
+        alternative: alt,
+        pairingSecret: pairingSecret,
+      );
+
+      expect(base64Encode(text), vector['plaintextBase64']);
+      expect(base64Encode(html), vector['altPlaintextBase64']);
+    });
+
+    test('re-encrypts alternative vector $name byte-for-byte', () async {
+      final crypto = PayloadCrypto(
+        random: FixedRandom(base64Decode(alt.nonce)),
+      );
+
+      final sealed = await crypto.encryptAlternative(
+        frame: frame,
+        mime: alt.mime,
+        plaintext: base64Decode(vector['altPlaintextBase64'] as String),
+        pairingSecret: pairingSecret,
+      );
+
+      expect(sealed, alt);
+      expect(frame.toJson(), vector['frame']);
     });
   }
 

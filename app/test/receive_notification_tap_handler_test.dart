@@ -250,7 +250,7 @@ class _FakeClipboard implements AndroidClipboard {
   String? text;
 
   @override
-  Future<void> writeText(String text) async {
+  Future<void> writeText(String text, {String? html}) async {
     this.text = text;
   }
 }

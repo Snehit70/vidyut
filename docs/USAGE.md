@@ -31,6 +31,9 @@ On the phone:
 - **If that grant is missing** (or MIUI blocked the silent write), tap the receipt
   notification — that's the guaranteed fallback and copies the item into the clipboard.
 
+Text copied from a browser or an editor keeps its formatting. Apps that paste rich
+text get the bold, links and lists, and every other app gets the plain text. Phone → laptop copies are plain text only.
+
 The home screen's **Last activity** card always shows the most recent item ("text (44 B)
 from laptop · just now"), so you can confirm it arrived at a glance.
 

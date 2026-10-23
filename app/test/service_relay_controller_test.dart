@@ -1741,7 +1741,7 @@ class _RecordingClipboard implements AndroidClipboard {
   void Function(String text)? onWrite;
 
   @override
-  Future<void> writeText(String text) async {
+  Future<void> writeText(String text, {String? html}) async {
     texts.add(text);
     onWrite?.call(text);
   }

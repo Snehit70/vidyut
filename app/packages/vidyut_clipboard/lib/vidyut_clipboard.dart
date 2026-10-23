@@ -15,8 +15,12 @@ class VidyutClipboard {
   /// access, not a wiring bug.
   static const blockedErrorCode = 'clipboard-blocked';
 
-  Future<void> writeText(String text) {
-    return channel.invokeMethod<void>('writeText', {'text': text});
+  /// With [html], the clip carries formatting for apps that paste it.
+  Future<void> writeText(String text, {String? html}) {
+    return channel.invokeMethod<void>('writeText', {
+      'text': text,
+      if (html != null) 'html': html,
+    });
   }
 
   Future<void> writeImage({required String path, required String mime}) {

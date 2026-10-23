@@ -57,6 +57,28 @@
       }
     }
   ],
+  "alternativeVectors": [
+    {
+      "name": "html-alternative",
+      "pairingSecret": "fixture-secret-1",
+      "plaintextBase64": "Ym9sZCDinJM=",
+      "altPlaintextBase64": "PGI+Ym9sZDwvYj4g4pyT",
+      "frame": {
+        "v": 1,
+        "type": "text",
+        "mime": "text/plain",
+        "origin": "laptop",
+        "ts": 1800000000005,
+        "nonce": "yMnKy8zNzs/Q0dLT",
+        "payload": "ulekvRqGgAuseMAxvGOMmxYBE2W3O7Y6",
+        "alt": {
+          "mime": "text/html",
+          "nonce": "3N3e3+Dh4uPk5ebn",
+          "payload": "vYKN35iJdcwAkcAJf/EueoHsatlyI3AxR49Egfl2Cg=="
+        }
+      }
+    }
+  ],
   "pairingProofVectors": [
     {
       "name": "proof-ascii",

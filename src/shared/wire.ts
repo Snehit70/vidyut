@@ -8,6 +8,18 @@ export interface PayloadFrame {
   ts: number;
   nonce: string;
   payload: string;
+  /** The same text with its formatting, sealed on its own (ADR 0024). */
+  alt?: PayloadAlternative;
+}
+
+/**
+ * A richer rendering of a text frame. Only `text/html` is defined; a receiver
+ * that does not know it, or cannot open it, uses the plain `payload`.
+ */
+export interface PayloadAlternative {
+  mime: "text/html";
+  nonce: string;
+  payload: string;
 }
 
 export interface PayloadMetadata {
@@ -191,12 +203,20 @@ export function isPayloadFrame(value: unknown): value is PayloadFrame {
     typeof frame.ts === "number" &&
     Number.isFinite(frame.ts) &&
     typeof frame.nonce === "string" &&
-    typeof frame.payload === "string"
+    typeof frame.payload === "string" &&
+    (frame.alt === undefined || isPayloadAlternative(frame.alt))
   );
 }
 
+function isPayloadAlternative(value: unknown): value is PayloadAlternative {
+  if (!value || typeof value !== "object") return false;
+  const alt = value as Record<string, unknown>;
+  return alt.mime === "text/html" && typeof alt.nonce === "string" && typeof alt.payload === "string";
+}
+
 export function encodedPayloadBytes(frame: PayloadFrame): number {
-  return Buffer.from(frame.payload, "base64").byteLength;
+  const main = Buffer.from(frame.payload, "base64").byteLength;
+  return frame.alt ? main + Buffer.from(frame.alt.payload, "base64").byteLength : main;
 }
 
 const idPattern = /^[A-Za-z0-9_-]{16,128}$/;

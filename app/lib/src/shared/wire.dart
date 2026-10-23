@@ -100,6 +100,7 @@ class PayloadFrame {
     required this.nonce,
     required this.payload,
     this.v = 1,
+    this.alt,
   });
 
   final int v;
@@ -110,6 +111,9 @@ class PayloadFrame {
   final String nonce;
   final String payload;
 
+  /// The same text with its formatting, sealed on its own (ADR 0024).
+  final PayloadAlternative? alt;
+
   @override
   bool operator ==(Object other) {
     return other is PayloadFrame &&
@@ -119,11 +123,13 @@ class PayloadFrame {
         other.origin == origin &&
         other.ts == ts &&
         other.nonce == nonce &&
-        other.payload == payload;
+        other.payload == payload &&
+        other.alt == alt;
   }
 
   @override
-  int get hashCode => Object.hash(v, type, mime, origin, ts, nonce, payload);
+  int get hashCode =>
+      Object.hash(v, type, mime, origin, ts, nonce, payload, alt);
 
   Map<String, Object?> toJson() => {
     'v': v,
@@ -133,6 +139,7 @@ class PayloadFrame {
     'ts': ts,
     'nonce': nonce,
     'payload': payload,
+    if (alt case final alt?) 'alt': alt.toJson(),
   };
 
   Map<String, Object?> associatedDataJson() => {
@@ -154,6 +161,7 @@ class PayloadFrame {
     int? ts,
     String? nonce,
     String? payload,
+    PayloadAlternative? alt,
   }) {
     return PayloadFrame(
       v: v ?? this.v,
@@ -163,6 +171,7 @@ class PayloadFrame {
       ts: ts ?? this.ts,
       nonce: nonce ?? this.nonce,
       payload: payload ?? this.payload,
+      alt: alt ?? this.alt,
     );
   }
 
@@ -178,7 +187,52 @@ class PayloadFrame {
       ts: _intField(value, 'ts'),
       nonce: _stringField(value, 'nonce'),
       payload: _stringField(value, 'payload'),
+      alt: PayloadAlternative.tryParse(value['alt']),
     );
+  }
+}
+
+/// A richer rendering of a text frame. Only `text/html` is defined.
+class PayloadAlternative {
+  const PayloadAlternative({
+    required this.mime,
+    required this.nonce,
+    required this.payload,
+  });
+
+  static const htmlMime = 'text/html';
+
+  final String mime;
+  final String nonce;
+  final String payload;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PayloadAlternative &&
+      other.mime == mime &&
+      other.nonce == nonce &&
+      other.payload == payload;
+
+  @override
+  int get hashCode => Object.hash(mime, nonce, payload);
+
+  Map<String, Object?> toJson() => {
+    'mime': mime,
+    'nonce': nonce,
+    'payload': payload,
+  };
+
+  /// Null for anything this phone does not understand, so the frame still
+  /// delivers its plain text.
+  static PayloadAlternative? tryParse(Object? value) {
+    if (value case {
+      'mime': htmlMime,
+      'nonce': final String nonce,
+      'payload': final String payload,
+    }) {
+      return PayloadAlternative(mime: htmlMime, nonce: nonce, payload: payload);
+    }
+    return null;
   }
 }
 

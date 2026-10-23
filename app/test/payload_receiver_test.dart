@@ -58,6 +58,78 @@ void main() {
     );
   }
 
+  group('formatted text', () {
+    Future<PayloadFrame> formattedFrame(String text, String html) async {
+      final crypto = PayloadCrypto();
+      final frame = await textFrame(text);
+      return frame.copyWith(
+        alt: await crypto.encryptAlternative(
+          frame: frame,
+          mime: PayloadAlternative.htmlMime,
+          plaintext: html.codeUnits,
+          pairingSecret: 'pairing-secret',
+        ),
+      );
+    }
+
+    PayloadReceiver receiverFor(
+      FakeAndroidClipboard clipboard,
+      MemoryReceivedPayloadStorage storage, {
+      List<String>? logs,
+    }) {
+      return PayloadReceiver(
+        crypto: PayloadCrypto(),
+        clipboard: clipboard,
+        imageClipboard: FakeAndroidImageClipboard(),
+        notifier: FakePayloadNotifier(),
+        receivedTextRepository: ReceivedTextRepository(storage),
+        receivedImageRepository: imageRepository(storage),
+        log: (message, {isError = false}) => logs?.add(message),
+      );
+    }
+
+    test(
+      'writes the HTML with the text and keeps the text as history',
+      () async {
+        final clipboard = FakeAndroidClipboard();
+        final storage = MemoryReceivedPayloadStorage();
+
+        final result = await receiverFor(clipboard, storage).receive(
+          frame: await formattedFrame('bold', '<b>bold</b>'),
+          pairingSecret: 'pairing-secret',
+        );
+
+        expect(result.received, isTrue);
+        expect(clipboard.text, 'bold');
+        expect(clipboard.html, '<b>bold</b>');
+        expect(await ReceivedTextRepository(storage).loadLatest(), 'bold');
+      },
+    );
+
+    test('writes plain text when the formatting does not open', () async {
+      final clipboard = FakeAndroidClipboard();
+      final logs = <String>[];
+      final frame = await formattedFrame('bold', '<b>bold</b>');
+      // An alternative lifted from another frame fails its associated data.
+      final other = await textFrame('bold', ts: 1800000400099);
+
+      final result =
+          await receiverFor(
+            clipboard,
+            MemoryReceivedPayloadStorage(),
+            logs: logs,
+          ).receive(
+            frame: other.copyWith(alt: frame.alt),
+            pairingSecret: 'pairing-secret',
+          );
+
+      expect(result.received, isTrue);
+      expect(clipboard.text, 'bold');
+      expect(clipboard.html, isNull);
+      expect(logs.single, startsWith('Formatting dropped'));
+    });
+  });
+
   test(
     'decrypts incoming text, stores it, and writes the Android clipboard',
     () async {
@@ -371,10 +443,12 @@ void main() {
 
 class FakeAndroidClipboard implements AndroidClipboard {
   String? text;
+  String? html;
 
   @override
-  Future<void> writeText(String text) async {
+  Future<void> writeText(String text, {String? html}) async {
     this.text = text;
+    this.html = html;
   }
 }
 
@@ -384,7 +458,7 @@ class ThrowingAndroidClipboard implements AndroidClipboard {
   final Object error;
 
   @override
-  Future<void> writeText(String text) async {
+  Future<void> writeText(String text, {String? html}) async {
     throw error;
   }
 }

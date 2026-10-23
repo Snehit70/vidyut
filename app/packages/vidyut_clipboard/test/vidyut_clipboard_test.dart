@@ -30,6 +30,12 @@ void main() {
     expect(calls.single.arguments, {'text': 'hello'});
   });
 
+  test('writeText passes formatting when given html', () async {
+    await const VidyutClipboard().writeText('bold', html: '<b>bold</b>');
+
+    expect(calls.single.arguments, {'text': 'bold', 'html': '<b>bold</b>'});
+  });
+
   test('writeImage invokes the channel with path and mime', () async {
     await const VidyutClipboard().writeImage(
       path: '/data/img.png',

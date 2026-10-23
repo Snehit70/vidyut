@@ -270,8 +270,8 @@ class _EchoGuardClipboard implements AndroidClipboard {
   final void Function(String text) _record;
 
   @override
-  Future<void> writeText(String text) async {
-    await _inner.writeText(text);
+  Future<void> writeText(String text, {String? html}) async {
+    await _inner.writeText(text, html: html);
     _record(text);
   }
 }

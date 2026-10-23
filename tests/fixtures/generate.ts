@@ -3,7 +3,7 @@
 // The Dart suite (app/test/crypto_fixtures_test.dart) verifies the same bytes,
 // so both languages must agree on KDF, AAD encoding, nonce, and tag layout.
 import { createPairingProof } from "../../src/shared/auth";
-import { encryptPayload } from "../../src/shared/crypto";
+import { encryptAlternative, encryptPayload } from "../../src/shared/crypto";
 import {
   createRelayProof,
   deriveSessionKey,
@@ -77,6 +77,33 @@ const payloadVectors = await Promise.all(
     plaintextBase64: Buffer.from(input.plaintext).toString("base64"),
     frame: await encryptPayload(input.metadata, input.plaintext, input.pairingSecret, input.nonce),
   })),
+);
+
+// A text frame carrying its HTML formatting as a separately sealed alternative.
+const alternativeInputs = [
+  {
+    name: "html-alternative",
+    pairingSecret: "fixture-secret-1",
+    metadata: { type: "text", mime: "text/plain", origin: "laptop", ts: 1_800_000_000_005 } as PayloadMetadata,
+    plaintext: new TextEncoder().encode("bold ✓"),
+    nonce: nonceOf(200),
+    html: new TextEncoder().encode("<b>bold</b> ✓"),
+    altNonce: nonceOf(220),
+  },
+];
+
+const alternativeVectors = await Promise.all(
+  alternativeInputs.map(async (input) => {
+    const frame = await encryptPayload(input.metadata, input.plaintext, input.pairingSecret, input.nonce);
+    frame.alt = await encryptAlternative(frame, "text/html", input.html, input.pairingSecret, input.altNonce);
+    return {
+      name: input.name,
+      pairingSecret: input.pairingSecret,
+      plaintextBase64: Buffer.from(input.plaintext).toString("base64"),
+      altPlaintextBase64: Buffer.from(input.html).toString("base64"),
+      frame,
+    };
+  }),
 );
 
 const pairingProofVectors = await Promise.all(
@@ -177,6 +204,6 @@ const sealVectors = sealInputs.map((input) => {
 const outPath = new URL("crypto-fixtures.json", import.meta.url).pathname;
 await Bun.write(
   outPath,
-  `${JSON.stringify({ payloadVectors, pairingProofVectors, sessionVectors, sealVectors }, null, 2)}\n`,
+  `${JSON.stringify({ payloadVectors, alternativeVectors, pairingProofVectors, sessionVectors, sealVectors }, null, 2)}\n`,
 );
 console.log(`wrote ${outPath}`);
