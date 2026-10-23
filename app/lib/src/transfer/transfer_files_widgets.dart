@@ -200,23 +200,20 @@ class _TransferRow extends StatelessWidget {
     final subtitle =
         '${_directionLabel(batch.direction)} · ${_bytes(size)} · '
         '${_timeLabel(context, batch.createdAtMs)}';
+    final sent = batch.direction == PhoneTransferDirection.sent;
     final failure = batch.files
         .where((file) => file.status == PhoneTransferStatus.failed)
         .firstOrNull;
     final radius = BorderRadius.circular(16);
+    // Plain rows; only a selected or failing one gets a tinted background.
+    final tinted = selected || _needsAttention(batch);
     return Material(
       color: selected
           ? scheme.secondaryContainer
-          : _needsAttention(batch)
+          : tinted
           ? status.background
-          : scheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: radius,
-        side: BorderSide(
-          color: selected ? scheme.primary : scheme.outlineVariant,
-          width: selected ? 1.6 : 1,
-        ),
-      ),
+          : Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: radius),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -244,13 +241,26 @@ class _TransferRow extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                    Row(
+                      children: [
+                        Icon(
+                          sent
+                              ? Icons.arrow_upward_rounded
+                              : Icons.arrow_downward_rounded,
+                          size: 14,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                      ],
                     ),
                     if (failure != null) ...[
                       const SizedBox(height: 5),
@@ -307,6 +317,51 @@ class _TransferRow extends StatelessWidget {
                       ),
                   ],
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RowDivider extends StatelessWidget {
+  const _RowDivider();
+
+  @override
+  Widget build(BuildContext context) =>
+      const Divider(height: 1, indent: 68, endIndent: 8);
+}
+
+/// The way into the laptop's folders, kept as a plain labelled row so it
+/// reads as a place to go rather than a filter.
+class _BrowseLaptopTile extends StatelessWidget {
+  const _BrowseLaptopTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.laptop_outlined, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  "Browse your laptop's folders",
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
             ],
           ),
         ),
@@ -544,14 +599,23 @@ class _BatchLeading extends StatelessWidget {
     }
     final kind = kinds.first;
     final first = files.first;
-    final path =
-        files.length == 1 && first.status == PhoneTransferStatus.completed
-        ? _thumbnailPath(first)
-        : null;
+    final single =
+        files.length == 1 &&
+        first.status == PhoneTransferStatus.completed &&
+        kind == FileKind.image;
+    final path = single ? _thumbnailPath(first) : null;
     return _FileTypeIcon(
       kind: kind,
-      imagePath: kind == FileKind.image ? path : null,
+      imagePath: path,
+      // A picture sent from the phone is only a content URI, not a path.
+      imageUri: single && path == null ? _thumbnailUri(first) : null,
+      imageSize: first.size,
     );
+  }
+
+  String? _thumbnailUri(PhoneTransferFile file) {
+    final uri = transferFileActionTarget(file)['uri'];
+    return uri is String && uri.isNotEmpty ? uri : null;
   }
 
   /// A readable file path for [file], or null when it is only a content URI.
@@ -562,11 +626,18 @@ class _BatchLeading extends StatelessWidget {
 }
 
 class _FileTypeIcon extends StatelessWidget {
-  const _FileTypeIcon({required this.kind, this.imagePath});
+  const _FileTypeIcon({
+    required this.kind,
+    this.imagePath,
+    this.imageUri,
+    this.imageSize = 0,
+  });
 
   /// Null stands for a mixed batch.
   final FileKind? kind;
   final String? imagePath;
+  final String? imageUri;
+  final int imageSize;
 
   @override
   Widget build(BuildContext context) {
@@ -577,6 +648,7 @@ class _FileTypeIcon extends StatelessWidget {
       size: 28,
     );
     final path = imagePath;
+    final uri = imageUri;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surface,
@@ -586,7 +658,17 @@ class _FileTypeIcon extends StatelessWidget {
       child: SizedBox(
         width: 48,
         height: 48,
-        child: path == null
+        child: path == null && uri != null && imageSize <= _uriThumbnailLimit
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: _UriThumbnail(
+                  key: ValueKey(uri),
+                  uri: uri,
+                  size: imageSize,
+                  fallback: icon,
+                ),
+              )
+            : path == null
             ? icon
             : ClipRRect(
                 borderRadius: BorderRadius.circular(11),
@@ -600,6 +682,75 @@ class _FileTypeIcon extends StatelessWidget {
                 ),
               ),
       ),
+    );
+  }
+}
+
+/// Larger pictures are not worth reading in full for a 48 px square.
+const _uriThumbnailLimit = 4 * 1024 * 1024;
+const _uriReadChunk = 1024 * 1024;
+
+/// A thumbnail for a file the phone sent from a content URI. The access to it
+/// may have been released, so any failure leaves the type icon.
+class _UriThumbnail extends StatefulWidget {
+  const _UriThumbnail({
+    super.key,
+    required this.uri,
+    required this.size,
+    required this.fallback,
+  });
+
+  final String uri;
+  final int size;
+  final Widget fallback;
+
+  @override
+  State<_UriThumbnail> createState() => _UriThumbnailState();
+}
+
+class _UriThumbnailState extends State<_UriThumbnail> {
+  Uint8List? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_read());
+  }
+
+  Future<void> _read() async {
+    final files = VidyutFiles();
+    final builder = BytesBuilder(copy: false);
+    try {
+      while (builder.length < widget.size) {
+        final chunk = await files.readSourceAt(
+          widget.uri,
+          offset: builder.length,
+          length: _uriReadChunk,
+        );
+        if (chunk.isEmpty) break;
+        builder.add(chunk);
+      }
+    } on Object {
+      return;
+    }
+    if (mounted && builder.length > 0) {
+      setState(() => _bytes = builder.takeBytes());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    if (bytes == null) return Center(child: widget.fallback);
+    return Image.memory(
+      bytes,
+      fit: BoxFit.cover,
+      width: 48,
+      height: 48,
+      cacheWidth: 144,
+      gaplessPlayback: true,
+      excludeFromSemantics: true,
+      errorBuilder: (_, _, _) => Center(child: widget.fallback),
     );
   }
 }

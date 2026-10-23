@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:vidyut_files/vidyut_files.dart';
@@ -46,6 +47,7 @@ class TransferFilesScreen extends StatefulWidget {
 
 class _TransferFilesScreenState extends State<TransferFilesScreen> {
   final _search = TextEditingController();
+  bool _searching = false;
   List<PhoneTransferBatch> _batches = const [];
   PhoneTransferDirection? _direction;
   _FilesFilter _filter = _FilesFilter.all;
@@ -278,22 +280,18 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         ? const Center(child: CircularProgressIndicator())
         : CustomScrollView(
             slivers: [
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                sliver: SliverToBoxAdapter(
-                  child: TextField(
-                    controller: _search,
-                    decoration: const InputDecoration(
-                      hintText: 'Search filenames',
-                      prefixIcon: Icon(Icons.search),
-                    ),
+              if (widget.onBrowseLaptop != null && !_searching)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: _BrowseLaptopTile(onTap: widget.onBrowseLaptop!),
                   ),
                 ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                sliver: SliverToBoxAdapter(child: _buildFilters()),
-              ),
+              if (_showFilterChips)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  sliver: SliverToBoxAdapter(child: _buildFilters()),
+                ),
               if (showEmpty)
                 SliverFillRemaining(
                   hasScrollBody: false,
@@ -322,20 +320,16 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                 if (active.isNotEmpty) ...[
                   _sectionHeader('Active'),
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                    sliver: SliverList.builder(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                    sliver: SliverList.separated(
                       itemCount: active.length,
-                      itemBuilder: (_, index) => Padding(
-                        padding: EdgeInsets.only(
-                          bottom: index == active.length - 1 ? 0 : 10,
-                        ),
-                        child: _TransferRow(
-                          batch: active[index],
-                          onRetry: null,
-                          onCancel: _cancelCallback(active[index]),
-                          onRemove: () => _remove(active[index]),
-                          onTap: () => _showBatchDetails(active[index]),
-                        ),
+                      separatorBuilder: (_, _) => const _RowDivider(),
+                      itemBuilder: (_, index) => _TransferRow(
+                        batch: active[index],
+                        onRetry: null,
+                        onCancel: _cancelCallback(active[index]),
+                        onRemove: () => _remove(active[index]),
+                        onTap: () => _showBatchDetails(active[index]),
                       ),
                     ),
                   ),
@@ -343,39 +337,35 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
                 for (final entry in groupedHistory.entries) ...[
                   _sectionHeader(entry.key),
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                    sliver: SliverList.builder(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                    sliver: SliverList.separated(
                       itemCount: entry.value.length,
+                      separatorBuilder: (_, _) => const _RowDivider(),
                       itemBuilder: (_, index) {
                         final batch = entry.value[index];
                         final canSelect = _canRemoveFromHistory(batch);
                         final openable = _openable(batch);
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            bottom: index == entry.value.length - 1 ? 0 : 10,
+                        return _TransferRow(
+                          batch: batch,
+                          onRetry: _retryCallback(batch),
+                          onCancel: _cancelCallback(batch),
+                          onRemove: () => _remove(batch),
+                          onOpenSettings: widget.onOpenSettings,
+                          onTap: selectionMode && canSelect
+                              ? () => _toggleSelection(batch)
+                              : openable != null
+                              ? () => unawaited(_open(openable))
+                              : () => _showBatchDetails(batch),
+                          onDetails: openable == null
+                              ? null
+                              : () => _showBatchDetails(batch),
+                          onLongPress: canSelect
+                              ? () => _toggleSelection(batch)
+                              : null,
+                          selected: _selectedTransferIds.contains(
+                            batch.transferId,
                           ),
-                          child: _TransferRow(
-                            batch: batch,
-                            onRetry: _retryCallback(batch),
-                            onCancel: _cancelCallback(batch),
-                            onRemove: () => _remove(batch),
-                            onOpenSettings: widget.onOpenSettings,
-                            onTap: selectionMode && canSelect
-                                ? () => _toggleSelection(batch)
-                                : openable != null
-                                ? () => unawaited(_open(openable))
-                                : () => _showBatchDetails(batch),
-                            onDetails: openable == null
-                                ? null
-                                : () => _showBatchDetails(batch),
-                            onLongPress: canSelect
-                                ? () => _toggleSelection(batch)
-                                : null,
-                            selected: _selectedTransferIds.contains(
-                              batch.transferId,
-                            ),
-                            selectionMode: selectionMode,
-                          ),
+                          selectionMode: selectionMode,
                         );
                       },
                     ),
@@ -385,104 +375,108 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
               ],
             ],
           );
-    return Scaffold(
-      appBar: _buildAppBar(selectionMode),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: selectionMode || _sending ? null : _chooseFiles,
-        icon: const Icon(Icons.add, size: 28),
-        label: const Text('Send files'),
-      ),
-      bottomNavigationBar: selectionMode ? _buildSelectionBar() : null,
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 600) return content;
-          return Row(
-            children: [
-              NavigationRail(
-                selectedIndex: 1,
-                onDestinationSelected: (index) {
-                  if (index == 0) widget.onOpenHome?.call();
-                },
-                labelType: NavigationRailLabelType.all,
-                groupAlignment: -0.8,
-                destinations: const [
-                  NavigationRailDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home),
-                    label: Text('Home'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.folder_outlined),
-                    selectedIcon: Icon(Icons.folder),
-                    label: Text('Files'),
-                  ),
-                ],
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 800),
-                    child: content,
+    return PopScope(
+      canPop: !_searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closeSearch();
+      },
+      child: Scaffold(
+        appBar: _buildAppBar(selectionMode),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: selectionMode || _sending ? null : _chooseFiles,
+          icon: const Icon(Icons.add, size: 28),
+          label: const Text('Send files'),
+        ),
+        bottomNavigationBar: selectionMode ? _buildSelectionBar() : null,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 600) return content;
+            return Row(
+              children: [
+                NavigationRail(
+                  selectedIndex: 1,
+                  onDestinationSelected: (index) {
+                    if (index == 0) widget.onOpenHome?.call();
+                  },
+                  labelType: NavigationRailLabelType.all,
+                  groupAlignment: -0.8,
+                  destinations: const [
+                    NavigationRailDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: Text('Home'),
+                    ),
+                    NavigationRailDestination(
+                      icon: Icon(Icons.folder_outlined),
+                      selectedIcon: Icon(Icons.folder),
+                      label: Text('Files'),
+                    ),
+                  ],
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 800),
+                      child: content,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
+  }
+
+  bool get _showFilterChips {
+    if (_filter != _FilesFilter.all) return true;
+    return _batches.any(_isActiveBatch) || _batches.any(_needsAttention);
+  }
+
+  void _openSearch() => setState(() => _searching = true);
+
+  void _closeSearch() {
+    _search.clear();
+    setState(() => _searching = false);
   }
 
   Widget _buildFilters() {
     final scheme = Theme.of(context).colorScheme;
     final active = _batches.where(_isActiveBatch).length;
     final attention = _batches.where(_needsAttention).length;
-    final narrowed = _direction != null || _dateFilter != _DateFilter.all;
-    return Row(
-      children: [
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _FilterButton(
-                  label: 'All · ${_batches.length}',
-                  selected: _filter == _FilesFilter.all,
-                  onTap: () => setState(() => _filter = _FilesFilter.all),
-                ),
-                const SizedBox(width: 8),
-                _FilterButton(
-                  label: 'Active · $active',
-                  selected: _filter == _FilesFilter.active,
-                  dotColor: VidyutStatusColors.of(context).active,
-                  onTap: () => setState(() => _filter = _FilesFilter.active),
-                ),
-                const SizedBox(width: 8),
-                _FilterButton(
-                  label: 'Needs attention · $attention',
-                  selected: _filter == _FilesFilter.needsAttention,
-                  dotColor: scheme.error,
-                  onTap: () =>
-                      setState(() => _filter = _FilesFilter.needsAttention),
-                ),
-              ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _FilterButton(
+            label: 'All · ${_batches.length}',
+            selected: _filter == _FilesFilter.all,
+            onTap: () => setState(() => _filter = _FilesFilter.all),
+          ),
+          if (active > 0 || _filter == _FilesFilter.active) ...[
+            const SizedBox(width: 8),
+            _FilterButton(
+              label: 'Active · $active',
+              selected: _filter == _FilesFilter.active,
+              dotColor: VidyutStatusColors.of(context).active,
+              onTap: () => setState(() => _filter = _FilesFilter.active),
             ),
-          ),
-        ),
-        // Pinned so it is never scrolled out of reach.
-        IconButton(
-          tooltip: 'Filter by direction or date',
-          onPressed: _showDirectionFilter,
-          isSelected: narrowed,
-          icon: Badge(
-            isLabelVisible: narrowed,
-            smallSize: 8,
-            child: const Icon(Icons.tune_outlined),
-          ),
-        ),
-      ],
+          ],
+          if (attention > 0 || _filter == _FilesFilter.needsAttention) ...[
+            const SizedBox(width: 8),
+            _FilterButton(
+              label: 'Needs attention · $attention',
+              selected: _filter == _FilesFilter.needsAttention,
+              dotColor: scheme.error,
+              onTap: () =>
+                  setState(() => _filter = _FilesFilter.needsAttention),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -640,15 +634,43 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
         ],
       );
     }
+    if (_searching) {
+      return AppBar(
+        leading: IconButton(
+          tooltip: 'Close search',
+          onPressed: _closeSearch,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: TextField(
+          controller: _search,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          decoration: const InputDecoration(
+            hintText: 'Search filenames',
+            border: InputBorder.none,
+          ),
+        ),
+        actions: [
+          if (_search.text.isNotEmpty)
+            IconButton(
+              tooltip: 'Clear search',
+              onPressed: _search.clear,
+              icon: const Icon(Icons.close),
+            ),
+          _filterIconButton(),
+        ],
+      );
+    }
     return AppBar(
       title: const Text('Files'),
       actions: [
-        if (widget.onBrowseLaptop != null)
-          TextButton.icon(
-            onPressed: widget.onBrowseLaptop,
-            icon: const Icon(Icons.laptop_outlined),
-            label: const Text('Laptop'),
+        if (_batches.isNotEmpty)
+          IconButton(
+            tooltip: 'Search filenames',
+            onPressed: _openSearch,
+            icon: const Icon(Icons.search),
           ),
+        if (_batches.isNotEmpty) _filterIconButton(),
         if (_batches.isNotEmpty)
           PopupMenuButton<String>(
             tooltip: 'More',
@@ -660,6 +682,20 @@ class _TransferFilesScreenState extends State<TransferFilesScreen> {
             ],
           ),
       ],
+    );
+  }
+
+  Widget _filterIconButton() {
+    final narrowed = _direction != null || _dateFilter != _DateFilter.all;
+    return IconButton(
+      tooltip: 'Filter by direction or date',
+      onPressed: _showDirectionFilter,
+      isSelected: narrowed,
+      icon: Badge(
+        isLabelVisible: narrowed,
+        smallSize: 8,
+        child: const Icon(Icons.tune_outlined),
+      ),
     );
   }
 

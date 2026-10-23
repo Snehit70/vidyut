@@ -21,7 +21,7 @@ class HomeScreen extends StatelessWidget {
     required this.onOpenSettings,
     required this.onOpenRecentActivity,
     required this.onOpenConnectionDetails,
-    required this.onSendFiles,
+    required this.onSendClipboard,
     this.setupBannerLabel,
     this.onOpenSetup,
   });
@@ -35,7 +35,7 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenRecentActivity;
   final VoidCallback onOpenConnectionDetails;
-  final VoidCallback onSendFiles;
+  final VoidCallback onSendClipboard;
   final String? setupBannerLabel;
   final VoidCallback? onOpenSetup;
 
@@ -91,10 +91,12 @@ class HomeScreen extends StatelessWidget {
               children: [
                 _SyncStatusPanel(state: state, onTap: onOpenConnectionDetails),
                 const SizedBox(height: 10),
+                // Files has its own entry in the nav, so the one action Home
+                // keeps is the one with no other way in: send what is copied.
                 FilledButton.icon(
-                  onPressed: onSendFiles,
-                  icon: const Icon(Icons.folder_outlined),
-                  label: const Text('Send files'),
+                  onPressed: onSendClipboard,
+                  icon: const Icon(Icons.content_paste_go_outlined),
+                  label: const Text('Send clipboard or link'),
                 ),
                 const SizedBox(height: 12),
                 if (laptopTelemetry != null) ...[
