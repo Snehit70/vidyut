@@ -26,10 +26,10 @@ access. The code is never kept in logs or Activity.
 _Avoid_: OTP sync, SMS forwarding, notification mirroring
 
 **Shared folder**:
-A laptop folder the phone may browse and pull files from (ADR 0026). Set in
-`sharedFolders` in the relay config. Read-only: the phone lists and takes,
-and hidden files and symlinks are never shown. A pull becomes an ordinary
-laptop → phone Transfer.
+A laptop folder the phone may browse and pull files from (ADR 0026). Chosen
+in the desktop shell and kept as `sharedFolders` in the relay config.
+Read-only: the phone lists and takes, and hidden files and symlinks are never
+shown. A pull becomes an ordinary laptop → phone Transfer.
 _Avoid_: remote file system, network share, sync folder
 
 **Preview**:
