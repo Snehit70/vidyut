@@ -174,6 +174,25 @@ Files are transferred only over the paired LAN connection. Interrupted
 transfers retain receiver-confirmed progress and complete files are verified
 with SHA-256 before they become visible.
 
+### Pull files from the laptop
+
+In **Files**, tap the laptop icon to browse the laptop's shared folders. Tap
+a folder to open it, and the download button on a row to pull that file or
+the whole folder. Long-press to pick several. The download button in the top
+bar pulls the folder you are in. Pulled files arrive like any laptop send, in
+`Downloads/Vidyut`, and a pulled folder keeps its subfolders.
+
+The laptop shares Desktop, Documents, Downloads, Music, Pictures and Videos
+by default. Hidden files and symlinks are never shared. To change the list,
+edit `sharedFolders` in `~/.config/vidyut/relay.json` (absolute paths; `[]`
+turns browsing off) and restart the relay:
+
+```bash
+systemctl --user restart vidyut-relay
+```
+
+One pull is at most 1000 files (ADR 0026).
+
 ## Linux updates
 
 There is no auto-update. A newer GitHub release is an `.rpm` or `.deb`
