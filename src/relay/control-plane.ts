@@ -16,9 +16,14 @@ import {
   type SetupStatusReader,
 } from "./setup-status";
 import type { ClipboardHealth } from "./clipboard-sync";
+import { maxPauseMinutes, type ClipboardPause } from "./clipboard-pause";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
 
-export type DesktopSyncState = "ready" | "sync_needs_attention" | "relay_down";
+export type DesktopSyncState =
+  | "ready"
+  | "sync_paused"
+  | "sync_needs_attention"
+  | "relay_down";
 
 export interface ControlPoolMeta {
   type: PayloadFrame["type"];
@@ -53,6 +58,7 @@ export interface ControlPlaneContext {
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
   setupStatus?: SetupStatusReader;
+  clipboardPause?: ClipboardPause;
 }
 
 export function isControlPath(pathname: string): boolean {
@@ -93,6 +99,12 @@ export async function handleControlRequest(
   }
   if (request.method === "POST" && path === "/control/v1/rotate-secret") {
     return rotatePairingSecret(context);
+  }
+  if (request.method === "POST" && path === "/control/v1/clipboard/pause") {
+    return pauseClipboard(request, context);
+  }
+  if (request.method === "POST" && path === "/control/v1/clipboard/resume") {
+    return resumeClipboard(request, context);
   }
   if (request.method === "GET" && path === "/control/v1/transfers") {
     return Response.json(context.transferSnapshot?.() ?? { v: 1, batches: [] });
@@ -139,8 +151,13 @@ export function controlState(context: ControlPlaneContext): ControlState {
     port: context.port,
     pairingSecret: pairingSecretValue(context.pairingSecret),
     manual: pairingManualLine(pairing),
+    // A broken watcher outranks a pause: resuming would not fix it.
     syncState:
-      clipboard?.status === "degraded" ? "sync_needs_attention" : "ready",
+      clipboard?.status === "degraded"
+        ? "sync_needs_attention"
+        : clipboard?.paused
+          ? "sync_paused"
+          : "ready",
     clipboard,
     authenticatedDeviceCount: context.authenticatedDeviceCount(),
     pool: payload
@@ -193,10 +210,7 @@ async function enqueueTransfers(
   if (!context.enqueueLaptopFiles) {
     return Response.json({ code: "enqueue_unavailable" }, { status: 503 });
   }
-  // A JSON content type cannot be sent cross-site without a CORS preflight,
-  // which the Relay never answers. text/plain could be.
-  const contentType = request.headers.get("content-type") ?? "";
-  if (!/^application\/json\s*(;|$)/i.test(contentType)) {
+  if (!isJsonRequest(request)) {
     return Response.json({ code: "unsupported_media_type" }, { status: 415 });
   }
   let body: unknown;
@@ -229,6 +243,65 @@ async function enqueueTransfers(
       { status: 400 },
     );
   }
+}
+
+/**
+ * A JSON content type cannot be sent cross-site without a CORS preflight,
+ * which the Relay never answers. text/plain could be.
+ */
+function isJsonRequest(request: Request): boolean {
+  const contentType = request.headers.get("content-type") ?? "";
+  return /^application\/json\s*(;|$)/i.test(contentType);
+}
+
+/** Body `{minutes?}`: whole minutes up to a day, or omitted to pause until resumed. */
+async function pauseClipboard(
+  request: Request,
+  context: ControlPlaneContext,
+): Promise<Response> {
+  const pause = context.clipboardPause;
+  if (!pause) {
+    return Response.json({ code: "pause_unavailable" }, { status: 503 });
+  }
+  if (!isJsonRequest(request)) {
+    return Response.json({ code: "unsupported_media_type" }, { status: 415 });
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ code: "invalid_json" }, { status: 400 });
+  }
+  const minutes =
+    body && typeof body === "object" && "minutes" in body
+      ? (body as { minutes: unknown }).minutes
+      : undefined;
+  if (
+    minutes !== undefined &&
+    (typeof minutes !== "number" ||
+      !Number.isInteger(minutes) ||
+      minutes < 1 ||
+      minutes > maxPauseMinutes)
+  ) {
+    return Response.json({ code: "invalid_minutes" }, { status: 400 });
+  }
+  pause.pause(minutes === undefined ? undefined : minutes * 60_000);
+  return Response.json(controlState(context));
+}
+
+async function resumeClipboard(
+  request: Request,
+  context: ControlPlaneContext,
+): Promise<Response> {
+  const pause = context.clipboardPause;
+  if (!pause) {
+    return Response.json({ code: "pause_unavailable" }, { status: 503 });
+  }
+  if (!isJsonRequest(request)) {
+    return Response.json({ code: "unsupported_media_type" }, { status: 415 });
+  }
+  pause.resume();
+  return Response.json(controlState(context));
 }
 
 /**

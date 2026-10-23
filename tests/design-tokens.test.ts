@@ -509,6 +509,27 @@ describe("desktop shell behaviour guards", () => {
     expect(shellCss).toContain("max-width: 880px; margin-inline: auto;");
   });
 
+  test("a paused clipboard renders Resume in place of the pause options", () => {
+    const tag = (html: string, id: string) => html.match(new RegExp(`<[^>]*id="${id}"[^>]*>`))?.[0] ?? "";
+    const paused = desktopShellHtml({
+      relayName: "Vidyut Relay",
+      host: "192.168.1.4",
+      port: 17321,
+      pairingSecret: "s3cret",
+      manual: "host=192.168.1.4 port=17321 secret=s3cret",
+      syncState: "sync_paused",
+      authenticatedDeviceCount: 1,
+      clipboard: { paused: true },
+    });
+
+    expect(tag(paused, "banner")).not.toContain("hidden");
+    expect(tag(paused, "banner-resume")).not.toContain("hidden");
+    expect(tag(paused, "pause-resume-row")).not.toContain("hidden");
+    expect(tag(paused, "pause-options")).toContain("hidden");
+    expect(tag(shellHtml, "banner-resume")).toContain("hidden");
+    expect(tag(shellHtml, "pause-options")).not.toContain("hidden");
+  });
+
   test("an unrecognised sync state is not reported as Ready", () => {
     // Ready means a live connection and a healthy watcher, so a state this
     // window does not know must not resolve to it. This evaluates the real
@@ -528,6 +549,7 @@ describe("desktop shell behaviour guards", () => {
 
     expect(statusCopyFor("ready").label).toBe("Ready");
     expect(statusCopyFor("sync_needs_attention").label).toBe("Sync needs attention");
+    expect(statusCopyFor("sync_paused").label).toBe("Sync paused");
     expect(statusCopyFor("relay_down").label).toBe("Relay down");
 
     for (const unknown of ["degraded", "paused", "", "toString", "__proto__", "READY"]) {

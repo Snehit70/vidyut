@@ -36,6 +36,7 @@ import {
   type TransferControlMessage,
 } from "../shared/wire";
 import type { ClipboardHealth } from "./clipboard-sync";
+import type { ClipboardPause } from "./clipboard-pause";
 import { sampleLaptopTelemetry } from "./telemetry";
 
 interface RelayOptions {
@@ -55,6 +56,7 @@ interface RelayOptions {
   transferSnapshot?: () => unknown;
   enqueueLaptopFiles?: (paths: string[]) => Promise<unknown>;
   setupStatus?: SetupStatusReader;
+  clipboardPause?: ClipboardPause;
   transferControl?: (
     message: TransferControlMessage,
     sourceDeviceId: string,
@@ -258,6 +260,9 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           }),
           ...(options.enqueueLaptopFiles && {
             enqueueLaptopFiles: options.enqueueLaptopFiles,
+          }),
+          ...(options.clipboardPause && {
+            clipboardPause: options.clipboardPause,
           }),
           setupStatus: options.setupStatus ?? setupStatusReader,
         });

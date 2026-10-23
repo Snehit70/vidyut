@@ -72,6 +72,8 @@ exactly one terminal event).
 | `clipboard_published` | info | `type`, `mime`, `bytes`, `nonce`, `frameTs` | local clipboard change encrypted + published (start of laptop→phone leg) |
 | `clipboard_write` | info | `type`, `mime`, `bytes`, `nonce`, `frameTs`, `e2eMs` (`Date.now() − frameTs`) | remote frame decrypted and written to Wayland clipboard |
 | `clipboard_write_failed` | error | `nonce`, `frameTs`, `stage` (`decrypt` \| `write`), `error` | currently swallowed by `Promise.allSettled` — must be caught and logged |
+| `clipboard_skipped_paused` | info | `direction` (`publish` \| `write`), `nonce?`, `frameTs?` | a change or an incoming frame ignored because sync is paused |
+| `clipboard_paused` / `clipboard_resumed` | info | `until?` / `reason` (`resumed` \| `expired`) | `ClipboardPause` changes (`clipboard-pause.ts`) |
 
 `clipboard_write.e2eMs` **is** the phone→laptop bar measurement: origin capture to laptop
 clipboard, one line per screenshot.

@@ -10,6 +10,7 @@ import {
 } from "../src/relay/config";
 import { getLanIPv4Addresses } from "../src/relay/network";
 import { createRelay, type RelayHandle } from "../src/relay/relay";
+import { ClipboardPause, withPause } from "../src/relay/clipboard-pause";
 import { encryptPayload } from "../src/shared/crypto";
 
 const secret = "pairing-secret-CONTROL-PLANE-xyz";
@@ -325,6 +326,65 @@ describe("relay loopback control plane", () => {
     expect(remote.status).toBe(404);
     expect(await remote.text()).not.toContain(secret);
     expect(seen).toHaveLength(1);
+  });
+
+  test("POST /control/v1/clipboard/pause and resume drive the pause and report it", async () => {
+    const pause = new ClipboardPause({ now: () => 1_800_000_000_000 });
+    const handle = await startRelay({
+      clipboardPause: pause,
+      clipboardHealth: () =>
+        withPause({ enabled: true, status: "healthy", watcher: "wl-paste --watch" }, pause),
+    });
+    const post = (path: string, body: unknown, host = "127.0.0.1") =>
+      fetchPath(handle, host, path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const timed = await post("/control/v1/clipboard/pause", { minutes: 15 });
+    expect(timed.status).toBe(200);
+    expect(await timed.json()).toMatchObject({
+      syncState: "sync_paused",
+      clipboard: { paused: true, pausedUntil: 1_800_000_000_000 + 15 * 60_000 },
+    });
+
+    const open = await post("/control/v1/clipboard/pause", {});
+    expect((await open.json()).clipboard).toEqual({
+      enabled: true,
+      status: "healthy",
+      watcher: "wl-paste --watch",
+      paused: true,
+    });
+
+    for (const minutes of [0, 1.5, 24 * 60 + 1, "15"]) {
+      const bad = await post("/control/v1/clipboard/pause", { minutes });
+      expect(bad.status, `minutes ${JSON.stringify(minutes)}`).toBe(400);
+    }
+    const plainText = await fetchPath(handle, "127.0.0.1", "/control/v1/clipboard/resume", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(plainText.status).toBe(415);
+    expect((await post("/control/v1/clipboard/resume", {}, lanClientHost())).status).toBe(404);
+    expect(pause.paused).toBe(true);
+
+    const resumed = await post("/control/v1/clipboard/resume", {});
+    expect(await resumed.json()).toMatchObject({ syncState: "ready" });
+    expect(pause.paused).toBe(false);
+  });
+
+  test("a degraded watcher outranks a pause in the sync state", async () => {
+    const pause = new ClipboardPause({ now: Date.now });
+    pause.pause();
+    const handle = await startRelay({
+      clipboardPause: pause,
+      clipboardHealth: () => withPause({ enabled: true, status: "degraded", error: "no wl-paste" }, pause),
+    });
+    const state = await (await fetchPath(handle, "127.0.0.1", "/control/v1/state")).json();
+    expect(state.syncState).toBe("sync_needs_attention");
+    expect(state.clipboard.paused).toBe(true);
   });
 
   test("GET /control/v1/setup returns laptop setup status rows on loopback only", async () => {

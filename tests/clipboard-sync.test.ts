@@ -114,6 +114,44 @@ describe("clipboard sync", () => {
     stop();
   });
 
+  test("neither publishes nor writes while paused, and syncs again after", async () => {
+    const pool = new PayloadPool();
+    const clipboard = new FakeClipboard();
+    let paused = true;
+    const stop = startClipboardSync({
+      clipboard,
+      pool,
+      pairingSecret: "pairing-secret",
+      origin: "laptop",
+      now: () => 1_800_000_020_020,
+      isPaused: () => paused,
+    });
+    const text = (value: string): ClipboardPayload => ({
+      type: "text",
+      mime: "text/plain",
+      data: new TextEncoder().encode(value),
+    });
+
+    await clipboard.changeTo(text("private"));
+    await pool.publish(
+      await encryptPayload(
+        { type: "text", mime: "text/plain", origin: "phone", ts: 1_800_000_020_019 },
+        new TextEncoder().encode("from phone"),
+        "pairing-secret",
+      ),
+    );
+    await Bun.sleep(5);
+    expect(clipboard.writes).toEqual([]);
+    expect(pool.current?.origin).toBe("phone");
+
+    paused = false;
+    await clipboard.changeTo(text("shared"));
+    expect(pool.current?.origin).toBe("laptop");
+    expect(await decryptPayload(pool.current!, "pairing-secret")).toEqual(new TextEncoder().encode("shared"));
+
+    stop();
+  });
+
   test("drops the change its own incoming write provokes, by content", async () => {
     const pool = new PayloadPool();
     const clipboard = new FakeClipboard();

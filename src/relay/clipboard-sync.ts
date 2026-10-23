@@ -20,6 +20,10 @@ export interface ClipboardHealth {
   status: "starting" | "healthy" | "degraded" | "disabled";
   watcher?: string;
   error?: string;
+  /** The user paused clipboard sync on this laptop (ClipboardPause). */
+  paused?: boolean;
+  /** Relay-clock epoch ms when the pause lifts; absent while paused until resumed. */
+  pausedUntil?: number;
 }
 
 interface ClipboardSyncOptions {
@@ -37,6 +41,8 @@ interface ClipboardSyncOptions {
    * dependency. Omitted, a link still reaches the clipboard and nothing opens.
    */
   openLink?: (url: string) => Promise<void>;
+  /** While true, copies here are not published and payloads are not written. */
+  isPaused?: () => boolean;
 }
 
 // Long enough for wl-paste --watch to report the write it just saw, short
@@ -53,6 +59,10 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
 
   const stopWatching = options.clipboard.watch(
     async () => {
+      if (options.isPaused?.()) {
+        logger.info("clipboard_skipped_paused", { direction: "publish" });
+        return;
+      }
       try {
         const payload = await options.clipboard.read();
         if (!payload) return;
@@ -122,6 +132,14 @@ export function startClipboardSync(options: ClipboardSyncOptions): () => void {
 
   const unsubscribe = options.pool.subscribe((frame, source) => {
     if (source === options.origin || frame.origin === options.origin) return;
+    if (options.isPaused?.()) {
+      logger.info("clipboard_skipped_paused", {
+        direction: "write",
+        nonce: frame.nonce,
+        frameTs: frame.ts,
+      });
+      return;
+    }
     // Do not await the Wayland write on the pool publish path. A stuck
     // wl-copy/magick would otherwise hold the phone's ack and freeze the
     // relay socket until the service is restarted.

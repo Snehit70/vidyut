@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { BunProcessRunner, createWaylandClipboardAdapter } from "./clipboard";
 import { startClipboardSync, type ClipboardHealth } from "./clipboard-sync";
+import { ClipboardPause, withPause } from "./clipboard-pause";
 import { loadOrCreateRelayConfig, writeRelayConfig, type LogLevel } from "./config";
 import { createLogger } from "./logger";
 import { startMdnsAdvertisement } from "./mdns";
@@ -73,6 +74,11 @@ const transferQueue = await TransferQueue.open({
   ),
 });
 let relay: Awaited<ReturnType<typeof createRelay>>;
+const clipboardPause = new ClipboardPause({
+  now: Date.now,
+  logger,
+  onChange: () => relay.publishHealth(),
+});
 const receiverProgressSessions = new ReceiverProgressSessions();
 const transferCoordinator = new TransferCoordinator({
   queue: transferQueue,
@@ -102,7 +108,8 @@ relay = await createRelay({
   maxPayloadBytes,
   logger,
   relayName,
-  clipboardHealth: () => clipboardHealth,
+  clipboardHealth: () => withPause(clipboardHealth, clipboardPause),
+  clipboardPause,
   persistPairingSecret: async (secret) => {
     config.pairingSecret = secret;
     await writeRelayConfig(options.configPath, config);
@@ -127,6 +134,7 @@ const stopClipboard = options.clipboard
       origin: config.deviceId,
       now: Date.now,
       logger,
+      isPaused: () => clipboardPause.paused,
       // Reuses the same process runner type the clipboard adapter uses, so a
       // link launch and a clipboard write are bounded the same way and a hung
       // browser cannot stall the relay.
@@ -161,6 +169,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
     logger.info("relay_stopping", { signal });
     stopClipboard();
+    clipboardPause.stop();
     stopMdns();
     await relay.stop();
     process.exit(0);

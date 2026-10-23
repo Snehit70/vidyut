@@ -25,6 +25,8 @@ export interface RelayHealth {
     status: "starting" | "healthy" | "degraded" | "disabled";
     watcher?: string;
     error?: string;
+    paused?: boolean;
+    pausedUntil?: number;
   };
 }
 

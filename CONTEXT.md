@@ -214,3 +214,11 @@ _Avoid_: connected only, online, synced
 The user-facing Home state in which the phone remains connected but automatic
 clipboard synchronization is degraded or requires recovery.
 _Avoid_: Needs attention, offline, failed
+
+**Sync paused**:
+The state in which the user has chosen to stop automatic clipboard
+synchronization for a while (15 minutes, an hour, or until resumed). On the
+laptop, copies are not published and incoming payloads are not written. File
+transfers are unaffected. A degraded watcher still reports Sync needs
+attention, because resuming would not fix it.
+_Avoid_: disabled, off, offline

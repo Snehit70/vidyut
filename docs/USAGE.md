@@ -100,6 +100,21 @@ Everything else lives behind the **gear icon → Settings**.
 
 ---
 
+## Pausing clipboard sync
+
+About to copy a password, or just want the two clipboards apart for a while?
+Pause sync on the laptop. In the desktop window, open **Relay → Clipboard sync**
+and pick **15 min**, **1 hour** or **Until I resume**. From the tray, choose
+**Pause clipboard for 1 hour**.
+
+While it is paused, nothing you copy on the laptop is sent, and nothing the
+phone sends is written to the laptop clipboard. File transfers keep running.
+The status reads **Sync paused**, and **Resume** is one click from the banner
+or the tray. A timed pause lifts by itself. A pause also ends when the relay
+restarts, so a reboot never leaves sync quietly off.
+
+---
+
 ## When something's off
 
 - **Is the relay fine?** One curl from the laptop answers it:

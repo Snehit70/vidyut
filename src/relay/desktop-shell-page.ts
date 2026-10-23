@@ -6,8 +6,9 @@ export interface DesktopShellState {
   port: number;
   pairingSecret: string;
   manual: string;
-  syncState: "ready" | "sync_needs_attention" | "relay_down";
+  syncState: "ready" | "sync_paused" | "sync_needs_attention" | "relay_down";
   authenticatedDeviceCount: number;
+  clipboard?: { paused?: boolean; pausedUntil?: number } | undefined;
 }
 
 interface StatusCopy {
@@ -23,6 +24,12 @@ const STATUS_COPY: Record<DesktopShellState["syncState"], StatusCopy> = {
     detail: "Automatic clipboard sync is ready between your devices.",
     icon: "sync",
     tone: "good",
+  },
+  sync_paused: {
+    label: "Sync paused",
+    detail: "Clipboard sync is paused on this laptop. Files still move.",
+    icon: "pauseCircle",
+    tone: "warn",
   },
   sync_needs_attention: {
     label: "Sync needs attention",
@@ -55,6 +62,7 @@ export function desktopShellHtml(state: DesktopShellState): string {
   const status = STATUS_COPY[state.syncState];
   const endpoint = `${state.host}:${state.port}`;
   const banner = status.tone === "good";
+  const paused = state.clipboard?.paused === true;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -90,6 +98,7 @@ export function desktopShellHtml(state: DesktopShellState): string {
     <div class="banner" id="banner" role="status" aria-live="polite"${banner ? " hidden" : ""}>
       <svg class="icon" viewBox="0 0 24 24" focusable="false" aria-hidden="true"><use href="#i-${status.icon}" id="status-icon"/></svg>
       <p id="status-detail">${escapeHtml(status.detail)}</p>
+      <button type="button" class="btn outlined" id="banner-resume"${paused ? "" : " hidden"}>Resume</button>
     </div>
 
     <div class="body">
@@ -205,6 +214,18 @@ export function desktopShellHtml(state: DesktopShellState): string {
             <button type="button" class="btn outlined danger" id="stop-relay" disabled>Stop relay</button>
           </div>
           <p class="note">Closing this window does not stop the Relay. Stop relay is the only thing that does.</p>
+        </section>
+        <section class="block">
+          <h3>Clipboard sync</h3>
+          <p id="pause-summary">${paused ? "Paused. Files still move." : "Pausing stops this laptop sending what you copy and taking what the phone sends. Files still move."}</p>
+          <div class="btn-row" id="pause-options"${paused ? " hidden" : ""}>
+            <button type="button" class="btn outlined" data-pause-minutes="15">Pause 15 min</button>
+            <button type="button" class="btn outlined" data-pause-minutes="60">Pause 1 hour</button>
+            <button type="button" class="btn outlined" data-pause-minutes="">Until I resume</button>
+          </div>
+          <div class="btn-row" id="pause-resume-row"${paused ? "" : " hidden"}>
+            <button type="button" class="btn filled" id="pause-resume">Resume clipboard sync</button>
+          </div>
         </section>
         <section class="block">
           <h3>Updates</h3>
@@ -439,7 +460,8 @@ h1 {
   flex: none;
 }
 body[data-sync="ready"] .status-dot { background: var(--success); }
-body[data-sync="sync_needs_attention"] .status-dot { background: var(--warning); }
+body[data-sync="sync_needs_attention"] .status-dot,
+body[data-sync="sync_paused"] .status-dot { background: var(--warning); }
 body[data-sync="relay_down"] .status-dot { background: var(--error); }
 body[data-sync="relay_down"] .status { color: var(--text-error); }
 
@@ -457,6 +479,7 @@ body[data-sync="relay_down"] .status { color: var(--text-error); }
 }
 .banner .icon { color: var(--warning); font-size: 20px; }
 .banner p { margin: 0; }
+.banner .btn { margin-left: auto; flex: none; }
 body[data-sync="relay_down"] .banner { background: var(--surface-card); }
 body[data-sync="relay_down"] .banner .icon { color: var(--error); }
 
@@ -805,8 +828,9 @@ function shellScript(): string {
     document.body.setAttribute("data-sync", copy === STATUS.relay_down ? "relay_down" : next.syncState);
     setText("status-label", copy.label);
     $("status-icon").setAttribute("href", "#i-" + copy.icon);
-    setText("status-detail", copy.detail);
+    setText("status-detail", pauseDetail(next, copy));
     $("banner").hidden = copy.tone === "good";
+    renderPause(next, copy);
     setAllText("relay-name", next.relayName);
     setAllText("endpoint", next.host + ":" + next.port);
     setAllText("devices", String(next.authenticatedDeviceCount));
@@ -817,6 +841,55 @@ function shellScript(): string {
     if (next.pairingSecret !== lastSecret) {
       lastSecret = next.pairingSecret;
       $("qr").src = "/control/v1/qr.svg?v=" + encodeURIComponent(next.pairingSecret);
+    }
+  }
+
+  function pausedUntil(next) {
+    var until = next.clipboard && next.clipboard.pausedUntil;
+    return typeof until === "number" ? new Date(until) : null;
+  }
+
+  function untilText(date) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function pauseDetail(next, copy) {
+    if (copy !== STATUS.sync_paused) return copy.detail;
+    var until = pausedUntil(next);
+    return until
+      ? "Clipboard sync is paused until " + untilText(until) + ". Files still move."
+      : "Clipboard sync is paused until you resume it. Files still move.";
+  }
+
+  // A degraded watcher reports needs-attention even while paused, so the
+  // controls follow the clipboard fields rather than the headline state.
+  function renderPause(next, copy) {
+    var paused = copy !== STATUS.relay_down && !!(next.clipboard && next.clipboard.paused);
+    $("banner-resume").hidden = !paused;
+    $("pause-options").hidden = paused;
+    $("pause-resume-row").hidden = !paused;
+    var until = pausedUntil(next);
+    setText("pause-summary", paused
+      ? (until ? "Paused until " + untilText(until) + "." : "Paused until you resume it.") + " Files still move."
+      : "Pausing stops this laptop sending what you copy and taking what the phone sends. Files still move.");
+  }
+
+  async function postJson(path, body) {
+    var response = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {})
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    return response.json();
+  }
+
+  async function resumeClipboard() {
+    try {
+      renderState(await postJson("/control/v1/clipboard/resume"));
+      snack("Clipboard sync resumed.");
+    } catch (err) {
+      snack("Clipboard sync was not resumed.");
     }
   }
 
@@ -1172,6 +1245,20 @@ function shellScript(): string {
       snack("The pairing secret was not rotated.");
     }
   });
+
+  $("pause-options").addEventListener("click", async function (event) {
+    var button = event.target.closest("[data-pause-minutes]");
+    if (!button) return;
+    var minutes = button.getAttribute("data-pause-minutes");
+    try {
+      renderState(await postJson("/control/v1/clipboard/pause", minutes ? { minutes: Number(minutes) } : {}));
+      snack("Clipboard sync paused.");
+    } catch (err) {
+      snack("Clipboard sync was not paused.");
+    }
+  });
+  $("pause-resume").addEventListener("click", resumeClipboard);
+  $("banner-resume").addEventListener("click", resumeClipboard);
 
   $("open-releases").addEventListener("click", function (event) {
     if (!hasShell()) return;
