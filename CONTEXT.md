@@ -40,6 +40,13 @@ never downloads the file to draw it. Name search belongs to the same browser
 and matches names only.
 _Avoid_: thumbnail sync, remote preview
 
+**Screen mirror**:
+The phone's screen shown live in a window on the laptop (ADR 0030). View
+only: no input and no audio. The phone streams sealed H.264 over a one-time
+WebSocket ticket the relay hands out, and mpv or ffplay draws it. Closing
+the window or tapping Stop on the phone ends it.
+_Avoid_: screen share, remote control, casting
+
 **Link**:
 A Payload that is a single web address. The laptop writes it to the clipboard
 exactly as it would any text and additionally opens it in a browser, so the

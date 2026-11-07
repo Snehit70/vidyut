@@ -213,6 +213,18 @@ nothing.
 
 One pull is at most 1000 files (ADR 0026).
 
+## Mirror the phone screen
+
+In **Settings → Connection**, tap **Mirror screen** and allow Android's
+capture prompt. A window opens on the laptop with the phone's screen. It is
+view-only: you cannot tap the phone from the laptop, and there is no sound.
+
+To stop, close the window, tap **Stop** in the phone notification, or tap
+**Mirror screen** again. The laptop needs `mpv` (or `ffplay` from ffmpeg);
+the `.rpm` and `.deb` recommend `mpv`. Turning the phone sideways letterboxes
+the picture until you start the mirror again. The window's Wayland app id is
+`vidyut-screen`, if you want a compositor rule for it (ADR 0030).
+
 ## Linux updates
 
 There is no auto-update. A newer GitHub release is an `.rpm` or `.deb`
