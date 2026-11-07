@@ -22,6 +22,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import android.view.Display
 import java.nio.ByteBuffer
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -57,6 +58,12 @@ class ScreenMirrorService : Service() {
 
     @Volatile
     private var stopping = false
+
+    // Set on the main thread when the phone turns; the encoder thread then
+    // rebuilds the encoder at the new shape.
+    @Volatile
+    private var rotated = false
+    private var displayListener: DisplayManager.DisplayListener? = null
 
     private val queue = ArrayBlockingQueue<Frame>(QUEUE_FRAMES)
 
@@ -112,6 +119,7 @@ class ScreenMirrorService : Service() {
         }, main)
 
         val size = EncoderSize.pick(this)
+        watchRotation(size.width > size.height)
         worker = Thread({ stream(projection, size, url, key) }, "vidyut-mirror-encoder").apply { start() }
         return START_NOT_STICKY
     }
@@ -122,7 +130,7 @@ class ScreenMirrorService : Service() {
         super.onDestroy()
     }
 
-    private fun stream(projection: MediaProjection, size: EncoderSize, url: String, key: ByteArray) {
+    private fun stream(projection: MediaProjection, first: EncoderSize, url: String, key: ByteArray) {
         val socket = MirrorSocket(url) { reason -> main.post { finish(reason) } }
         try {
             socket.connect(CONNECT_TIMEOUT_MS)
@@ -139,7 +147,80 @@ class ScreenMirrorService : Service() {
             return
         }
 
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
+        // One encoder per screen shape. When the phone turns, the virtual
+        // display moves to a fresh encoder of the new shape; the player picks
+        // up the new size from the keyframe that follows.
+        var size = first
+        var codec: MediaCodec? = null
+        var display: VirtualDisplay? = null
+        var streaming = false
+        try {
+            while (!stopping) {
+                val current = display
+                if (current != null) {
+                    current.setSurface(null)
+                    codec?.let(::releaseCodec)
+                    codec = null
+                    this.encoder = null
+                    current.resize(size.width, size.height, size.densityDpi)
+                }
+                val fresh = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                codec = fresh
+                fresh.configure(encoderFormat(size), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                val surface = fresh.createInputSurface()
+                fresh.start()
+                this.encoder = fresh
+                if (current == null) {
+                    display = projection.createVirtualDisplay(
+                        "vidyut-screen",
+                        size.width,
+                        size.height,
+                        size.densityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        surface,
+                        null,
+                        null,
+                    )
+                    this.display = display
+                } else {
+                    current.setSurface(surface)
+                }
+                if (stopping) break
+                if (!streaming) {
+                    streaming = true
+                    sender = Thread({ send(socket, key) }, "vidyut-mirror-sender").apply { start() }
+                    report(mapOf("state" to "streaming", "width" to size.width, "height" to size.height))
+                }
+                try {
+                    drain(fresh)
+                } catch (_: IllegalStateException) {
+                    // The encoder was released by a stop.
+                }
+                if (!stopping && rotated) {
+                    rotated = false
+                    // Frames queued at the old shape would show at the wrong size.
+                    queue.clear()
+                    size = EncoderSize.pick(this)
+                    Log.i(TAG, "screen turned; encoding at ${size.width}x${size.height}")
+                }
+            }
+        } catch (error: Exception) {
+            // A stop during setup also lands here, from the stopped projection.
+            releaseLocal(display, codec, socket)
+            if (!stopping) {
+                Log.w(TAG, "mirror encoder failed", error)
+                main.post { fail("This phone could not encode its screen.") }
+            }
+            return
+        }
+        if (stopping) {
+            // Stopped while the encoder was set up; release() may have missed it.
+            releaseLocal(display, codec, socket)
+        }
+    }
+
+    private fun encoderFormat(size: EncoderSize): MediaFormat =
+        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, size.bitRate)
             setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
@@ -151,47 +232,37 @@ class ScreenMirrorService : Service() {
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
             }
         }
-        var encoder: MediaCodec? = null
-        var display: VirtualDisplay? = null
-        try {
-            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            encoder = codec
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            val surface = codec.createInputSurface()
-            codec.start()
-            this.encoder = codec
-            display = projection.createVirtualDisplay(
-                "vidyut-screen",
-                size.width,
-                size.height,
-                size.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                surface,
-                null,
-                null,
-            )
-            this.display = display
-        } catch (error: Exception) {
-            // A stop during setup also lands here, from the stopped projection.
-            if (!stopping) Log.w(TAG, "mirror encoder failed", error)
-            releaseLocal(display, encoder, socket)
-            if (!stopping) main.post { fail("This phone could not encode its screen.") }
-            return
-        }
 
-        if (stopping) {
-            // Stopped while the encoder was set up; release() may have missed it.
-            releaseLocal(display, encoder, socket)
-            return
-        }
-        val codec = encoder ?: return
-        sender = Thread({ send(socket, key) }, "vidyut-mirror-sender").apply { start() }
-        report(mapOf("state" to "streaming", "width" to size.width, "height" to size.height))
+    private fun releaseCodec(codec: MediaCodec) {
         try {
-            drain(codec)
-        } catch (_: IllegalStateException) {
-            // The encoder was released by a stop.
+            codec.stop()
+        } catch (_: Exception) {
         }
+        try {
+            codec.release()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Flags a rebuild when the phone turns between portrait and landscape. */
+    private fun watchRotation(startLandscape: Boolean) {
+        var landscape = startLandscape
+        val listener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+
+            override fun onDisplayRemoved(displayId: Int) {}
+
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId != Display.DEFAULT_DISPLAY || stopping) return
+                val now = EncoderSize.isLandscape(this@ScreenMirrorService)
+                if (now != landscape) {
+                    landscape = now
+                    rotated = true
+                }
+            }
+        }
+        getSystemService(DisplayManager::class.java).registerListener(listener, main)
+        displayListener = listener
     }
 
     /** Releases what the encoder thread made. Safe to repeat after release(). */
@@ -212,7 +283,7 @@ class ScreenMirrorService : Service() {
         val info = MediaCodec.BufferInfo()
         var config: ByteArray? = null
         var waitingForKeyframe = false
-        while (!stopping) {
+        while (!stopping && !rotated) {
             val index = try {
                 encoder.dequeueOutputBuffer(info, 100_000L)
             } catch (_: IllegalStateException) {
@@ -306,6 +377,8 @@ class ScreenMirrorService : Service() {
         stopping = true
         running = false
         sender?.interrupt()
+        displayListener?.let { getSystemService(DisplayManager::class.java).unregisterListener(it) }
+        displayListener = null
         // Closing sends a close frame, which is network I/O.
         socket?.let { open -> Thread(open::close, "vidyut-mirror-close").start() }
         try {

@@ -47,6 +47,16 @@ internal data class EncoderSize(val width: Int, val height: Int, val densityDpi:
             }
         }
 
+        /** Whether the phone's screen is wider than it is tall right now. */
+        @Suppress("DEPRECATION")
+        fun isLandscape(context: Context): Boolean {
+            val metrics = DisplayMetrics()
+            context.getSystemService(DisplayManager::class.java)
+                .getDisplay(Display.DEFAULT_DISPLAY)
+                .getRealMetrics(metrics)
+            return metrics.widthPixels > metrics.heightPixels
+        }
+
         /** Encoders want sides that are multiples of 16. */
         private fun align(side: Double): Int = max(16, (side / 16).toInt() * 16)
     }
