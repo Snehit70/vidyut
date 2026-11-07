@@ -27,6 +27,7 @@ import {
   ReceiverProgressSessions,
 } from "../transfer/laptop-data-plane";
 import { preferredTransferChunkBytes } from "../transfer/transfer-chunk-policy";
+import { ScreenMirror } from "./screen-mirror";
 
 interface CliOptions {
   host: string;
@@ -135,6 +136,7 @@ relay = await createRelay({
     transferCoordinator.handleDeviceConnected(deviceId, publishControl),
   transferHttp: transferDataPlane.handle.bind(transferDataPlane),
   sharedFolders,
+  screen: new ScreenMirror({ logger }),
   browse: (request) =>
     answerBrowse(
       request,
