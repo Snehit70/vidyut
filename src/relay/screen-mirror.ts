@@ -57,7 +57,7 @@ interface Session {
   phase: "waiting" | "claimed" | "streaming" | "ended";
   timer?: ReturnType<typeof setTimeout>;
   player?: PlayerProcess;
-  closeSocket?: CloseSocket;
+  closeSocket?: CloseSocket | undefined;
   startedAt?: number;
   records: number;
 }

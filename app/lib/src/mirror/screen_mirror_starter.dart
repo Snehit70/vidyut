@@ -4,7 +4,7 @@ import 'package:screen_mirror/screen_mirror.dart';
 
 import '../pairing/pairing_code.dart';
 import '../shared/relay_connection.dart';
-import '../transfer/phone_transfer_types.dart';
+import '../transfer/phone_transfer_sender.dart';
 
 /// How a tap on "Mirror screen" ended.
 sealed class ScreenMirrorOutcome {

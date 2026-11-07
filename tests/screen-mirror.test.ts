@@ -254,8 +254,8 @@ describe("relay screen mirror", () => {
     const key = new Uint8Array(Buffer.from(ready.key, "base64"));
 
     const stream = await openStream(relay.url, ready.streamId);
-    stream.send(sealScreenRecord(key, 0n, Buffer.from("frame-0")));
-    stream.send(sealScreenRecord(key, 1n, Buffer.from("frame-1")));
+    stream.send(new Uint8Array(sealScreenRecord(key, 0n, Buffer.from("frame-0"))));
+    stream.send(new Uint8Array(sealScreenRecord(key, 1n, Buffer.from("frame-1"))));
     for (let i = 0; i < 50 && (players[0]?.written.length ?? 0) < 2; i++) await Bun.sleep(10);
     expect(players[0]!.written.map(String)).toEqual(["frame-0", "frame-1"]);
 
