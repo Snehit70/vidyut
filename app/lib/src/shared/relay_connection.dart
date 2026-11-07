@@ -149,6 +149,9 @@ const browseFilesFeature = 'browse_files';
 /// on the last PUT (ADR 0029).
 const deferredFileHashFeature = 'deferred_file_hash';
 
+/// The laptop can show the phone screen in a window (ADR 0030).
+const screenMirrorFeature = 'screen_mirror';
+
 class RelayConnection implements RelaySession {
   RelayConnection({
     required this.pairing,
@@ -187,6 +190,7 @@ class RelayConnection implements RelaySession {
   final _telemetry = StreamController<LaptopTelemetry>.broadcast();
   final _transferControls = StreamController<Map<String, Object?>>.broadcast();
   final _browseResults = StreamController<Map<String, Object?>>.broadcast();
+  final _screenReplies = StreamController<Map<String, Object?>>.broadcast();
   StreamSubscription<Object?>? _subscription;
   int? _maxPayloadBytes;
   Set<String> _relayFeatures = const {};
@@ -217,10 +221,18 @@ class RelayConnection implements RelaySession {
   Stream<Map<String, Object?>> get transferControls => _transferControls.stream;
   Stream<Map<String, Object?>> get browseResults => _browseResults.stream;
 
+  /// `screen_ready` and `screen_failed` answers to [sendScreenStart].
+  Stream<Map<String, Object?>> get screenReplies => _screenReplies.stream;
+
   /// Whether this session can browse the laptop's shared folders: the relay
   /// shares some, and the session is sealed, since listings carry filenames.
   bool get canBrowse =>
       _sealer != null && _relayFeatures.contains(browseFilesFeature);
+
+  /// Whether the laptop can show this phone's screen. The stream key comes
+  /// back in the answer, so the session must be sealed.
+  bool get canMirrorScreen =>
+      _sealer != null && _relayFeatures.contains(screenMirrorFeature);
 
   /// True when this Relay's hello listed [deferredFileHashFeature], so a
   /// send can skip the pre-offer whole-file hash.
@@ -318,6 +330,15 @@ class RelayConnection implements RelaySession {
     _send(message);
   }
 
+  /// Asks the laptop for a screen stream of [width] x [height]. Only when
+  /// [canMirrorScreen].
+  void sendScreenStart({required int width, required int height}) {
+    if (!canMirrorScreen) {
+      throw StateError('This session cannot mirror the screen.');
+    }
+    _send({'v': 1, 'kind': 'screen_start', 'width': width, 'height': height});
+  }
+
   /// Sends [message], sealed when the session negotiated sealed control and
   /// the message is not a payload frame.
   void _send(Map<String, Object?> message) {
@@ -361,6 +382,7 @@ class RelayConnection implements RelaySession {
     await _guardedClose(_telemetry.close());
     await _guardedClose(_transferControls.close());
     await _guardedClose(_browseResults.close());
+    await _guardedClose(_screenReplies.close());
   }
 
   Future<void> _guardedClose(Future<void>? step) async {
@@ -459,6 +481,8 @@ class RelayConnection implements RelaySession {
         _transferControls.add(message);
       case 'browse_result':
         _browseResults.add(message);
+      case 'screen_ready' || 'screen_failed':
+        _screenReplies.add(message);
       case 'error':
         final code = message['code'];
         final detail = message['message'];

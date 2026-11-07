@@ -24,6 +24,7 @@ import 'src/foreground/send_clipboard_screen.dart';
 import 'src/foreground/service_relay_controller.dart'
     show serviceClipboardPauseCommand, serviceTelemetryCommand;
 import 'src/home/home_screen.dart';
+import 'src/mirror/screen_mirror_starter.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';
 import 'src/onboarding/setup_checklist_screen.dart';

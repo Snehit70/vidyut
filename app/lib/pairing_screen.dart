@@ -731,6 +731,7 @@ class _PairingScreenState extends State<PairingScreen>
           updateChecker: GithubUpdateChecker(owner: 'Snehit70', repo: 'vidyut'),
           files: const VidyutFiles(),
           onBrowseLaptop: () => unawaited(_openLaptopFiles()),
+          onMirrorScreen: () => unawaited(_toggleScreenMirror()),
         ),
       ),
     );
@@ -779,6 +780,32 @@ class _PairingScreenState extends State<PairingScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _toggleScreenMirror() async {
+    final pairing = await widget.pairingRepository.load();
+    if (pairing == null || !mounted) return;
+    final ScreenMirrorOutcome outcome;
+    try {
+      outcome = await ScreenMirrorStarter(
+        pairing: pairing,
+        connectionFactory: widget.relayConnectionFactory,
+      ).toggle();
+    } catch (error) {
+      _debugLog.add('mirror', 'Screen mirror failed: $error', isError: true);
+      if (mounted) _showSnack('Could not mirror the screen.');
+      return;
+    }
+    final message = switch (outcome) {
+      ScreenMirrorShowing() => 'Showing this screen on the laptop.',
+      ScreenMirrorEnded() => 'Stopped mirroring the screen.',
+      ScreenMirrorDeclined() => null,
+      ScreenMirrorProblem(:final message) => message,
+    };
+    if (outcome is ScreenMirrorProblem) {
+      _debugLog.add('mirror', outcome.message, isError: true);
+    }
+    if (message != null && mounted) _showSnack(message);
   }
 
   Future<void> _runTransferFileAction(

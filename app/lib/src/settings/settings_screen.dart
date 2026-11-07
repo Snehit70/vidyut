@@ -38,6 +38,7 @@ class SettingsScreen extends StatefulWidget {
     this.pairedDeviceName,
     this.pairedDeviceAddress,
     this.onBrowseLaptop,
+    this.onMirrorScreen,
   });
 
   final AppSettings settings;
@@ -46,6 +47,10 @@ class SettingsScreen extends StatefulWidget {
   /// Opens the laptop's shared folders (ADR 0026); the "Laptop folders" row is
   /// hidden when null or when no laptop is paired.
   final VoidCallback? onBrowseLaptop;
+
+  /// Starts or stops the phone screen in a laptop window (ADR 0030); the
+  /// "Mirror screen" row is hidden when null or when no laptop is paired.
+  final VoidCallback? onMirrorScreen;
 
   /// Feeds the "Setup status" row and its summary chip (onboarding spec D8);
   /// the row is hidden when null (widget tests without platform channels).
@@ -442,6 +447,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: widget.onBrowseLaptop,
+                ),
+              if (widget.paired && widget.onMirrorScreen != null)
+                ListTile(
+                  contentPadding: _rowPadding,
+                  title: const Text('Mirror screen'),
+                  subtitle: const Text(
+                    'Show this phone\'s screen in a window on the laptop. '
+                    'Tap again to stop.',
+                  ),
+                  trailing: const Icon(Icons.cast),
+                  onTap: widget.onMirrorScreen,
                 ),
               if (canForget)
                 ListTile(
