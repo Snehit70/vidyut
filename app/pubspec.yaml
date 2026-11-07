@@ -57,6 +57,8 @@ dependencies:
     path: packages/vidyut_files
   screenshot_observer:
     path: packages/screenshot_observer
+  screen_mirror:
+    path: packages/screen_mirror
   clipboard_autosend:
     path: packages/clipboard_autosend
 dev_dependencies:

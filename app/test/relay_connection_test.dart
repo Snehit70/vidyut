@@ -622,6 +622,47 @@ void main() {
       expect(unsealed.canBrowse, isFalse);
     });
 
+    test('asks for a screen mirror only when the relay offers one', () async {
+      final mirroring = connect();
+      final replies = <Map<String, Object?>>[];
+      mirroring.screenReplies.listen(replies.add);
+      await mirroring.start();
+      final relay = (await handshake(
+        relayFeatures: const ['relay_proof', 'sealed_control', 'screen_mirror'],
+      ))!;
+      expect(mirroring.canMirrorScreen, isTrue);
+
+      mirroring.sendScreenStart(width: 1080, height: 2400);
+      await pumpEventQueue();
+      expect(await relay.open(sent.last), {
+        'v': 1,
+        'kind': 'screen_start',
+        'width': 1080,
+        'height': 2400,
+      });
+
+      transport.receive(
+        await relay.seal({
+          'v': 1,
+          'kind': 'screen_ready',
+          'streamId': 'abcdefghijklmnopqrstuvwx',
+          'key': 'a2V5',
+        }),
+      );
+      await pumpEventQueue();
+      expect(replies.single['streamId'], 'abcdefghijklmnopqrstuvwx');
+      expect(statuses.last, ConnectionStatus.connected);
+
+      final older = connect();
+      await older.start();
+      await handshake();
+      expect(older.canMirrorScreen, isFalse);
+      expect(
+        () => older.sendScreenStart(width: 1080, height: 2400),
+        throwsStateError,
+      );
+    });
+
     test('drops an unsealed control message on a sealed session', () async {
       final connection = connect();
       final telemetry = <LaptopTelemetry>[];

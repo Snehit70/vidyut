@@ -108,6 +108,8 @@ overrides:
       # Thumbnails in the phone's laptop browser (ADR 0027).
       - ffmpegthumbnailer
       - poppler-utils
+      # Shows the phone screen (ADR 0030).
+      - mpv
   rpm:
     depends:
       - wl-clipboard
@@ -123,3 +125,5 @@ overrides:
       # Thumbnails in the phone's laptop browser (ADR 0027).
       - ffmpegthumbnailer
       - poppler-utils
+      # Shows the phone screen (ADR 0030).
+      - mpv

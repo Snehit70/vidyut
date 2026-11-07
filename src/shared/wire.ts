@@ -183,6 +183,7 @@ export type RelayMessage =
   | { v: 1; kind: "telemetry_subscribe"; active: boolean }
   | BrowseRequest
   | BrowseResult
+  | ScreenMessage
   | SealedMessage
   | { v: 1; kind: "error"; code: string; message: string };
 
@@ -262,6 +263,43 @@ export type BrowseResult = {
   requestId: string;
 } & BrowseAnswer;
 
+/**
+ * The phone's screen in a laptop window (ADR 0030). On a sealed session the
+ * phone asks with `screen_start`, giving the size it will encode. The relay
+ * answers `screen_ready` with a one-time stream id and a fresh AES-256 key,
+ * base64, or `screen_failed`. The phone then opens a WebSocket to
+ * `/screen/v1/<streamId>` and sends sealed H.264 records on it.
+ */
+export type ScreenMessage =
+  | { v: 1; kind: "screen_start"; width: number; height: number }
+  | { v: 1; kind: "screen_ready"; streamId: string; key: string }
+  | { v: 1; kind: "screen_failed"; code: string; message: string };
+
+/** The longest side the phone may encode, in pixels. */
+export const maxScreenSide = 4096;
+
+export function isScreenStart(
+  value: unknown,
+): value is Extract<ScreenMessage, { kind: "screen_start" }> {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Record<string, unknown>;
+  return (
+    message.v === 1 &&
+    message.kind === "screen_start" &&
+    isScreenSide(message.width) &&
+    isScreenSide(message.height)
+  );
+}
+
+function isScreenSide(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 16 &&
+    value <= maxScreenSide
+  );
+}
+
 /** Any other message, AES-256-GCM sealed under the session key (ADR 0023). */
 export interface SealedMessage {
   v: 1;
@@ -276,6 +314,8 @@ export type RelayFeature =
   | "browse_files"
   /** Phone may offer an unknown digest and send the real one on the last PUT. */
   | "deferred_file_hash"
+  /** The laptop can show the phone's screen in a window (ADR 0030). */
+  | "screen_mirror"
   | SessionFeature;
 
 /** Features negotiated per session and covered by `relayProof`. */

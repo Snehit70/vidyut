@@ -32,6 +32,7 @@ import {
   isBrowseKind,
   isBrowseRequest,
   isPayloadFrame,
+  isScreenStart,
   isTransferControlMessage,
   type BrowseAnswer,
   type BrowseRequest,
@@ -46,6 +47,8 @@ import {
 import type { ClipboardHealth } from "./clipboard-sync";
 import type { ClipboardPause } from "./clipboard-pause";
 import { sampleLaptopTelemetry } from "./telemetry";
+import type { ScreenMirror, ScreenStream } from "./screen-mirror";
+import { maxScreenRecordBytes } from "../shared/screen-seal";
 
 interface RelayOptions {
   hostname: string;
@@ -82,6 +85,8 @@ interface RelayOptions {
   telemetry?: () => Promise<LaptopTelemetry>;
   /** Answers the phone reading the laptop's shared folders (ADR 0026). */
   browse?: (request: BrowseRequest) => Promise<BrowseAnswer>;
+  /** Shows the phone's screen in a laptop window (ADR 0030). */
+  screen?: ScreenMirror;
 }
 
 const defaultHeartbeatIntervalMs = 30_000;
@@ -103,6 +108,9 @@ interface DeviceSocketData {
   authTimer?: ReturnType<typeof setTimeout>;
   /** Set once `sealed_control` is negotiated; every later control message goes through it. */
   sealer?: SessionSealer;
+  /** Set on a screen mirror socket, which carries video records and nothing else. */
+  screenStreamId?: string;
+  screen?: ScreenStream;
 }
 
 type RelaySocket = Bun.ServerWebSocket<DeviceSocketData>;
@@ -198,22 +206,36 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         });
         return new Response("Forbidden", { status: 403 });
       }
-      if (
-        bunServer.upgrade(request, {
-          data: {
-            connId: randomConnId(),
-            remote: address ? `${address.address}:${address.port}` : "unknown",
-            challenge: randomBase64(24),
-            authenticated: false,
-            telemetrySubscribed: false,
-            connectedAt: now,
-            lastSeen: now,
-          },
-        })
-      ) {
+      const socketData: DeviceSocketData = {
+        connId: randomConnId(),
+        remote: address ? `${address.address}:${address.port}` : "unknown",
+        challenge: randomBase64(24),
+        authenticated: false,
+        telemetrySubscribed: false,
+        connectedAt: now,
+        lastSeen: now,
+      };
+      const pathname = new URL(request.url).pathname;
+      if (pathname.startsWith(screenPathPrefix)) {
+        // The stream id was handed out on a sealed session, so holding it is
+        // the proof; each id admits one socket.
+        const streamId = pathname.slice(screenPathPrefix.length);
+        if (
+          request.headers.get("upgrade")?.toLowerCase() !== "websocket" ||
+          !options.screen?.claim(streamId)
+        ) {
+          return Response.json({ code: "screen_not_found" }, { status: 404 });
+        }
+        if (bunServer.upgrade(request, { data: { ...socketData, screenStreamId: streamId } })) {
+          return undefined;
+        }
+        // The ticket is spent, so drop the mirror it was for.
+        options.screen?.stop();
+        return Response.json({ code: "screen_upgrade_failed" }, { status: 400 });
+      }
+      if (bunServer.upgrade(request, { data: socketData })) {
         return undefined;
       }
-      const pathname = new URL(request.url).pathname;
       const isLoopback = isLoopbackAddress(address?.address);
       if (pathname.startsWith("/transfer/v1/")) {
         const response = await options.transferHttp?.(request, {
@@ -259,6 +281,8 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             for (const socket of devices) {
               socket.close(1008, "pairing_secret_rotated");
             }
+            // Its key was handed out under the old secret.
+            options.screen?.stop();
           },
           ...(options.clipboardHealth && {
             clipboardHealth: options.clipboardHealth,
@@ -289,8 +313,23 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       // socket (1006) for anything over ~12 MiB of plaintext. Size the cap from
       // maxPayloadBytes so an over-limit frame reaches the payload_too_large
       // check below instead.
-      maxPayloadLength: websocketMessageLimit(options.maxPayloadBytes),
+      maxPayloadLength: Math.max(
+        websocketMessageLimit(options.maxPayloadBytes),
+        maxScreenRecordBytes + websocketEnvelopeBytes,
+      ),
       open(socket) {
+        const screenStreamId = socket.data.screenStreamId;
+        if (screenStreamId !== undefined) {
+          const stream = options.screen?.attach(screenStreamId, (code, reason) =>
+            socket.close(code, reason),
+          );
+          if (!stream) {
+            socket.close(1008, "screen_not_found");
+            return;
+          }
+          socket.data.screen = stream;
+          return;
+        }
         devices.add(socket);
         logger.info("device_connected", { connId: socket.data.connId, remote: socket.data.remote });
         socket.data.authTimer = setTimeout(() => {
@@ -307,11 +346,21 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           kind: "hello",
           challenge: socket.data.challenge,
           maxPayloadBytes: options.maxPayloadBytes,
-          features: options.browse ? [...relayFeatures, "browse_files"] : [...relayFeatures],
+          features: [
+            ...relayFeatures,
+            ...(options.browse ? (["browse_files"] as const) : []),
+            ...(options.screen ? (["screen_mirror"] as const) : []),
+          ],
         });
       },
       async message(socket, rawMessage) {
         socket.data.lastSeen = Date.now();
+        if (socket.data.screenStreamId !== undefined) {
+          if (typeof rawMessage === "string" || !socket.data.screen?.receive(rawMessage)) {
+            socket.close(1008, "bad_record");
+          }
+          return;
+        }
         let message = parseMessage(rawMessage);
         if (!message) {
           sendError(logger, socket, "bad_message", "Message must be valid JSON.");
@@ -374,6 +423,11 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
 
         if (isBrowseKind(message.kind)) {
           await answerBrowse(logger, socket, message, options.browse);
+          return;
+        }
+
+        if (message.kind === "screen_start") {
+          answerScreenStart(socket, message, options.screen);
           return;
         }
 
@@ -456,6 +510,10 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         socket.data.lastSeen = Date.now();
       },
       close(socket, wsCode, wsReason) {
+        if (socket.data.screenStreamId !== undefined) {
+          socket.data.screen?.closed();
+          return;
+        }
         clearTimeout(socket.data.authTimer);
         // A reaped socket was already removed by the heartbeat sweep and got
         // its socket_reaped terminal event; skip it so each connection ends
@@ -511,6 +569,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
       clearInterval(heartbeat);
       clearInterval(telemetryInterval);
       unsubscribe();
+      options.screen?.stop();
       server.stop(true);
       devices.clear();
     },
@@ -528,6 +587,8 @@ function senderClockOffset(sentAt: unknown): number {
 }
 
 const websocketEnvelopeBytes = 64 * 1024;
+
+const screenPathPrefix = "/screen/v1/";
 
 export function websocketMessageLimit(maxPayloadBytes: number): number {
   return Math.ceil(maxPayloadBytes / 3) * 4 + websocketEnvelopeBytes;
@@ -773,6 +834,34 @@ async function answerBrowse(
       error: error instanceof Error ? error.message : String(error),
     });
     reply({ ok: false, code: "browse_failed", message: "The laptop could not read that." });
+  }
+}
+
+function answerScreenStart(
+  socket: RelaySocket,
+  message: unknown,
+  screen: ScreenMirror | undefined,
+): void {
+  const fail = (code: string, text: string) =>
+    send(socket, { v: 1, kind: "screen_failed", code, message: text });
+  // The reply carries the stream key, so it travels sealed or not at all.
+  if (!socket.data.sealer) {
+    fail("seal_required", "Update Vidyut on the phone to mirror its screen.");
+    return;
+  }
+  if (!screen) {
+    fail("screen_unavailable", "This laptop cannot show the phone screen.");
+    return;
+  }
+  if (!isScreenStart(message)) {
+    fail("bad_request", "The screen mirror request was malformed.");
+    return;
+  }
+  const answer = screen.start(socket.data.deviceId ?? "unknown", message.width, message.height);
+  if (answer.ok) {
+    send(socket, { v: 1, kind: "screen_ready", streamId: answer.streamId, key: answer.key });
+  } else {
+    fail(answer.code, answer.message);
   }
 }
 
