@@ -261,7 +261,7 @@ class ScreenMirrorService : Service() {
                 }
             }
         }
-        getSystemService(DisplayManager::class.java).registerListener(listener, main)
+        getSystemService(DisplayManager::class.java).registerDisplayListener(listener, main)
         displayListener = listener
     }
 
@@ -377,7 +377,7 @@ class ScreenMirrorService : Service() {
         stopping = true
         running = false
         sender?.interrupt()
-        displayListener?.let { getSystemService(DisplayManager::class.java).unregisterListener(it) }
+        displayListener?.let { getSystemService(DisplayManager::class.java).unregisterDisplayListener(it) }
         displayListener = null
         // Closing sends a close frame, which is network I/O.
         socket?.let { open -> Thread(open::close, "vidyut-mirror-close").start() }
