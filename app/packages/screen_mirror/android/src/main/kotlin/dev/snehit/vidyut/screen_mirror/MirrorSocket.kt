@@ -10,6 +10,8 @@ import java.net.Socket
 import java.net.URI
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * A send-mostly WebSocket client for the mirror stream (ADR 0030).
@@ -28,7 +30,7 @@ internal class MirrorSocket(
     private val socket = Socket()
     private lateinit var output: BufferedOutputStream
     private lateinit var input: InputStream
-    private val writeLock = Any()
+    private val writeLock = ReentrantLock()
 
     @Volatile
     private var closed = false
@@ -88,17 +90,32 @@ internal class MirrorSocket(
         sendFrame(OPCODE_BINARY, payload)
     }
 
+    /**
+     * Closes the stream. Safe before [connect] has finished and from any
+     * thread. The close frame is only a courtesy: when the sender is stuck
+     * on a full socket, the socket is closed without it, so a dead network
+     * cannot hold this up.
+     */
     fun close() {
         if (closed) return
-        try {
-            sendFrame(OPCODE_CLOSE, byteArrayOf(0x03, 0xE8.toByte()))
-        } catch (_: IOException) {
-            // The socket is already gone.
+        if (::output.isInitialized && writeLock.tryLock()) {
+            try {
+                writeFrame(OPCODE_CLOSE, byteArrayOf(0x03, 0xE8.toByte()))
+            } catch (_: IOException) {
+                // The socket is already gone.
+            } finally {
+                writeLock.unlock()
+            }
         }
         finish("phone_stopped")
     }
 
     private fun sendFrame(opcode: Int, payload: ByteArray) {
+        writeLock.withLock { writeFrame(opcode, payload) }
+    }
+
+    /** Writes one masked frame. The caller holds [writeLock]. */
+    private fun writeFrame(opcode: Int, payload: ByteArray) {
         if (closed) throw IOException("The mirror stream is closed.")
         val mask = ByteArray(4).also(random::nextBytes)
         val length = payload.size
@@ -119,12 +136,10 @@ internal class MirrorSocket(
         }
         val masked = ByteArray(length)
         for (i in 0 until length) masked[i] = (payload[i].toInt() xor mask[i and 3].toInt()).toByte()
-        synchronized(writeLock) {
-            output.write(header)
-            output.write(mask)
-            output.write(masked)
-            output.flush()
-        }
+        output.write(header)
+        output.write(mask)
+        output.write(masked)
+        output.flush()
     }
 
     private fun readLoop() {

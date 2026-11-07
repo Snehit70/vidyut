@@ -68,10 +68,16 @@ interface Session {
  */
 export function findScreenPlayer(
   which: (command: string) => string | null = Bun.which,
+  listMpvOptions: (mpv: string) => string = mpvOptions,
   title = "Vidyut · phone screen",
 ): ScreenPlayer | undefined {
   const mpv = which("mpv");
   if (mpv) {
+    // mpv exits on an option it does not know, and --wayland-app-id is new
+    // in 0.36; older ones get mpv's own app id.
+    const appId = listMpvOptions(mpv).includes("--wayland-app-id")
+      ? [`--wayland-app-id=${screenAppId}`]
+      : [];
     return {
       name: "mpv",
       command: [
@@ -93,7 +99,7 @@ export function findScreenPlayer(
         "--audio=no",
         "--autofit-larger=90%x85%",
         `--title=${title}`,
-        `--wayland-app-id=${screenAppId}`,
+        ...appId,
         "-",
       ],
       env: {},
@@ -132,6 +138,29 @@ export function findScreenPlayer(
   return undefined;
 }
 
+const mpvOptionLists = new Map<string, string>();
+
+/** `mpv --list-options`, read once per binary. */
+function mpvOptions(mpv: string): string {
+  let list = mpvOptionLists.get(mpv);
+  if (list === undefined) {
+    try {
+      list = Bun.spawnSync([mpv, "--no-config", "--list-options"], { stderr: "ignore" }).stdout.toString();
+    } catch {
+      list = "";
+    }
+    mpvOptionLists.set(mpv, list);
+  }
+  return list;
+}
+
+/**
+ * How far the player may fall behind before it is stopped: a few seconds of
+ * the fastest stream. Past this the window shows the past, and the relay
+ * would only buffer more.
+ */
+const maxPlayerBacklogBytes = 8 * 1024 * 1024;
+
 export const launchPlayer: LaunchPlayer = (player) => {
   const child = Bun.spawn(player.command, {
     stdin: "pipe",
@@ -139,20 +168,47 @@ export const launchPlayer: LaunchPlayer = (player) => {
     stderr: "ignore",
     env: { ...process.env, ...player.env },
   });
+  let exited = false;
+  let backlog = 0;
+  void child.exited.then(() => {
+    exited = true;
+  });
+  // Once the window is closed the pipe is gone; a write or flush that fails
+  // then must not become an unhandled rejection, which would end the relay.
+  const settle = (result: number | Promise<number> | undefined, bytes: number) => {
+    if (result instanceof Promise) {
+      result.then(
+        (flushed) => {
+          backlog = Math.max(0, backlog - (flushed || bytes));
+        },
+        () => undefined,
+      );
+    } else {
+      backlog = Math.max(0, backlog - bytes);
+    }
+  };
+  const stop = () => {
+    try {
+      settle(child.stdin.end(), 0);
+    } catch {
+      // already closed
+    }
+    child.kill();
+  };
   return {
     write(bytes) {
+      if (exited) return;
+      backlog += bytes.byteLength;
+      if (backlog > maxPlayerBacklogBytes) {
+        // Its exit ends the session.
+        stop();
+        return;
+      }
       child.stdin.write(bytes);
-      void child.stdin.flush();
+      settle(child.stdin.flush(), bytes.byteLength);
     },
     exited: child.exited,
-    kill() {
-      try {
-        child.stdin.end();
-      } catch {
-        // already closed
-      }
-      child.kill();
-    },
+    kill: stop,
   };
 };
 

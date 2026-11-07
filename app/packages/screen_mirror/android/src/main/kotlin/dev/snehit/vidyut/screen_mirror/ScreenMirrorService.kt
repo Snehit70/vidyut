@@ -42,8 +42,15 @@ import javax.crypto.spec.SecretKeySpec
 class ScreenMirrorService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private var projection: MediaProjection? = null
+
+    // Set on the encoder thread, released from the main thread.
+    @Volatile
     private var display: VirtualDisplay? = null
+
+    @Volatile
     private var encoder: MediaCodec? = null
+
+    @Volatile
     private var socket: MirrorSocket? = null
     private var worker: Thread? = null
     private var sender: Thread? = null
@@ -64,24 +71,28 @@ class ScreenMirrorService : Service() {
         }
         if (projection != null || intent == null) return START_NOT_STICKY
 
-        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-        val data = projectionData(intent)
-        val url = intent.getStringExtra(EXTRA_URL)
-        val key = intent.getStringExtra(EXTRA_KEY)?.let { Base64.decode(it, Base64.NO_WRAP) }
-        if (data == null || url == null || key == null || key.size != 32) {
-            report(mapOf("state" to "failed", "message" to "The mirror request was incomplete."))
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        // Android 14 wants the service in the foreground before the token
-        // is turned into a projection.
+        // Started with startForegroundService, so the service must go to the
+        // foreground even to report a bad request. Android 14 also wants it
+        // there before the token is turned into a projection.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(NOTIFICATION_ID, notification())
         }
         running = true
+
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+        val data = projectionData(intent)
+        val url = intent.getStringExtra(EXTRA_URL)
+        val key = try {
+            intent.getStringExtra(EXTRA_KEY)?.let { Base64.decode(it, Base64.NO_WRAP) }
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        if (data == null || url == null || key == null || key.size != 32) {
+            fail("The mirror request was incomplete.")
+            return START_NOT_STICKY
+        }
 
         val manager = getSystemService(MediaProjectionManager::class.java)
         val projection = try {
@@ -117,10 +128,16 @@ class ScreenMirrorService : Service() {
             socket.connect(CONNECT_TIMEOUT_MS)
         } catch (error: Exception) {
             Log.w(TAG, "mirror connect failed", error)
+            socket.close()
             main.post { fail("Could not reach the laptop to mirror the screen.") }
             return
         }
         this.socket = socket
+        if (stopping) {
+            // Stopped while connecting; release() ran before the socket existed.
+            socket.close()
+            return
+        }
 
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -134,13 +151,15 @@ class ScreenMirrorService : Service() {
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
             }
         }
-        val encoder: MediaCodec
+        var encoder: MediaCodec? = null
+        var display: VirtualDisplay? = null
         try {
-            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            val surface = encoder.createInputSurface()
-            encoder.start()
-            this.encoder = encoder
+            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            encoder = codec
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            val surface = codec.createInputSurface()
+            codec.start()
+            this.encoder = codec
             display = projection.createVirtualDisplay(
                 "vidyut-screen",
                 size.width,
@@ -151,34 +170,41 @@ class ScreenMirrorService : Service() {
                 null,
                 null,
             )
+            this.display = display
         } catch (error: Exception) {
-            Log.w(TAG, "mirror encoder failed", error)
-            main.post { fail("This phone could not encode its screen.") }
+            // A stop during setup also lands here, from the stopped projection.
+            if (!stopping) Log.w(TAG, "mirror encoder failed", error)
+            releaseLocal(display, encoder, socket)
+            if (!stopping) main.post { fail("This phone could not encode its screen.") }
             return
         }
 
         if (stopping) {
-            // Stopped while the encoder was set up; release what was made here.
-            main.post { releaseLate(encoder, socket) }
+            // Stopped while the encoder was set up; release() may have missed it.
+            releaseLocal(display, encoder, socket)
             return
         }
+        val codec = encoder ?: return
         sender = Thread({ send(socket, key) }, "vidyut-mirror-sender").apply { start() }
         report(mapOf("state" to "streaming", "width" to size.width, "height" to size.height))
         try {
-            drain(encoder)
+            drain(codec)
         } catch (_: IllegalStateException) {
             // The encoder was released by a stop.
         }
     }
 
-    private fun releaseLate(encoder: MediaCodec, socket: MirrorSocket) {
-        display?.release()
-        display = null
+    /** Releases what the encoder thread made. Safe to repeat after release(). */
+    private fun releaseLocal(display: VirtualDisplay?, encoder: MediaCodec?, socket: MirrorSocket) {
         try {
-            encoder.release()
+            display?.release()
         } catch (_: Exception) {
         }
-        Thread(socket::close, "vidyut-mirror-close").start()
+        try {
+            encoder?.release()
+        } catch (_: Exception) {
+        }
+        socket.close()
     }
 
     /** Moves encoded frames into the send queue, dropping to a keyframe when it is full. */

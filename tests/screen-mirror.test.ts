@@ -98,10 +98,17 @@ describe("screen_start", () => {
 
 describe("screen player", () => {
   test("prefers mpv and falls back to ffplay", () => {
-    const mpv = findScreenPlayer((command) => `/usr/bin/${command}`);
+    const mpv = findScreenPlayer(
+      (command) => `/usr/bin/${command}`,
+      () => "--wayland-app-id  String",
+    );
     expect(mpv?.name).toBe("mpv");
     expect(mpv?.command).toContain("--wayland-app-id=vidyut-screen");
     expect(mpv?.command.at(-1)).toBe("-");
+
+    // An mpv older than 0.36 would exit on the app id option.
+    const oldMpv = findScreenPlayer((command) => `/usr/bin/${command}`, () => "--title  String");
+    expect(oldMpv?.command.some((arg) => arg.startsWith("--wayland-app-id"))).toBe(false);
 
     const ffplay = findScreenPlayer((command) => (command === "ffplay" ? "/usr/bin/ffplay" : null));
     expect(ffplay?.name).toBe("ffplay");

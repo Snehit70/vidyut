@@ -229,6 +229,8 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
         if (bunServer.upgrade(request, { data: { ...socketData, screenStreamId: streamId } })) {
           return undefined;
         }
+        // The ticket is spent, so drop the mirror it was for.
+        options.screen?.stop();
         return Response.json({ code: "screen_upgrade_failed" }, { status: 400 });
       }
       if (bunServer.upgrade(request, { data: socketData })) {
@@ -279,6 +281,8 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
             for (const socket of devices) {
               socket.close(1008, "pairing_secret_rotated");
             }
+            // Its key was handed out under the old secret.
+            options.screen?.stop();
           },
           ...(options.clipboardHealth && {
             clipboardHealth: options.clipboardHealth,
