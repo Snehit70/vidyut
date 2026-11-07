@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="dev.snehit.vidyut.screen_mirror">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!-- Android 14 requires a mediaProjection foreground service to hold
+             the capture token while the screen is mirrored (ADR 0030). -->
+        <service
+            android:name="dev.snehit.vidyut.screen_mirror.ScreenMirrorService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+    </application>
+</manifest>
