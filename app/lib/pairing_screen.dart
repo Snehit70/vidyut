@@ -46,6 +46,12 @@ class _PairingScreenState extends State<PairingScreen>
   bool _discovering = false;
   ShareIntakeController? _shareIntakeController;
   AppSettings _settings = const AppSettings();
+  // One mirror for the screen, so its state stream is the single source for
+  // whether the phone screen is on the laptop right now.
+  final ScreenMirror _screenMirror = ScreenMirror();
+  final ValueNotifier<bool> _mirroring = ValueNotifier(false);
+  StreamSubscription<ScreenMirrorState>? _mirrorStateSubscription;
+  bool _mirrorBusy = false;
   late final ForegroundServiceCoordinator _foregroundServiceCoordinator =
       ForegroundServiceCoordinator(widget.foregroundServiceClient);
   ConnectionStatus _connectionStatus = ConnectionStatus.offline;
@@ -110,6 +116,14 @@ class _PairingScreenState extends State<PairingScreen>
     _relativeTimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) setState(() {});
     });
+    _mirrorStateSubscription = _screenMirror.states.listen((state) {
+      _mirroring.value = state is ScreenMirrorStreaming;
+    });
+    unawaited(
+      _screenMirror.isRunning().then((running) {
+        _mirroring.value = running;
+      }),
+    );
     final tapHandler = widget.receiveNotificationTapHandler;
     unawaited(_debugLog.load());
     if (tapHandler != null) {
@@ -193,6 +207,8 @@ class _PairingScreenState extends State<PairingScreen>
     WidgetsBinding.instance.removeObserver(this);
     _activitySubscription?.cancel();
     _relativeTimeTimer?.cancel();
+    _mirrorStateSubscription?.cancel();
+    _mirroring.dispose();
     _connectedNotifier.dispose();
     widget.foregroundServiceClient.removeTaskDataCallback(_onServiceData);
     _shareIntakeController?.dispose();
@@ -732,6 +748,7 @@ class _PairingScreenState extends State<PairingScreen>
           files: const VidyutFiles(),
           onBrowseLaptop: () => unawaited(_openLaptopFiles()),
           onMirrorScreen: () => unawaited(_toggleScreenMirror()),
+          mirroring: _mirroring,
         ),
       ),
     );
@@ -784,28 +801,40 @@ class _PairingScreenState extends State<PairingScreen>
 
   Future<void> _toggleScreenMirror() async {
     final pairing = await widget.pairingRepository.load();
-    if (pairing == null || !mounted) return;
-    final ScreenMirrorOutcome outcome;
+    if (pairing == null || !mounted || _mirrorBusy) return;
+    _mirrorBusy = true;
     try {
-      outcome = await ScreenMirrorStarter(
-        pairing: pairing,
-        connectionFactory: widget.relayConnectionFactory,
-      ).toggle();
-    } catch (error) {
-      _debugLog.add('mirror', 'Screen mirror failed: $error', isError: true);
-      if (mounted) _showSnack('Could not mirror the screen.');
-      return;
+      // Explain the system prompt before it appears. Stopping needs no prompt.
+      if (!_mirroring.value) {
+        final proceed = await showScreenMirrorConsent(context);
+        if (!proceed || !mounted) return;
+      }
+      final ScreenMirrorOutcome outcome;
+      try {
+        outcome = await ScreenMirrorStarter(
+          pairing: pairing,
+          connectionFactory: widget.relayConnectionFactory,
+          mirror: _screenMirror,
+        ).toggle();
+      } catch (error) {
+        final message = screenMirrorFailureMessage(error);
+        _debugLog.add('mirror', message, isError: true);
+        if (mounted) _showSnack(message);
+        return;
+      }
+      final message = switch (outcome) {
+        ScreenMirrorShowing() => 'Showing this screen on the laptop.',
+        ScreenMirrorEnded() => 'Stopped mirroring the screen.',
+        ScreenMirrorDeclined() => null,
+        ScreenMirrorProblem(:final message) => message,
+      };
+      if (outcome is ScreenMirrorProblem) {
+        _debugLog.add('mirror', outcome.message, isError: true);
+      }
+      if (message != null && mounted) _showSnack(message);
+    } finally {
+      _mirrorBusy = false;
     }
-    final message = switch (outcome) {
-      ScreenMirrorShowing() => 'Showing this screen on the laptop.',
-      ScreenMirrorEnded() => 'Stopped mirroring the screen.',
-      ScreenMirrorDeclined() => null,
-      ScreenMirrorProblem(:final message) => message,
-    };
-    if (outcome is ScreenMirrorProblem) {
-      _debugLog.add('mirror', outcome.message, isError: true);
-    }
-    if (message != null && mounted) _showSnack(message);
   }
 
   Future<void> _runTransferFileAction(
@@ -856,6 +885,8 @@ class _PairingScreenState extends State<PairingScreen>
         onOpenRecentActivity: () => unawaited(_openRecentActivity()),
         onOpenConnectionDetails: () => unawaited(_showConnectionHelp()),
         onSendClipboard: () => unawaited(_openSendClipboard()),
+        mirroring: _mirroring,
+        onToggleMirror: () => unawaited(_toggleScreenMirror()),
         setupBannerLabel: setupNeedsAttention
             ? _setupStatus!.bannerLabel(_settings)
             : null,

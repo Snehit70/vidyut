@@ -38,6 +38,27 @@ export type ScreenStartAnswer =
   | { ok: true; streamId: string; key: string }
   | { ok: false; code: string; message: string };
 
+/** What the desktop shell shows about the phone screen window. */
+export interface ScreenMirrorStatus {
+  /** `starting` while the phone is connecting; `idle` when nothing runs. */
+  phase: "idle" | "starting" | "streaming";
+  width?: number;
+  height?: number;
+  /** Why the previous mirror ended, as a reason code from [ScreenMirror]. */
+  endedReason?: string;
+}
+
+/** The part of [ScreenMirror] the control plane needs. */
+export interface ScreenMirrorControl {
+  status(): ScreenMirrorStatus;
+  stopByLaptop(): void;
+}
+
+/** The window title carries the streamed size, so a second window is easy to tell apart. */
+export function windowTitle(width: number, height: number): string {
+  return `Vidyut · phone screen ${width}×${height}`;
+}
+
 /** One mirror WebSocket. The relay hands it each binary message. */
 export interface ScreenStream {
   /** False when the record did not open; the socket should close. */
@@ -98,6 +119,9 @@ export function findScreenPlayer(
         "--osc=no",
         "--audio=no",
         "--autofit-larger=90%x85%",
+        // Tells a new viewer which keys help, once, when the window opens.
+        "--osd-duration=4000",
+        "--osd-playing-msg=f: fullscreen · T: keep on top",
         `--title=${title}`,
         ...appId,
         "-",
@@ -213,23 +237,24 @@ export const launchPlayer: LaunchPlayer = (player) => {
 };
 
 export interface ScreenMirrorOptions {
-  findPlayer?: () => ScreenPlayer | undefined;
+  findPlayer?: (title: string) => ScreenPlayer | undefined;
   launch?: LaunchPlayer;
   logger?: Logger;
   ticketTtlMs?: number;
   now?: () => number;
 }
 
-export class ScreenMirror {
-  readonly #findPlayer: () => ScreenPlayer | undefined;
+export class ScreenMirror implements ScreenMirrorControl {
+  readonly #findPlayer: (title: string) => ScreenPlayer | undefined;
   readonly #launch: LaunchPlayer;
   readonly #logger: Logger;
   readonly #ticketTtlMs: number;
   readonly #now: () => number;
   #session: Session | undefined;
+  #lastEnd: string | undefined;
 
   constructor(options: ScreenMirrorOptions = {}) {
-    this.#findPlayer = options.findPlayer ?? (() => findScreenPlayer());
+    this.#findPlayer = options.findPlayer ?? ((title) => findScreenPlayer(undefined, undefined, title));
     this.#launch = options.launch ?? launchPlayer;
     this.#logger = options.logger ?? noopLogger;
     this.#ticketTtlMs = options.ticketTtlMs ?? defaultTicketTtlMs;
@@ -239,7 +264,7 @@ export class ScreenMirror {
   /** Answers a `screen_start`. Any mirror that runs is replaced. */
   start(deviceId: string, width: number, height: number): ScreenStartAnswer {
     this.#end("replaced");
-    if (!this.#findPlayer()) {
+    if (!this.#findPlayer(windowTitle(width, height))) {
       return {
         ok: false,
         code: "no_player",
@@ -289,7 +314,7 @@ export class ScreenMirror {
     if (!session || session.streamId !== streamId || session.phase !== "claimed") {
       return undefined;
     }
-    const player = this.#findPlayer();
+    const player = this.#findPlayer(windowTitle(session.width, session.height));
     if (!player) {
       this.#end("no_player");
       return undefined;
@@ -355,10 +380,28 @@ export class ScreenMirror {
     this.#end("relay_stopped");
   }
 
+  /** Ends the mirror from the desktop shell's Stop button. */
+  stopByLaptop(): void {
+    this.#end("stopped_on_laptop");
+  }
+
+  status(): ScreenMirrorStatus {
+    const session = this.#session;
+    if (!session) {
+      return this.#lastEnd === undefined ? { phase: "idle" } : { phase: "idle", endedReason: this.#lastEnd };
+    }
+    return {
+      phase: session.phase === "streaming" ? "streaming" : "starting",
+      width: session.width,
+      height: session.height,
+    };
+  }
+
   #end(reason: string): void {
     const session = this.#session;
     if (!session) return;
     this.#session = undefined;
+    this.#lastEnd = reason;
     const wasStreaming = session.phase === "streaming";
     session.phase = "ended";
     clearTimeout(session.timer);

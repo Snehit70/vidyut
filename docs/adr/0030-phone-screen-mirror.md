@@ -13,8 +13,9 @@ This mirror is view-only, with no touch or keyboard input and no audio.
 
 ## What changed
 
-- **Ticket.** In **Settings → Connection**, **Mirror screen** asks Android
-  for screen capture, then sends a sealed `screen_start {width, height}` on a
+- **Ticket.** On **Home**, **Show phone screen on laptop** explains the
+  capture prompt, then asks Android for screen capture (the same control is
+  under **Settings → Mirror screen**), then sends a sealed `screen_start {width, height}` on a
   short session of its own. The relay answers with sealed
   `screen_ready {streamId, key}`, where `streamId` is 18 random bytes in
   base64url and `key` is a fresh 32-byte AES key. A relay without a player
@@ -40,8 +41,11 @@ This mirror is view-only, with no touch or keyboard input and no audio.
   window's Wayland app id is `vidyut-screen`, for compositor rules. The
   `.deb` and `.rpm` recommend `mpv`.
 - **Ending.** Closing the window closes the phone's socket and stops the
-  capture. Stop on the phone, tapping **Mirror screen** again, or revoking
-  capture closes the socket and the relay closes the window. A new start
+  capture. Stop on the phone, tapping the mirror control again, Stop in the
+  desktop shell's **Phone screen** section, or revoking capture closes the
+  socket and the relay closes the window. The relay keeps the reason the last
+  mirror ended and the shell shows it. Restarting after a closed window
+  needs a new start from the phone, because only the phone can capture. A new start
   replaces a mirror that runs. There is one mirror at a time.
 
 ## Why a WebSocket and not a chunked POST

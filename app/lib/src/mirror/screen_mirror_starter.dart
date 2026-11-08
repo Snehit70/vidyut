@@ -1,10 +1,24 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:screen_mirror/screen_mirror.dart';
 
 import '../pairing/pairing_code.dart';
 import '../shared/relay_connection.dart';
 import '../transfer/phone_transfer_sender.dart';
+
+/// The words to show for a mirror that failed before it could report back.
+/// A typed problem already carries its message; a platform error usually
+/// carries the reason Android gave.
+String screenMirrorFailureMessage(Object error) {
+  if (error is ScreenMirrorProblem) return error.message;
+  if (error is PlatformException) {
+    final message = error.message;
+    if (message != null && message.isNotEmpty) return message;
+    return 'Android could not start the screen mirror (${error.code}).';
+  }
+  return 'The screen mirror failed: $error';
+}
 
 /// How a tap on "Mirror screen" ended.
 sealed class ScreenMirrorOutcome {

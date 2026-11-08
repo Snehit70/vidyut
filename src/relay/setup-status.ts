@@ -4,7 +4,8 @@ export type SetupRowId =
   | "wl_clipboard"
   | "imagemagick"
   | "autostart"
-  | "firewall";
+  | "firewall"
+  | "screen_player";
 
 export interface SetupRow {
   id: SetupRowId;
@@ -65,7 +66,32 @@ export async function collectLaptopSetupStatus(
       imagemagick,
       autostart,
       firewall,
+      screenPlayerRow(which),
     ],
+  };
+}
+
+/** The phone screen window needs mpv, or ffplay as a fallback (ADR 0030). */
+function screenPlayerRow(which: NonNullable<SetupStatusDeps["which"]>): SetupRow {
+  if (which("mpv")) {
+    return {
+      id: "screen_player",
+      ok: true,
+      detail: "mpv found. It shows the phone screen.",
+    };
+  }
+  if (which("ffplay")) {
+    return {
+      id: "screen_player",
+      ok: true,
+      detail: "ffplay found. mpv shows the phone screen with less delay.",
+    };
+  }
+  return {
+    id: "screen_player",
+    ok: false,
+    detail: "mpv was not found. The phone screen cannot be shown.",
+    fix: "Install mpv to show the phone screen.",
   };
 }
 

@@ -16,6 +16,7 @@ import {
   type SetupStatusReader,
 } from "./setup-status";
 import type { ClipboardHealth } from "./clipboard-sync";
+import type { ScreenMirrorControl, ScreenMirrorStatus } from "./screen-mirror";
 import { maxPauseMinutes, type ClipboardPause } from "./clipboard-pause";
 import { encodedPayloadBytes, type PayloadFrame } from "../shared/wire";
 
@@ -43,6 +44,8 @@ export interface ControlState {
   clipboard: ClipboardHealth | undefined;
   authenticatedDeviceCount: number;
   pool: ControlPoolMeta | null;
+  /** Null when this relay cannot show the phone screen. */
+  screen: ScreenMirrorStatus | null;
 }
 
 /** One folder the phone may browse (ADR 0026), as the desktop shell shows it. */
@@ -74,6 +77,7 @@ export interface ControlPlaneContext {
   sharedFolders?: SharedFolderControl;
   setupStatus?: SetupStatusReader;
   clipboardPause?: ClipboardPause;
+  screen?: ScreenMirrorControl;
 }
 
 export function isControlPath(pathname: string): boolean {
@@ -130,6 +134,13 @@ export async function handleControlRequest(
   if (path === "/control/v1/shared-folders") {
     if (request.method === "GET") return listSharedFolders(context);
     if (request.method === "POST") return changeSharedFolders(request, context);
+  }
+  if (request.method === "POST" && path === "/control/v1/screen/stop") {
+    if (!context.screen) {
+      return Response.json({ code: "screen_unavailable" }, { status: 404 });
+    }
+    context.screen.stopByLaptop();
+    return Response.json({ ok: true });
   }
   if (request.method === "GET" && path === "/control/v1/setup") {
     // Probing shells out to several processes, so the default read is cached.
@@ -188,6 +199,7 @@ export function controlState(context: ControlPlaneContext): ControlState {
           ageSeconds: Math.floor((now - payload.ts) / 1000),
         }
       : null,
+    screen: context.screen?.status() ?? null,
   };
 }
 

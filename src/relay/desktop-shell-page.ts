@@ -231,6 +231,13 @@ export function desktopShellHtml(state: DesktopShellState): string {
           </div>
           <p class="note">Closing this window does not stop the Relay. Stop relay is the only thing that does.</p>
         </section>
+        <section class="block" id="screen-block">
+          <h3>Phone screen</h3>
+          <p id="screen-status" role="status" aria-live="polite">Not showing the phone screen. Start it from the phone.</p>
+          <div class="btn-row" id="screen-stop-row" hidden>
+            <button type="button" class="btn outlined danger" id="screen-stop">Stop showing</button>
+          </div>
+        </section>
         <section class="block">
           <h3>Clipboard sync</h3>
           <p id="pause-summary">${paused ? "Paused. Files still move." : "Pausing stops this laptop sending what you copy and taking what the phone sends. Files still move."}</p>
