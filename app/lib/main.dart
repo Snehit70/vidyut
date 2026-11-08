@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:clipboard_autosend/clipboard_autosend.dart';
 import 'package:cryptography/cryptography.dart' show Cryptography;
 import 'package:cryptography_flutter/cryptography_flutter.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:screen_mirror/screen_mirror.dart';
