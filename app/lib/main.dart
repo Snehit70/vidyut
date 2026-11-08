@@ -6,6 +6,7 @@ import 'package:cryptography/cryptography.dart' show Cryptography;
 import 'package:cryptography_flutter/cryptography_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:screen_mirror/screen_mirror.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
 import 'package:vidyut_files/vidyut_files.dart';
 
@@ -24,6 +25,7 @@ import 'src/foreground/send_clipboard_screen.dart';
 import 'src/foreground/service_relay_controller.dart'
     show serviceClipboardPauseCommand, serviceTelemetryCommand;
 import 'src/home/home_screen.dart';
+import 'src/mirror/screen_mirror_consent_sheet.dart';
 import 'src/mirror/screen_mirror_starter.dart';
 import 'src/onboarding/onboarding_wizard.dart';
 import 'src/onboarding/setup_actions.dart';

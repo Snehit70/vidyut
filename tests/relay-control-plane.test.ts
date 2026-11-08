@@ -457,6 +457,7 @@ describe("relay loopback control plane", () => {
       "imagemagick",
       "autostart",
       "firewall",
+      "screen_player",
     ]);
     expect(body.rows[0]).toMatchObject({ id: "relay_running", ok: true });
     expect(JSON.stringify(body)).not.toContain(secret);

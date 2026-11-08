@@ -44,7 +44,7 @@ _Avoid_: thumbnail sync, remote preview
 The phone's screen shown live in a window on the laptop (ADR 0030). View
 only: no input and no audio. The phone streams sealed H.264 over a one-time
 WebSocket ticket the relay hands out, and mpv or ffplay draws it. Closing
-the window or tapping Stop on the phone ends it.
+the window, tapping Stop on the phone, or Stop in the desktop shell ends it.
 _Avoid_: screen share, remote control, casting
 
 **Link**:

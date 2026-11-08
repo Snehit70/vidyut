@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:clipboard_autosend/clipboard_autosend.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:vidyut_clipboard/vidyut_clipboard.dart';
@@ -21,6 +22,36 @@ typedef AppSettingsChanged = Future<void> Function(AppSettings settings);
 
 const _rowPadding = EdgeInsets.fromLTRB(16, 8, 12, 8);
 
+/// The "Mirror screen" row. Its subtitle follows whether the phone screen is
+/// on the laptop right now, so the row says what a tap will do.
+class _MirrorScreenTile extends StatelessWidget {
+  const _MirrorScreenTile({required this.mirroring, required this.onTap});
+
+  final ValueListenable<bool>? mirroring;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tile(bool on) => ListTile(
+      contentPadding: _rowPadding,
+      title: const Text('Mirror screen'),
+      subtitle: Text(
+        on
+            ? 'Showing on the laptop now. Tap to stop.'
+            : 'Show this phone\'s screen in a window on the laptop.',
+      ),
+      trailing: Icon(on ? Icons.cast_connected : Icons.cast),
+      onTap: onTap,
+    );
+    final listenable = mirroring;
+    if (listenable == null) return tile(false);
+    return ValueListenableBuilder<bool>(
+      valueListenable: listenable,
+      builder: (context, on, _) => tile(on),
+    );
+  }
+}
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -39,6 +70,7 @@ class SettingsScreen extends StatefulWidget {
     this.pairedDeviceAddress,
     this.onBrowseLaptop,
     this.onMirrorScreen,
+    this.mirroring,
   });
 
   final AppSettings settings;
@@ -51,6 +83,10 @@ class SettingsScreen extends StatefulWidget {
   /// Starts or stops the phone screen in a laptop window (ADR 0030); the
   /// "Mirror screen" row is hidden when null or when no laptop is paired.
   final VoidCallback? onMirrorScreen;
+
+  /// Whether the phone screen is on the laptop now, so the row's subtitle
+  /// says what a tap will do. Without it the row shows the off copy.
+  final ValueListenable<bool>? mirroring;
 
   /// Feeds the "Setup status" row and its summary chip (onboarding spec D8);
   /// the row is hidden when null (widget tests without platform channels).
@@ -449,15 +485,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: widget.onBrowseLaptop,
                 ),
               if (widget.paired && widget.onMirrorScreen != null)
-                ListTile(
-                  contentPadding: _rowPadding,
-                  title: const Text('Mirror screen'),
-                  subtitle: const Text(
-                    'Show this phone\'s screen in a window on the laptop. '
-                    'Tap again to stop.',
-                  ),
-                  trailing: const Icon(Icons.cast),
-                  onTap: widget.onMirrorScreen,
+                _MirrorScreenTile(
+                  mirroring: widget.mirroring,
+                  onTap: widget.onMirrorScreen!,
                 ),
               if (canForget)
                 ListTile(

@@ -296,6 +296,7 @@ export async function createRelay(options: RelayOptions): Promise<RelayHandle> {
           ...(options.enqueueLaptopFiles && {
             enqueueLaptopFiles: options.enqueueLaptopFiles,
           }),
+          ...(options.screen && { screen: options.screen }),
           ...(options.sharedFolders && {
             sharedFolders: options.sharedFolders,
           }),

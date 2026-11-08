@@ -72,6 +72,7 @@ describe("laptop setup status", () => {
       "imagemagick",
       "autostart",
       "firewall",
+      "screen_player",
     ]);
     expect(row(status, "relay_running")).toMatchObject({ ok: true });
     expect(row(status, "wayland")).toMatchObject({

@@ -190,6 +190,9 @@ class ScreenMirrorService : Service() {
                     streaming = true
                     sender = Thread({ send(socket, key) }, "vidyut-mirror-sender").apply { start() }
                     report(mapOf("state" to "streaming", "width" to size.width, "height" to size.height))
+                    // Say what size is going out, so the notice matches the window.
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIFICATION_ID, notification(size))
                 }
                 try {
                     drain(fresh)
@@ -404,7 +407,8 @@ class ScreenMirrorService : Service() {
         socket = null
     }
 
-    private fun notification(): Notification {
+    /** The ongoing notice; once streaming starts it names the size on the laptop. */
+    private fun notification(size: EncoderSize? = null): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(
@@ -428,7 +432,13 @@ class ScreenMirrorService : Service() {
         return builder
             .setSmallIcon(notificationIcon())
             .setContentTitle("Mirroring screen to the laptop")
-            .setContentText("Everything on this screen shows on the laptop.")
+            .setContentText(
+                if (size == null) {
+                    "Everything on this screen shows on the laptop."
+                } else {
+                    "${size.width}×${size.height} · Everything on this screen shows on the laptop."
+                },
+            )
             .setOngoing(true)
             .setContentIntent(launchIntent())
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())

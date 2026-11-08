@@ -6,7 +6,20 @@
     wl_clipboard: "wl-clipboard",
     imagemagick: "ImageMagick",
     autostart: "Autostart",
-    firewall: "Firewall"
+    firewall: "Firewall",
+    screen_player: "Phone screen player"
+  };
+  // Why a mirror ended, as the relay names it (src/relay/screen-mirror.ts).
+  var SCREEN_ENDED = {
+    replaced: "A newer mirror replaced it.",
+    ticket_expired: "The phone did not connect in time.",
+    no_player: "mpv is not installed, so the phone screen cannot be shown.",
+    player_failed: "The player could not start.",
+    window_closed: "The window was closed.",
+    phone_stopped: "Stopped on the phone.",
+    bad_record: "The phone sent data the laptop could not read.",
+    relay_stopped: "The Relay stopped.",
+    stopped_on_laptop: "Stopped from this window."
   };
   // Status copy and pane order are defined in desktop-shell-page.ts, which
   // also renders the markup, and arrive as JSON like the boot state.
@@ -156,6 +169,24 @@
     });
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
+  }
+
+  function renderScreen(screen) {
+    var active = !!screen && (screen.phase === "streaming" || screen.phase === "starting");
+    var text;
+    if (!screen) {
+      text = "Phone screen sharing is not available on this Relay.";
+    } else if (screen.phase === "streaming") {
+      text = "Showing the phone screen" + (screen.width ? " at " + screen.width + "×" + screen.height : "") + ".";
+    } else if (screen.phase === "starting") {
+      text = "Waiting for the phone to connect.";
+    } else if (screen.endedReason) {
+      text = SCREEN_ENDED[screen.endedReason] || "Stopped.";
+    } else {
+      text = "Not showing the phone screen. Start it from the phone.";
+    }
+    setText("screen-status", text);
+    $("screen-stop-row").hidden = !active;
   }
 
   async function resumeClipboard() {
@@ -425,6 +456,7 @@
       lastGoodAt = Date.now();
       var wasPaired = Number(state.authenticatedDeviceCount || 0) > 0;
       renderState(live, true);
+      renderScreen(live.screen);
       showStale();
       // Re-anchor once, when the pairing situation actually changes, so the
       // window does not yank a pane out from under someone mid-task.
@@ -595,6 +627,15 @@
     }
   });
   $("pause-resume").addEventListener("click", resumeClipboard);
+  $("screen-stop").addEventListener("click", async function () {
+    try {
+      await postJson("/control/v1/screen/stop");
+      snack("Stopped showing the phone screen.");
+    } catch (err) {
+      snack("The phone screen was not stopped.");
+    }
+    await refresh();
+  });
   $("banner-resume").addEventListener("click", resumeClipboard);
 
   $("open-releases").addEventListener("click", function (event) {

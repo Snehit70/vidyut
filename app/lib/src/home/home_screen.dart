@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../activity/last_activity.dart';
@@ -24,6 +25,8 @@ class HomeScreen extends StatelessWidget {
     required this.onSendClipboard,
     this.setupBannerLabel,
     this.onOpenSetup,
+    this.mirroring,
+    this.onToggleMirror,
   });
 
   final ConnectionStatus connectionStatus;
@@ -38,6 +41,11 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onSendClipboard;
   final String? setupBannerLabel;
   final VoidCallback? onOpenSetup;
+
+  /// Whether the phone screen is on the laptop now. The mirror control is
+  /// hidden when [onToggleMirror] is null.
+  final ValueListenable<bool>? mirroring;
+  final VoidCallback? onToggleMirror;
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +106,13 @@ class HomeScreen extends StatelessWidget {
                   icon: const Icon(Icons.content_paste_go_outlined),
                   label: const Text('Send clipboard or link'),
                 ),
+                if (onToggleMirror != null && mirroring != null) ...[
+                  const SizedBox(height: 10),
+                  _HomeMirrorControl(
+                    mirroring: mirroring!,
+                    onToggle: onToggleMirror!,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 if (laptopTelemetry != null) ...[
                   _LaptopTelemetrySection(
@@ -891,6 +906,47 @@ class _LatestActivitySection extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Starts the phone screen on the laptop, or shows that it is running with a
+/// Stop. Home is where people look first, so the way in lives here too.
+class _HomeMirrorControl extends StatelessWidget {
+  const _HomeMirrorControl({required this.mirroring, required this.onToggle});
+
+  final ValueListenable<bool> mirroring;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: mirroring,
+      builder: (context, on, _) {
+        if (!on) {
+          return OutlinedButton.icon(
+            onPressed: onToggle,
+            icon: const Icon(Icons.cast),
+            label: const Text('Show phone screen on laptop'),
+          );
+        }
+        final scheme = Theme.of(context).colorScheme;
+        return Material(
+          color: scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+            child: Row(
+              children: [
+                Icon(Icons.cast_connected, size: 20, color: scheme.primary),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('Mirroring to laptop')),
+                TextButton(onPressed: onToggle, child: const Text('Stop')),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
