@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a PR cancels that PR's older run. Each push to main gets its
+# own group, because GitHub keeps only one pending run per group and would
+# drop the middle commit's run if main pushes shared one.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   relay:
     name: Relay
@@ -156,8 +163,35 @@ jobs:
             exit 1
           fi
 
+  # Analyze and test run beside the APK build instead of before it.
   app:
-    name: Flutter app
+    name: Flutter analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.4
+          cache: true
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: app
+        run: flutter test
+
+  apk:
+    name: Flutter debug APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -180,17 +214,45 @@ jobs:
         working-directory: app
         run: flutter pub get
 
-      - name: Analyze
-        working-directory: app
-        run: flutter analyze
+      # Keyed on build inputs, not the commit: an entry is a GB or more, so a
+      # per-commit key would upload one on every push and crowd out the Flutter
+      # and Rust caches. PRs only restore, so they cannot evict main's entry.
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-debug-${{ runner.os }}-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle.properties', 'app/android/gradle/wrapper/gradle-wrapper.properties', 'app/packages/*/android/**/*.gradle*', 'app/pubspec.lock') }}
+          restore-keys: |
+            gradle-debug-${{ runner.os }}-
 
-      - name: Test
-        working-directory: app
-        run: flutter test
+      - name: Enable Gradle build cache
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
 
+      # arm64 only: the phones this ships to are arm64, and one ABI is enough
+      # to prove the Android build compiles.
       - name: Build debug APK
         working-directory: app
-        run: flutter build apk --debug
+        run: flutter build apk --debug --target-platform android-arm64
+
+      - name: Stop Gradle daemon
+        if: github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true'
+        working-directory: app/android
+        run: |
+          if [ -x ./gradlew ]; then ./gradlew --stop; fi
+
+      - name: Save Gradle cache
+        if: github.ref == 'refs/heads/main' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

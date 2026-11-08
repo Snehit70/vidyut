@@ -216,15 +216,37 @@ jobs:
           flutter clean
           flutter pub get
 
+      # Gradle's wrapper, dependencies, and build cache, keyed on build inputs
+      # so a new entry is saved only when they change (an entry is a GB or
+      # more). Signing is never cached: AGP's packaging task is not cacheable,
+      # and the verify step below checks the certificate on every build.
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-release-${{ runner.os }}-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle.properties', 'app/android/gradle/wrapper/gradle-wrapper.properties', 'app/packages/*/android/**/*.gradle*', 'app/pubspec.lock') }}
+          restore-keys: |
+            gradle-release-${{ runner.os }}-
+
+      - name: Enable Gradle build cache
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
+      # Only arm64 ships. --split-per-abi stays so the APK keeps Flutter's
+      # arm64 version code (2000 + build number) and its file name; dropping
+      # it would lower the version code and block updates over 1.x installs.
       - name: Build ARM64 release APK
         working-directory: app
         env:
-          GRADLE_OPTS: -Dorg.gradle.caching=false
           VIDYUT_KEYSTORE_PATH: ${{ runner.temp }}/vidyut-release.keystore
           VIDYUT_KEYSTORE_PASSWORD: android
           VIDYUT_KEY_ALIAS: androiddebugkey
           VIDYUT_KEY_PASSWORD: android
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --target-platform android-arm64
 
       - name: Verify Android release identity
         run: |
@@ -234,6 +256,22 @@ jobs:
             "${{ steps.version.outputs.arm64_version_code }}" \
             "$EXPECTED_APK_CERT_SHA256" \
             "$MAX_APK_BYTES"
+
+      # Stop the daemon so no cache file is mid-write when it is saved.
+      - name: Stop Gradle daemon
+        if: steps.gradle-cache.outputs.cache-hit != 'true'
+        working-directory: app/android
+        run: |
+          if [ -x ./gradlew ]; then ./gradlew --stop; fi
+
+      - name: Save Gradle cache
+        if: steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Commit and tag version
         shell: bash
