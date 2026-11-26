@@ -67,6 +67,50 @@ void main() {
     );
   });
 
+  for (final (opens, expected) in [
+    (true, PayloadType.link),
+    (false, PayloadType.text),
+  ]) {
+    test('a link goes as ${expected.name} when link opening is '
+        '${opens ? 'on' : 'off'}', () async {
+      final pairingRepository = PairingRepository(MemoryPairingStorage());
+      await pairingRepository.save(
+        const PairingCode(
+          host: '127.0.0.1',
+          port: 17321,
+          secret: 'pairing-secret',
+        ),
+      );
+      final session = FakeRelaySession();
+      final publisher = SharePublisher(
+        pairingRepository: pairingRepository,
+        relaySessionFactory: (_) => session,
+        crypto: PayloadCrypto(),
+        fileReader: FakeFileReader(),
+        openLinksOnLaptop: () async => opens,
+      );
+
+      final resultFuture = publisher.publish(
+        const SharePayload.link('https://example.com'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      session.connect();
+      final result = await resultFuture;
+
+      expect(result.published, isTrue);
+      expect(session.published.single.type, expected);
+      expect(
+        utf8.decode(
+          await PayloadCrypto().decrypt(
+            frame: session.published.single,
+            pairingSecret: 'pairing-secret',
+          ),
+        ),
+        'https://example.com',
+      );
+    });
+  }
+
   test('publishes image file bytes with the source mime type', () async {
     final storage = MemoryPairingStorage();
     final pairingRepository = PairingRepository(storage);

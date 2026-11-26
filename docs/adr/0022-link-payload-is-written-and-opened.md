@@ -79,7 +79,9 @@ the phone's acknowledgement. It runs through the same bounded process runner as
   Additive, and it leaves the pool's types alone, but the two can fail
   independently. A closed tab with nothing in the clipboard, or a payload with
   no tab, are both half-states that read as bugs.
-- Add a preference to disable link opening. Not built. There is no settings
-  surface on the laptop to hang it on, only `relay.json`, and the plain-text
-  clipboard half means a user who never wants tabs opened can still publish the
-  address as ordinary text.
+- Add a preference to disable link opening on the laptop. Not built there:
+  the laptop has no settings surface, only `relay.json`. It lives on the phone
+  instead, as **Open links on the laptop** under Automatic sending (default
+  on). Off, the phone publishes a link as `text`, so the laptop still writes it
+  to the clipboard and opens nothing. This keeps "the phone decides, the Relay
+  obeys" intact.

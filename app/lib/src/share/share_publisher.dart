@@ -12,6 +12,10 @@ import 'share_payload.dart';
 typedef RelaySessionFactory = RelaySession Function(PairingCode pairing);
 typedef ShareClock = DateTime Function();
 
+/// Reads the "Open links on the laptop" setting at send time, so a toggle
+/// takes effect on the next send without rebuilding the publisher.
+typedef OpenLinksSetting = Future<bool> Function();
+
 abstract interface class ShareFileReader {
   Future<List<int>> readBytes(String path);
 }
@@ -43,6 +47,7 @@ class SharePublisher {
     this.origin = 'phone',
     this.clock = DateTime.now,
     this.connectionTimeout = const Duration(seconds: 5),
+    this.openLinksOnLaptop,
   });
 
   final PairingRepository pairingRepository;
@@ -52,6 +57,9 @@ class SharePublisher {
   final String origin;
   final ShareClock clock;
   final Duration connectionTimeout;
+
+  /// Omitted, links always open on the laptop.
+  final OpenLinksSetting? openLinksOnLaptop;
 
   Future<SharePublishResult> publish(SharePayload payload) async {
     if (payload.type == SharePayloadType.file) {
@@ -66,6 +74,12 @@ class SharePublisher {
       );
     }
 
+    // With link opening off, a link goes as plain text. The laptop keys off the
+    // type, so it still lands in the clipboard and no tab opens (ADR 0022).
+    final opensLinks =
+        payload.type != SharePayloadType.link ||
+        await (openLinksOnLaptop?.call() ?? Future.value(true));
+
     final session = relaySessionFactory(pairing);
     try {
       final connected = _waitForConnected(session);
@@ -78,7 +92,8 @@ class SharePublisher {
           metadata: PayloadMetadata(
             type: switch (payload.type) {
               SharePayloadType.text => PayloadType.text,
-              SharePayloadType.link => PayloadType.link,
+              SharePayloadType.link =>
+                opensLinks ? PayloadType.link : PayloadType.text,
               SharePayloadType.image => PayloadType.image,
               SharePayloadType.file => throw StateError(
                 'File reached clipboard publisher.',

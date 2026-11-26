@@ -75,6 +75,8 @@ class VidyutForegroundTaskHandler extends TaskHandler {
       ),
       crypto: crypto,
       fileReader: const LocalShareFileReader(),
+      openLinksOnLaptop: () async =>
+          (await settingsRepository.load()).openLinksOnLaptop,
     );
     // `late` so the receive-clipboard wrapper can call back into the controller's
     // echo-guard record (D4) — the closure runs long after construction.
