@@ -516,6 +516,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _settings.copyWith(autoPushScreenshots: value),
                 ),
               ),
+              SwitchListTile(
+                contentPadding: _rowPadding,
+                value: _settings.openLinksOnLaptop,
+                title: const Text('Open links on the laptop'),
+                subtitle: const Text(
+                  'Open sent links in the laptop\'s browser. Off, they only go to its clipboard.',
+                ),
+                onChanged: (value) => _updateSettings(
+                  _settings.copyWith(openLinksOnLaptop: value),
+                ),
+              ),
               if (widget.clipboardAutoSendWatcher != null)
                 ListTile(
                   contentPadding: _rowPadding,

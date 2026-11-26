@@ -26,6 +26,7 @@ class AppSettings {
     this.autoPushScreenshots = true,
     this.enableClipboardAutoSend = false,
     this.forwardVerificationCodes = false,
+    this.openLinksOnLaptop = true,
     this.receiveFiles = true,
     this.fileTransferAlerts = true,
     this.allowMeteredFileTransfers = true,
@@ -52,6 +53,11 @@ class AppSettings {
   /// clipboard. Effective only with notification access granted; the service
   /// reconciles the listener against both on every sync.
   final bool forwardVerificationCodes;
+
+  /// Whether a link sent from the phone also opens in the laptop's browser.
+  /// Off, links go as plain text: they still land in the laptop's clipboard,
+  /// but no tab opens (ADR 0022).
+  final bool openLinksOnLaptop;
   final bool receiveFiles;
   final bool fileTransferAlerts;
   final bool allowMeteredFileTransfers;
@@ -64,6 +70,7 @@ class AppSettings {
     bool? autoPushScreenshots,
     bool? enableClipboardAutoSend,
     bool? forwardVerificationCodes,
+    bool? openLinksOnLaptop,
     bool? receiveFiles,
     bool? fileTransferAlerts,
     bool? allowMeteredFileTransfers,
@@ -80,6 +87,7 @@ class AppSettings {
           enableClipboardAutoSend ?? this.enableClipboardAutoSend,
       forwardVerificationCodes:
           forwardVerificationCodes ?? this.forwardVerificationCodes,
+      openLinksOnLaptop: openLinksOnLaptop ?? this.openLinksOnLaptop,
       receiveFiles: receiveFiles ?? this.receiveFiles,
       fileTransferAlerts: fileTransferAlerts ?? this.fileTransferAlerts,
       allowMeteredFileTransfers:
@@ -98,6 +106,7 @@ class AppSettings {
         other.autoPushScreenshots == autoPushScreenshots &&
         other.enableClipboardAutoSend == enableClipboardAutoSend &&
         other.forwardVerificationCodes == forwardVerificationCodes &&
+        other.openLinksOnLaptop == openLinksOnLaptop &&
         other.receiveFiles == receiveFiles &&
         other.fileTransferAlerts == fileTransferAlerts &&
         other.allowMeteredFileTransfers == allowMeteredFileTransfers &&
@@ -112,6 +121,7 @@ class AppSettings {
     autoPushScreenshots,
     enableClipboardAutoSend,
     forwardVerificationCodes,
+    openLinksOnLaptop,
     receiveFiles,
     fileTransferAlerts,
     allowMeteredFileTransfers,

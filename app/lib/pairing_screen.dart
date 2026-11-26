@@ -697,6 +697,8 @@ class _PairingScreenState extends State<PairingScreen>
         relaySessionFactory: widget.relayConnectionFactory,
         crypto: PayloadCrypto(),
         fileReader: const LocalShareFileReader(),
+        openLinksOnLaptop: () async =>
+            (await widget.appSettingsRepository.load()).openLinksOnLaptop,
       ),
       transferSender: _transferSender,
       onTransferResult: (result, {isError = false}) {

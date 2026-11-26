@@ -194,6 +194,9 @@ class _VidyutAppState extends State<VidyutApp> {
                   relaySessionFactory: connectionFactory,
                   crypto: PayloadCrypto(),
                   fileReader: const LocalShareFileReader(),
+                  openLinksOnLaptop: () async =>
+                      (await widget.appSettingsRepository.load())
+                          .openLinksOnLaptop,
                 ),
               ),
               lastActivityRepository: widget.lastActivityRepository,
